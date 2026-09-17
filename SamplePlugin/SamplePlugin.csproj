@@ -1,21 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project Sdk="Dalamud.NET.Sdk/15.0.0">
-  <PropertyGroup>
-    <Version>0.0.0.1</Version>
-    <!-- Manifest fields (see https://github.com/goatcorp/DalamudPackager/blob/827d88dc/DalamudPackager/DalamudPackager.cs#L420) -->
-    <Author>your name here</Author>
-    <Name>Sample Plugin</Name>
-    <Punchline>A short one-liner that shows up in /xlplugins.</Punchline>
-    <Description>A brief overview of what your plugin does, highlighting its key features.
-This is shown when the user expands the plugin entry in /xlplugins.</Description>
-    <RepoUrl>https://github.com/goatcorp/SamplePlugin</RepoUrl>
-    <Tags>sample;plugin;goats</Tags>
-  </PropertyGroup>
+    <PropertyGroup>
+        <Version>0.0.0.1</Version>
 
-  <ItemGroup>
-    <Content Include="..\Data\goat.png">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <Visible>false</Visible>
-    </Content>
-  </ItemGroup>
+        <Author>FabioFrog91</Author>
+        <Name>FROG</Name>
+        <Punchline>Fetch Retainer Only Goods</Punchline>
+        <Description>FROG è un plugin Dalamud per Final Fantasy XIV progettato per indicizzare, organizzare e pianificare il recupero degli oggetti tra inventari, retainers, personaggi e Free Company Chest.</Description>
+        <RepoUrl>https://github.com/FabioFrog91/FROG</RepoUrl>
+        <Tags>FFXIV;Dalamud;Inventory</Tags>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\CriticalCommonLib\CriticalCommonLib.csproj" />
+    </ItemGroup>
 </Project>

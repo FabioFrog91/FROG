@@ -1,86 +1,123 @@
-﻿using Dalamud.Game.Command;
+using Autofac;
+using DalaMock.Host.Hosting;
+using Dalamud.Game.Command;
+using Dalamud.Interface.Windowing;
 using Dalamud.IoC;
 using Dalamud.Plugin;
-using System.IO;
-using Dalamud.Interface.Windowing;
 using Dalamud.Plugin.Services;
-using SamplePlugin.Windows;
+using FROG.Core.Inventory;
+using FROG.Windows;
+using Microsoft.Extensions.DependencyInjection;
 
-namespace SamplePlugin;
+namespace FROG;
 
-public sealed class Plugin : IDalamudPlugin
+public sealed class Plugin : HostedPlugin
 {
-    [PluginService] internal static IDalamudPluginInterface PluginInterface { get; private set; } = null!;
-    [PluginService] internal static ITextureProvider TextureProvider { get; private set; } = null!;
-    [PluginService] internal static ICommandManager CommandManager { get; private set; } = null!;
-    [PluginService] internal static IClientState ClientState { get; private set; } = null!;
-    [PluginService] internal static IPlayerState PlayerState { get; private set; } = null!;
-    [PluginService] internal static IDataManager DataManager { get; private set; } = null!;
-    [PluginService] internal static IPluginLog Log { get; private set; } = null!;
+    [PluginService]
+    internal static IDalamudPluginInterface PluginInterface { get; private set; } = null!;
 
-    private const string CommandName = "/pmycommand";
+    [PluginService]
+    internal static ITextureProvider TextureProvider { get; private set; } = null!;
 
-    public Configuration Configuration { get; init; }
+    [PluginService]
+    internal static ICommandManager CommandManager { get; private set; } = null!;
 
-    public readonly WindowSystem WindowSystem = new("SamplePlugin");
-    private ConfigWindow ConfigWindow { get; init; }
-    private MainWindow MainWindow { get; init; }
+    [PluginService]
+    internal static IClientState ClientState { get; private set; } = null!;
 
-    public Plugin()
+    [PluginService]
+    internal static IPlayerState PlayerState { get; private set; } = null!;
+
+    [PluginService]
+    internal static IDataManager DataManager { get; private set; } = null!;
+
+    [PluginService]
+    internal static IPluginLog Log { get; private set; } = null!;
+
+    private const string CommandName = "/frog";
+
+    public Configuration Configuration { get; private set; } = null!;
+
+    public InventoryIndex InventoryIndex { get; } = new();
+
+    public WindowSystem WindowSystem { get; } = new("FROG");
+
+    private ConfigWindow ConfigWindow { get; }
+    private MainWindow MainWindow { get; }
+
+    public Plugin(IDalamudPluginInterface pluginInterface)
+        : base(pluginInterface)
     {
-        Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
-
-        // You might normally want to embed resources and load them from the manifest stream
-        var goatImagePath = Path.Combine(PluginInterface.AssemblyLocation.Directory?.FullName!, "goat.png");
+        Configuration =
+            pluginInterface.GetPluginConfig() as Configuration
+            ?? new Configuration();
 
         ConfigWindow = new ConfigWindow(this);
-        MainWindow = new MainWindow(this, goatImagePath);
+        MainWindow = new MainWindow(this);
 
         WindowSystem.AddWindow(ConfigWindow);
         WindowSystem.AddWindow(MainWindow);
 
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "A useful message to display in /xlhelp"
+            HelpMessage = "Apre l'interfaccia principale di FROG"
         });
 
-        // Tell the UI system that we want our windows to be drawn through the window system
-        PluginInterface.UiBuilder.Draw += WindowSystem.Draw;
+        pluginInterface.UiBuilder.Draw += WindowSystem.Draw;
+        pluginInterface.UiBuilder.OpenConfigUi += ToggleConfigUi;
+        pluginInterface.UiBuilder.OpenMainUi += ToggleMainUi;
 
-        // This adds a button to the plugin installer entry of this plugin which allows
-        // toggling the display status of the configuration ui
-        PluginInterface.UiBuilder.OpenConfigUi += ToggleConfigUi;
-
-        // Adds another button doing the same but for the main ui of the plugin
-        PluginInterface.UiBuilder.OpenMainUi += ToggleMainUi;
-
-        // Add a simple message to the log with level set to information
-        // Use /xllog to open the log window in-game
-        // Example Output: 00:57:54.959 | INF | [SamplePlugin] ===A cool log message from Sample Plugin===
-        Log.Information($"===A cool log message from {PluginInterface.Manifest.Name}===");
+        Log.Information($"=== {pluginInterface.Manifest.Name} avviato ===");
     }
 
-    public void Dispose()
+    public override HostedPluginOptions ConfigureOptions()
     {
-        // Unregister all actions to not leak anything during disposal of plugin
+        return new HostedPluginOptions
+        {
+            UseMediatorService = false,
+        };
+    }
+
+    public override void ConfigureContainer(ContainerBuilder containerBuilder)
+    {
+        // In questo primo passaggio non registriamo ancora i servizi CCL.
+        // Lo faremo nel passaggio successivo, dopo aver verificato
+        // l'avvio del nuovo host FROG.
+    }
+
+    public override void ConfigureServices(IServiceCollection serviceCollection)
+    {
+        // Nessun hosted service FROG per ora.
+    }
+
+    public override void Dispose()
+    {
         PluginInterface.UiBuilder.Draw -= WindowSystem.Draw;
         PluginInterface.UiBuilder.OpenConfigUi -= ToggleConfigUi;
         PluginInterface.UiBuilder.OpenMainUi -= ToggleMainUi;
-        
+
         WindowSystem.RemoveAllWindows();
 
         ConfigWindow.Dispose();
         MainWindow.Dispose();
 
         CommandManager.RemoveHandler(CommandName);
+
+        base.Dispose();
     }
 
     private void OnCommand(string command, string args)
     {
-        // In response to the slash command, toggle the display status of our main ui
         MainWindow.Toggle();
     }
-    
-    public void ToggleConfigUi() => ConfigWindow.Toggle();
-    public void ToggleMainUi() => MainWindow.Toggle();
+
+    public void ToggleConfigUi()
+    {
+        ConfigWindow.Toggle();
+    }
+
+    public void ToggleMainUi()
+    {
+        MainWindow.Toggle();
+    }
 }
