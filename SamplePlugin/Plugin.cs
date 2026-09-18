@@ -1,6 +1,9 @@
+using AllaganLib.Monitors.Services;
 using Autofac;
+using CriticalCommonLib.Services;
 using DalaMock.Host.Hosting;
 using Dalamud.Game.Command;
+using Dalamud.Game.Inventory;
 using Dalamud.Interface.Windowing;
 using Dalamud.IoC;
 using Dalamud.Plugin;
@@ -8,6 +11,10 @@ using Dalamud.Plugin.Services;
 using FROG.Core.Inventory;
 using FROG.Windows;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using System;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace FROG;
 
@@ -30,6 +37,9 @@ public sealed class Plugin : HostedPlugin
 
     [PluginService]
     internal static IDataManager DataManager { get; private set; } = null!;
+
+    [PluginService]
+    internal static IGameInventory GameInventory { get; private set; } = null!;
 
     [PluginService]
     internal static IPluginLog Log { get; private set; } = null!;
@@ -80,14 +90,15 @@ public sealed class Plugin : HostedPlugin
 
     public override void ConfigureContainer(ContainerBuilder containerBuilder)
     {
-        // In questo primo passaggio non registriamo ancora i servizi CCL.
-        // Lo faremo nel passaggio successivo, dopo aver verificato
-        // l'avvio del nuovo host FROG.
+        CclInventoryBootstrap.Register(containerBuilder);
+
+        RegisterHostedService(typeof(AchievementMonitorService));
+        RegisterHostedService(typeof(OdrScanner));
+        RegisterHostedService(typeof(FrogInventoryStartup));
     }
 
     public override void ConfigureServices(IServiceCollection serviceCollection)
     {
-        // Nessun hosted service FROG per ora.
     }
 
     public override void Dispose()
@@ -119,5 +130,32 @@ public sealed class Plugin : HostedPlugin
     public void ToggleMainUi()
     {
         MainWindow.Toggle();
+    }
+}
+
+internal sealed class FrogInventoryStartup : IHostedService
+{
+    private readonly IInventoryMonitor inventoryMonitor;
+    private readonly IInventoryScanner inventoryScanner;
+
+    public FrogInventoryStartup(
+        IInventoryMonitor inventoryMonitor,
+        IInventoryScanner inventoryScanner)
+    {
+        this.inventoryMonitor = inventoryMonitor;
+        this.inventoryScanner = inventoryScanner;
+    }
+
+    public Task StartAsync(CancellationToken cancellationToken)
+    {
+        inventoryMonitor.Start();
+        inventoryScanner.Enable();
+
+        return Task.CompletedTask;
+    }
+
+    public Task StopAsync(CancellationToken cancellationToken)
+    {
+        return Task.CompletedTask;
     }
 }
