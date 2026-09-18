@@ -22,11 +22,10 @@ public sealed class RequirementResolver
         }
 
         var usableSources = resolutionPolicy.Sources
-            .Where(source =>
-                sourceCatalog.Sources.Any(policy =>
-                    policy.Source == source &&
-                    policy.Read &&
-                    policy.Use))
+            .Where(source => sourceCatalog.Sources.Any(policy =>
+                policy.Source == source &&
+                policy.Read &&
+                policy.Use))
             .ToList();
 
         var allocations = requirement.QualityPolicy switch

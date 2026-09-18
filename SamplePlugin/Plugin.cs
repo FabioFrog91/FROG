@@ -70,7 +70,7 @@ public sealed class Plugin : HostedPlugin
     public WindowSystem WindowSystem { get; } = new("FROG");
 
     private ConfigWindow ConfigWindow { get; }
-    private MainWindow MainWindow { get; }
+    private MainWindow? MainWindow { get; set; }
 
     private string InventoryIndexFilePath =>
         Path.Combine(
@@ -117,10 +117,8 @@ public sealed class Plugin : HostedPlugin
         }
 
         ConfigWindow = new ConfigWindow(this);
-        MainWindow = new MainWindow(this);
 
         WindowSystem.AddWindow(ConfigWindow);
-        WindowSystem.AddWindow(MainWindow);
 
         CommandManager.AddHandler(
             CommandName,
@@ -192,6 +190,29 @@ public sealed class Plugin : HostedPlugin
     {
     }
 
+    public override Task StartedAsync()
+    {
+        if (Host == null)
+        {
+            Log.Error(
+                "Impossibile creare MainWindow: Host non disponibile.");
+
+            return Task.CompletedTask;
+        }
+
+        var characterMonitor =
+            Host.Services.GetRequiredService<ICharacterMonitor>();
+
+        MainWindow =
+            new MainWindow(
+                this,
+                characterMonitor);
+
+        WindowSystem.AddWindow(MainWindow);
+
+        return Task.CompletedTask;
+    }
+
     public override void Dispose()
     {
         loginSyncCancellation?.Cancel();
@@ -239,16 +260,18 @@ public sealed class Plugin : HostedPlugin
         WindowSystem.RemoveAllWindows();
 
         ConfigWindow.Dispose();
-        MainWindow.Dispose();
+        MainWindow?.Dispose();
 
         CommandManager.RemoveHandler(CommandName);
 
         base.Dispose();
     }
 
-    private void OnCommand(string command, string args)
+    private void OnCommand(
+        string command,
+        string args)
     {
-        MainWindow.Toggle();
+        ToggleMainUi();
     }
 
     public void ToggleConfigUi()
@@ -258,7 +281,7 @@ public sealed class Plugin : HostedPlugin
 
     public void ToggleMainUi()
     {
-        MainWindow.Toggle();
+        MainWindow?.Toggle();
     }
 
     private void OnLogin()
@@ -266,7 +289,9 @@ public sealed class Plugin : HostedPlugin
         StartLoginSyncRetry();
     }
 
-    private void OnLogout(int type, int code)
+    private void OnLogout(
+        int type,
+        int code)
     {
         loginSyncCancellation?.Cancel();
 
@@ -474,7 +499,8 @@ internal sealed class FrogInventoryStartup : IHostedService
         this.plugin = plugin;
     }
 
-    public Task StartAsync(CancellationToken cancellationToken)
+    public Task StartAsync(
+        CancellationToken cancellationToken)
     {
         inventoryMonitor.OnInventoryChanged += OnInventoryChanged;
 
@@ -487,7 +513,8 @@ internal sealed class FrogInventoryStartup : IHostedService
         return Task.CompletedTask;
     }
 
-    public Task StopAsync(CancellationToken cancellationToken)
+    public Task StopAsync(
+        CancellationToken cancellationToken)
     {
         inventoryMonitor.OnInventoryChanged -= OnInventoryChanged;
 

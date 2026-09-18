@@ -61,6 +61,12 @@ public sealed class CharacterInventoryProvider : ICharacterInventoryProvider
             characterId,
             observedAtUtc);
 
+        AddInventorySnapshots(
+            snapshots,
+            GameInventoryType.Crystals,
+            characterId,
+            observedAtUtc);
+
         return snapshots;
     }
 
