@@ -92,15 +92,21 @@ public sealed class CriticalCommonLibInventoryProvider
         if (freeCompanyId == 0)
             return false;
 
-        if (!IsFreeCompanyFullyLoaded(inventoryScanner.InMemory))
-            return false;
-
         var sourceList = new List<InventorySource>();
         var snapshotList = new List<InventoryItemSnapshot>();
 
-        foreach (var containerType in inventoryScanner.InMemory)
+        var freeCompanyPages = new[]
         {
-            if (!IsFreeCompanyItemContainer(containerType))
+            InventoryType.FreeCompanyPage1,
+            InventoryType.FreeCompanyPage2,
+            InventoryType.FreeCompanyPage3,
+            InventoryType.FreeCompanyPage4,
+            InventoryType.FreeCompanyPage5
+        };
+
+        foreach (var containerType in freeCompanyPages)
+        {
+            if (!inventoryScanner.InMemory.Contains(containerType))
                 continue;
 
             var source = new InventorySource(
@@ -113,7 +119,6 @@ public sealed class CriticalCommonLibInventoryProvider
 
             var items =
                 inventoryScanner.GetInventoryByType(
-                    freeCompanyId,
                     containerType);
 
             AddSnapshots(
@@ -126,7 +131,7 @@ public sealed class CriticalCommonLibInventoryProvider
         sources = sourceList;
         snapshots = snapshotList;
 
-        return true;
+        return sourceList.Count > 0;
     }
 
     private static bool IsRetainerFullyLoaded(
@@ -143,28 +148,11 @@ public sealed class CriticalCommonLibInventoryProvider
                loadedContainers.Contains(InventoryType.RetainerGil);
     }
 
-    private static bool IsFreeCompanyFullyLoaded(
-        HashSet<InventoryType> loadedContainers)
-    {
-        return loadedContainers.Contains(InventoryType.FreeCompanyPage1) &&
-               loadedContainers.Contains(InventoryType.FreeCompanyPage2) &&
-               loadedContainers.Contains(InventoryType.FreeCompanyPage3) &&
-               loadedContainers.Contains(InventoryType.FreeCompanyPage4) &&
-               loadedContainers.Contains(InventoryType.FreeCompanyPage5);
-    }
-
     private static bool IsRetainerItemContainer(
         InventoryType containerType)
     {
         return containerType >= InventoryType.RetainerPage1 &&
                containerType <= InventoryType.RetainerPage7;
-    }
-
-    private static bool IsFreeCompanyItemContainer(
-        InventoryType containerType)
-    {
-        return containerType >= InventoryType.FreeCompanyPage1 &&
-               containerType <= InventoryType.FreeCompanyPage5;
     }
 
     private static void AddSnapshots(
