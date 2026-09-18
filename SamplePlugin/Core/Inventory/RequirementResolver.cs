@@ -11,10 +11,22 @@ public sealed class RequirementResolver
         InventoryIndex inventoryIndex,
         InventorySourceCatalog sourceCatalog)
     {
-        var usableSources = sourceCatalog.Sources
-            .Where(x => x.Use)
-            .OrderBy(x => x.Priority)
+        var usableSources = resolutionPolicy.Sources
+            .Where(source =>
+                sourceCatalog.Sources.Any(policy =>
+                    policy.Source == source &&
+                    policy.Read &&
+                    policy.Use))
             .ToList();
+
+        if (requirement.Quantity <= 0)
+        {
+            return new RequirementResolution(
+                requirement,
+                0,
+                0,
+                Array.Empty<RequirementAllocation>());
+        }
 
         var allocations = requirement.QualityPolicy switch
         {
@@ -68,7 +80,7 @@ public sealed class RequirementResolver
     private static List<RequirementAllocation> AllocateQuality(
         Requirement requirement,
         InventoryIndex inventoryIndex,
-        IReadOnlyList<SourcePolicy> sources,
+        IReadOnlyList<InventorySource> sources,
         bool isHq)
     {
         var allocations = new List<RequirementAllocation>();
@@ -79,7 +91,7 @@ public sealed class RequirementResolver
             var quantity = isHq
                 ? inventoryIndex.GetHqQuantity(
                     requirement.BaseItemId,
-                    sourcePolicy.Source)
+                    source)
                 : inventoryIndex.GetNqQuantity(
                     requirement.BaseItemId,
                     sourcePolicy.Source);
