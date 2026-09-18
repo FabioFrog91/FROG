@@ -100,7 +100,7 @@ public class MainWindow : Window, IDisposable
 
         ImGui.Spacing();
 
-        ImGui.Text($"Oggetti indicizzati: {plugin.InventoryIndex.Items.Count}");
+        DrawStorageIndexDiagnostics();
 
         ImGui.Spacing();
 
@@ -130,6 +130,57 @@ public class MainWindow : Window, IDisposable
             ImGui.Text($"Quantità totale: {totalQuantity}");
             ImGui.Text($"NQ: {nqQuantity}");
             ImGui.Text($"HQ: {hqQuantity}");
+        }
+    }
+
+    private void DrawStorageIndexDiagnostics()
+    {
+        ImGui.Text("STORAGE INDEX");
+        ImGui.Separator();
+
+        var characterCount = plugin.InventoryIndex.Items.Count(x =>
+            x.Storage == StorageType.CharacterInventory);
+
+        var retainerCount = plugin.InventoryIndex.Items.Count(x =>
+            x.Storage == StorageType.Retainer);
+
+        var freeCompanyCount = plugin.InventoryIndex.Items.Count(x =>
+            x.Storage == StorageType.FreeCompanyChest);
+
+        ImGui.Text(
+            $"Character Inventory: {characterCount} snapshot");
+
+        ImGui.Text(
+            $"Retainer: {retainerCount} snapshot");
+
+        ImGui.Text(
+            $"Free Company Chest: {freeCompanyCount} snapshot");
+
+        ImGui.Text(
+            $"Totale Index: {plugin.InventoryIndex.Items.Count} snapshot");
+
+        if (retainerCount > 0)
+        {
+            var retainerOwners = plugin.InventoryIndex.Items
+                .Where(x => x.Storage == StorageType.Retainer)
+                .Select(x => x.OwnerId)
+                .Distinct()
+                .Count();
+
+            ImGui.Text(
+                $"Retainer presenti nell'Index: {retainerOwners}");
+        }
+
+        if (freeCompanyCount > 0)
+        {
+            var freeCompanies = plugin.InventoryIndex.Items
+                .Where(x => x.Storage == StorageType.FreeCompanyChest)
+                .Select(x => x.OwnerId)
+                .Distinct()
+                .Count();
+
+            ImGui.Text(
+                $"Free Company presenti nell'Index: {freeCompanies}");
         }
     }
 

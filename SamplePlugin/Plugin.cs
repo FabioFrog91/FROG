@@ -6,12 +6,12 @@ using DalaMock.Host.Hosting;
 using Dalamud.Game.Addon.Lifecycle;
 using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
 using Dalamud.Game.Command;
-using Dalamud.Game.Inventory;
 using Dalamud.Interface.Windowing;
 using Dalamud.IoC;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using FROG.Core.Inventory;
+using FROG.Core.Inventory.Providers;
 using FROG.Windows;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -61,6 +61,8 @@ public sealed class Plugin : HostedPlugin
 
     private CancellationTokenSource? loginSyncCancellation;
 
+    private readonly ICharacterInventoryProvider characterInventoryProvider;
+
     public Configuration Configuration { get; private set; } = null!;
 
     public InventoryIndex InventoryIndex { get; } = new();
@@ -88,6 +90,11 @@ public sealed class Plugin : HostedPlugin
     public Plugin(IDalamudPluginInterface pluginInterface)
         : base(pluginInterface)
     {
+        characterInventoryProvider =
+            new CharacterInventoryProvider(
+                GameInventory,
+                PlayerState);
+
         Configuration =
             pluginInterface.GetPluginConfig() as Configuration
             ?? new Configuration();
@@ -166,6 +173,11 @@ public sealed class Plugin : HostedPlugin
         containerBuilder
             .RegisterInstance(this)
             .AsSelf()
+            .SingleInstance();
+
+        containerBuilder
+            .RegisterType<CriticalCommonLibInventoryProvider>()
+            .As<ICriticalCommonLibInventoryProvider>()
             .SingleInstance();
 
         CclInventoryBootstrap.Register(containerBuilder);
@@ -295,24 +307,17 @@ public sealed class Plugin : HostedPlugin
             if (cancellationToken.IsCancellationRequested)
                 return;
 
-            if (!PlayerState.IsLoaded)
+            if (!characterInventoryProvider.TryGetCurrentCharacter(
+                    out var characterId))
+            {
                 continue;
+            }
 
-            var characterId = PlayerState.ContentId;
-
-            if (characterId == 0)
-                continue;
-
-            // We have successfully obtained the current character.
-            // SyncPlayerInventory() performs the complete inventory read.
             SyncPlayerInventory();
 
-            // Verify that the sync actually belongs to this character.
             if (LastSyncCharacterId != characterId)
                 continue;
 
-            // The new character has been successfully synchronized.
-            // Persist it once and stop retrying immediately.
             SaveInventoryIndex();
 
             Log.Information(
@@ -327,18 +332,14 @@ public sealed class Plugin : HostedPlugin
 
     internal void SyncPlayerInventory()
     {
-        if (!PlayerState.IsLoaded)
+        if (!characterInventoryProvider.TryGetCurrentCharacter(
+                out var characterId))
+        {
             return;
-
-        var characterId = PlayerState.ContentId;
-
-        if (characterId == 0)
-            return;
+        }
 
         var observedAtUtc = DateTime.UtcNow;
 
-        // If the logged-in character changed, persist the previous
-        // character's current RAM state before synchronizing the new one.
         if (LastSyncCharacterId != 0 &&
             LastSyncCharacterId != characterId)
         {
@@ -348,37 +349,11 @@ public sealed class Plugin : HostedPlugin
         LastSyncCharacterId = characterId;
         LastSyncAtUtc = observedAtUtc;
 
-        var allSnapshots = new List<InventoryItemSnapshot>();
+        var allSnapshots =
+            characterInventoryProvider.ReadCurrentInventory(
+                characterId,
+                observedAtUtc);
 
-        AddInventorySnapshots(
-            allSnapshots,
-            GameInventoryType.Inventory1,
-            characterId,
-            observedAtUtc);
-
-        AddInventorySnapshots(
-            allSnapshots,
-            GameInventoryType.Inventory2,
-            characterId,
-            observedAtUtc);
-
-        AddInventorySnapshots(
-            allSnapshots,
-            GameInventoryType.Inventory3,
-            characterId,
-            observedAtUtc);
-
-        AddInventorySnapshots(
-            allSnapshots,
-            GameInventoryType.Inventory4,
-            characterId,
-            observedAtUtc);
-
-        // GameInventory is the source of truth for the currently
-        // logged-in character. Replace the complete character segment
-        // of the RAM index with what was just read.
-        //
-        // No other character or storage source is touched.
         InventoryIndex.ReplaceCharacterInventory(
             characterId,
             allSnapshots);
@@ -392,40 +367,51 @@ public sealed class Plugin : HostedPlugin
             .OrderBy(x => x.Container)
             .ThenBy(x => x.Slot)
             .ToList();
-
-        // No disk write here.
-        // RAM is updated immediately. Persistence happens only at
-        // explicit checkpoints.
     }
 
-    private static void AddInventorySnapshots(
-        List<InventoryItemSnapshot> snapshots,
-        GameInventoryType inventoryType,
-        ulong characterId,
-        DateTime observedAtUtc)
+    internal void SyncStorageSources(
+        ICriticalCommonLibInventoryProvider storageProvider)
     {
-        var inventoryItems =
-            GameInventory.GetInventoryItems(inventoryType);
+        var observedAtUtc = DateTime.UtcNow;
 
-        for (var slot = 0; slot < inventoryItems.Length; slot++)
+        if (storageProvider.TryReadActiveRetainer(
+                observedAtUtc,
+                out var retainerSources,
+                out var retainerSnapshots))
         {
-            var item = inventoryItems[slot];
+            foreach (var source in retainerSources)
+            {
+                var sourceSnapshots = retainerSnapshots
+                    .Where(x =>
+                        x.Storage == source.Storage &&
+                        x.OwnerId == source.OwnerId &&
+                        x.Container == source.Container)
+                    .ToList();
 
-            if (item.ItemId == 0)
-                continue;
+                InventoryIndex.ReplaceSource(
+                    source,
+                    sourceSnapshots);
+            }
+        }
 
-            snapshots.Add(
-                new InventoryItemSnapshot(
-                    item.BaseItemId,
-                    item.ItemId,
-                    item.Quantity,
-                    item.IsHq,
-                    StorageType.CharacterInventory,
-                    characterId,
-                    (uint)inventoryType,
-                    slot,
-                    observedAtUtc,
-                    true));
+        if (storageProvider.TryReadActiveFreeCompany(
+                observedAtUtc,
+                out var freeCompanySources,
+                out var freeCompanySnapshots))
+        {
+            foreach (var source in freeCompanySources)
+            {
+                var sourceSnapshots = freeCompanySnapshots
+                    .Where(x =>
+                        x.Storage == source.Storage &&
+                        x.OwnerId == source.OwnerId &&
+                        x.Container == source.Container)
+                    .ToList();
+
+                InventoryIndex.ReplaceSource(
+                    source,
+                    sourceSnapshots);
+            }
         }
     }
 
@@ -473,15 +459,18 @@ internal sealed class FrogInventoryStartup : IHostedService
 {
     private readonly IInventoryMonitor inventoryMonitor;
     private readonly IInventoryScanner inventoryScanner;
+    private readonly ICriticalCommonLibInventoryProvider storageProvider;
     private readonly Plugin plugin;
 
     public FrogInventoryStartup(
         IInventoryMonitor inventoryMonitor,
         IInventoryScanner inventoryScanner,
+        ICriticalCommonLibInventoryProvider storageProvider,
         Plugin plugin)
     {
         this.inventoryMonitor = inventoryMonitor;
         this.inventoryScanner = inventoryScanner;
+        this.storageProvider = storageProvider;
         this.plugin = plugin;
     }
 
@@ -510,5 +499,6 @@ internal sealed class FrogInventoryStartup : IHostedService
         InventoryMonitor.ItemChanges? itemChanges)
     {
         plugin.SyncPlayerInventory();
+        plugin.SyncStorageSources(storageProvider);
     }
 }
