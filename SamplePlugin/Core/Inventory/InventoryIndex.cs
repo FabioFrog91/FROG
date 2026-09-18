@@ -47,34 +47,13 @@ public sealed class InventoryIndex
 
         lock (syncLock)
         {
-            var existingSnapshots = items
-                .Where(x =>
-                    x.Storage == source.Storage &&
-                    x.OwnerId == source.OwnerId &&
-                    x.Container == source.Container)
-                .ToList();
-
-            var changed =
-                existingSnapshots.Count != newSnapshots.Count ||
-                existingSnapshots
-                    .OrderBy(x => x.Slot)
-                    .ThenBy(x => x.BaseItemId)
-                    .ThenBy(x => x.RawItemId)
-                    .ThenBy(x => x.Quantity)
-                    .ThenBy(x => x.IsHq)
-                    .Select(CreateComparisonKey)
-                    .SequenceEqual(
-                        newSnapshots
-                            .OrderBy(x => x.Slot)
-                            .ThenBy(x => x.BaseItemId)
-                            .ThenBy(x => x.RawItemId)
-                            .ThenBy(x => x.Quantity)
-                            .ThenBy(x => x.IsHq)
-                            .Select(CreateComparisonKey));
-
-            if (!changed)
-                return false;
-
+            // The provider has just observed this source.
+            // Treat that observation as the source of truth and replace
+            // the complete contents of the source, exactly as we do for
+            // the current character inventory.
+            //
+            // This is important for stack splits/merges: the old slot
+            // state must not participate in the new state.
             items.RemoveAll(x =>
                 x.Storage == source.Storage &&
                 x.OwnerId == source.OwnerId &&
