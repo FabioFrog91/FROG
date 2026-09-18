@@ -12,5 +12,6 @@ public enum RequirementQualityPolicy
 public sealed record Requirement(
     uint BaseItemId,
     int Quantity,
-    RequirementQualityPolicy QualityPolicy
+    RequirementQualityPolicy QualityPolicy,
+    bool IsPrecraft
 );

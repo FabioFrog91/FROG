@@ -13,7 +13,7 @@ namespace FROG.Windows;
 public class MainWindow : Window, IDisposable
 {
     private readonly Plugin plugin;
-    private int searchItemId;
+    private RequirementSet? importedRequirementSet;
 
     public MainWindow(Plugin plugin)
         : base("FROG")
@@ -60,6 +60,10 @@ public class MainWindow : Window, IDisposable
         }
 
         ImGui.Text($"Content ID: {playerState.ContentId:X}");
+
+        ImGui.Spacing();
+
+        DrawTeamcraftImport();
 
         ImGui.Spacing();
 
@@ -111,27 +115,79 @@ public class MainWindow : Window, IDisposable
         ImGui.Text("RICERCA NELL'INDICE");
         ImGui.Separator();
 
-        ImGui.InputInt("Base Item ID", ref searchItemId);
+        DrawIndexSearch();
+    }
 
-        if (searchItemId > 0)
+    private void DrawTeamcraftImport()
+    {
+        ImGui.Text("TEAMCRAFT IMPORT");
+        ImGui.Separator();
+
+        ImGui.TextWrapped(
+            "Copia una lista Teamcraft negli appunti e importala direttamente in FROG.");
+
+        if (ImGui.Button("Importa da Clipboard"))
         {
-            var baseItemId = (uint)searchItemId;
+            var text = ImGui.GetClipboardText();
 
-            var totalQuantity =
-                plugin.InventoryIndex.GetTotalQuantity(baseItemId);
+            var importer =
+                new TeamcraftListImporter(Plugin.DataManager);
 
-            var nqQuantity =
-                plugin.InventoryIndex.GetNqQuantity(baseItemId);
+            importedRequirementSet =
+                importer.Import(text);
+        }
 
-            var hqQuantity =
-                plugin.InventoryIndex.GetHqQuantity(baseItemId);
+        if (importedRequirementSet == null)
+        {
+            ImGui.Text("Nessuna lista importata.");
+            return;
+        }
 
-            ImGui.Text($"Base Item ID: {baseItemId}");
-            ImGui.Text($"Quantità totale: {totalQuantity}");
-            ImGui.Text($"NQ: {nqQuantity}");
-            ImGui.Text($"HQ: {hqQuantity}");
+        ImGui.Spacing();
+
+        ImGui.Text(
+            $"Requirement importati: {importedRequirementSet.Requirements.Count}");
+
+        foreach (var requirement in importedRequirementSet.Requirements)
+        {
+            var quality =
+                requirement.QualityPolicy.ToString();
+
+            ImGui.Text(
+                $"Base {requirement.BaseItemId} | " +
+                $"Qty {requirement.Quantity} | " +
+                $"Quality {quality} | " +
+                $"Precraft {requirement.IsPrecraft}");
         }
     }
+
+    private void DrawIndexSearch()
+    {
+        ImGui.InputInt(
+            "Base Item ID",
+            ref searchItemId);
+
+        if (searchItemId <= 0)
+            return;
+
+        var baseItemId = (uint)searchItemId;
+
+        var totalQuantity =
+            plugin.InventoryIndex.GetTotalQuantity(baseItemId);
+
+        var nqQuantity =
+            plugin.InventoryIndex.GetNqQuantity(baseItemId);
+
+        var hqQuantity =
+            plugin.InventoryIndex.GetHqQuantity(baseItemId);
+
+        ImGui.Text($"Base Item ID: {baseItemId}");
+        ImGui.Text($"Quantità totale: {totalQuantity}");
+        ImGui.Text($"NQ: {nqQuantity}");
+        ImGui.Text($"HQ: {hqQuantity}");
+    }
+
+    private int searchItemId;
 
     private void DrawStorageIndexDiagnostics()
     {
