@@ -78,10 +78,10 @@ public sealed class RequirementResolver
         {
             var quantity = isHq
                 ? inventoryIndex.GetHqQuantity(
-                    requirement.ItemId,
+                    requirement.BaseItemId,
                     sourcePolicy.Source)
                 : inventoryIndex.GetNqQuantity(
-                    requirement.ItemId,
+                    requirement.BaseItemId,
                     sourcePolicy.Source);
 
             var used = Math.Min(quantity, remaining);
@@ -90,7 +90,7 @@ public sealed class RequirementResolver
             {
                 allocations.Add(
                     new RequirementAllocation(
-                        requirement.ItemId,
+                        requirement.BaseItemId,
                         sourcePolicy.Source,
                         used,
                         isHq));
@@ -148,10 +148,10 @@ public sealed class RequirementResolver
         {
             var quantity = isHq
                 ? inventoryIndex.GetHqQuantity(
-                    requirement.ItemId,
+                    requirement.BaseItemId,
                     sourcePolicy.Source)
                 : inventoryIndex.GetNqQuantity(
-                    requirement.ItemId,
+                    requirement.BaseItemId,
                     sourcePolicy.Source);
 
             var used = Math.Min(quantity, remaining);
@@ -160,7 +160,7 @@ public sealed class RequirementResolver
             {
                 allocations.Add(
                     new RequirementAllocation(
-                        requirement.ItemId,
+                        requirement.BaseItemId,
                         sourcePolicy.Source,
                         used,
                         isHq));
@@ -186,7 +186,7 @@ public sealed class RequirementResolver
         foreach (var sourcePolicy in sources)
         {
             var items = inventoryIndex
-                .Find(requirement.ItemId)
+                .Find(requirement.BaseItemId)
                 .Where(x =>
                     x.Storage == sourcePolicy.Source.Storage &&
                     x.OwnerId == sourcePolicy.Source.OwnerId &&
@@ -205,7 +205,7 @@ public sealed class RequirementResolver
                 {
                     allocations.Add(
                         new RequirementAllocation(
-                            requirement.ItemId,
+                            requirement.BaseItemId,
                             sourcePolicy.Source,
                             used,
                             item.IsHq));

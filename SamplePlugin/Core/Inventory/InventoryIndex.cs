@@ -1,109 +1,332 @@
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Text.Json;
 
 namespace FROG.Core.Inventory;
 
 public sealed class InventoryIndex
 {
+    private readonly object syncLock = new();
     private readonly List<InventoryItemSnapshot> items = new();
 
-    public IReadOnlyList<InventoryItemSnapshot> Items => items;
+    public IReadOnlyList<InventoryItemSnapshot> Items
+    {
+        get
+        {
+            lock (syncLock)
+            {
+                return items.ToList();
+            }
+        }
+    }
+
+    public bool IsDirty
+    {
+        get
+        {
+            lock (syncLock)
+            {
+                return isDirty;
+            }
+        }
+    }
+
+    private bool isDirty;
+
+    public bool ReplaceSource(
+        InventorySource source,
+        IEnumerable<InventoryItemSnapshot> snapshots)
+    {
+        var newSnapshots = snapshots
+            .Where(x =>
+                x.Storage == source.Storage &&
+                x.OwnerId == source.OwnerId &&
+                x.Container == source.Container)
+            .ToList();
+
+        lock (syncLock)
+        {
+            var existingSnapshots = items
+                .Where(x =>
+                    x.Storage == source.Storage &&
+                    x.OwnerId == source.OwnerId &&
+                    x.Container == source.Container)
+                .ToList();
+
+            var changed =
+                existingSnapshots.Count != newSnapshots.Count ||
+                existingSnapshots
+                    .OrderBy(x => x.Slot)
+                    .ThenBy(x => x.BaseItemId)
+                    .ThenBy(x => x.RawItemId)
+                    .ThenBy(x => x.Quantity)
+                    .ThenBy(x => x.IsHq)
+                    .Select(CreateComparisonKey)
+                    .SequenceEqual(
+                        newSnapshots
+                            .OrderBy(x => x.Slot)
+                            .ThenBy(x => x.BaseItemId)
+                            .ThenBy(x => x.RawItemId)
+                            .ThenBy(x => x.Quantity)
+                            .ThenBy(x => x.IsHq)
+                            .Select(CreateComparisonKey));
+
+            if (!changed)
+                return false;
+
+            items.RemoveAll(x =>
+                x.Storage == source.Storage &&
+                x.OwnerId == source.OwnerId &&
+                x.Container == source.Container);
+
+            items.AddRange(newSnapshots);
+
+            isDirty = true;
+
+            return true;
+        }
+    }
+
+    public bool ReplaceCharacterInventory(
+        ulong characterId,
+        IEnumerable<InventoryItemSnapshot> snapshots)
+    {
+        var newSnapshots = snapshots
+            .Where(x =>
+                x.Storage == StorageType.CharacterInventory &&
+                x.OwnerId == characterId)
+            .ToList();
+
+        lock (syncLock)
+        {
+            // Deliberately replace the complete current-character inventory
+            // on every synchronization.
+            //
+            // We do not compare the old and new contents here because the
+            // purpose of this method is to make GameInventory the source
+            // of truth for the currently logged-in character.
+            //
+            // Other characters and other storage types are untouched.
+            items.RemoveAll(x =>
+                x.Storage == StorageType.CharacterInventory &&
+                x.OwnerId == characterId);
+
+            items.AddRange(newSnapshots);
+
+            isDirty = true;
+
+            return true;
+        }
+    }
 
     public void ReplaceAll(IEnumerable<InventoryItemSnapshot> snapshots)
     {
-        items.Clear();
-        items.AddRange(snapshots);
+        lock (syncLock)
+        {
+            items.Clear();
+            items.AddRange(snapshots);
+            isDirty = true;
+        }
     }
 
-    public IEnumerable<InventoryItemSnapshot> Find(ulong itemId)
+    public void SaveToDisk(string filePath)
     {
-        return items.Where(x => x.ItemId == itemId);
+        List<InventoryItemSnapshot> snapshots;
+
+        lock (syncLock)
+        {
+            snapshots = items.ToList();
+        }
+
+        var directory = Path.GetDirectoryName(filePath);
+
+        if (!string.IsNullOrWhiteSpace(directory))
+            Directory.CreateDirectory(directory);
+
+        var json = JsonSerializer.Serialize(
+            snapshots,
+            new JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+
+        File.WriteAllText(filePath, json);
+
+        lock (syncLock)
+        {
+            isDirty = false;
+        }
     }
 
-    public IEnumerable<InventoryItemSnapshot> FindNq(ulong itemId)
+    public void LoadFromDisk(string filePath)
     {
-        return items.Where(x => x.ItemId == itemId && !x.IsHq);
+        if (!File.Exists(filePath))
+            return;
+
+        var json = File.ReadAllText(filePath);
+
+        var snapshots =
+            JsonSerializer.Deserialize<List<InventoryItemSnapshot>>(json);
+
+        if (snapshots == null)
+            return;
+
+        lock (syncLock)
+        {
+            items.Clear();
+            items.AddRange(snapshots);
+            isDirty = false;
+        }
     }
 
-    public IEnumerable<InventoryItemSnapshot> FindHq(ulong itemId)
+    public IEnumerable<InventoryItemSnapshot> Find(uint baseItemId)
     {
-        return items.Where(x => x.ItemId == itemId && x.IsHq);
+        lock (syncLock)
+        {
+            return items
+                .Where(x => x.BaseItemId == baseItemId)
+                .ToList();
+        }
     }
 
-    public int GetTotalQuantity(ulong itemId)
+    public IEnumerable<InventoryItemSnapshot> FindNq(uint baseItemId)
     {
-        return items
-            .Where(x => x.ItemId == itemId)
-            .Sum(x => x.Quantity);
+        lock (syncLock)
+        {
+            return items
+                .Where(x =>
+                    x.BaseItemId == baseItemId &&
+                    !x.IsHq)
+                .ToList();
+        }
     }
 
-    public int GetNqQuantity(ulong itemId)
+    public IEnumerable<InventoryItemSnapshot> FindHq(uint baseItemId)
     {
-        return items
-            .Where(x => x.ItemId == itemId && !x.IsHq)
-            .Sum(x => x.Quantity);
+        lock (syncLock)
+        {
+            return items
+                .Where(x =>
+                    x.BaseItemId == baseItemId &&
+                    x.IsHq)
+                .ToList();
+        }
     }
 
-    public int GetHqQuantity(ulong itemId)
+    public int GetTotalQuantity(uint baseItemId)
     {
-        return items
-            .Where(x => x.ItemId == itemId && x.IsHq)
-            .Sum(x => x.Quantity);
+        lock (syncLock)
+        {
+            return items
+                .Where(x => x.BaseItemId == baseItemId)
+                .Sum(x => x.Quantity);
+        }
+    }
+
+    public int GetNqQuantity(uint baseItemId)
+    {
+        lock (syncLock)
+        {
+            return items
+                .Where(x =>
+                    x.BaseItemId == baseItemId &&
+                    !x.IsHq)
+                .Sum(x => x.Quantity);
+        }
+    }
+
+    public int GetHqQuantity(uint baseItemId)
+    {
+        lock (syncLock)
+        {
+            return items
+                .Where(x =>
+                    x.BaseItemId == baseItemId &&
+                    x.IsHq)
+                .Sum(x => x.Quantity);
+        }
     }
 
     public int GetTotalQuantity(
-    ulong itemId,
-    InventorySource source)
+        uint baseItemId,
+        InventorySource source)
     {
-        return items
-            .Where(x =>
-                x.ItemId == itemId &&
-                x.Storage == source.Storage &&
-                x.OwnerId == source.OwnerId &&
-                x.Container == source.Container)
-            .Sum(x => x.Quantity);
+        lock (syncLock)
+        {
+            return items
+                .Where(x =>
+                    x.BaseItemId == baseItemId &&
+                    x.Storage == source.Storage &&
+                    x.OwnerId == source.OwnerId &&
+                    x.Container == source.Container)
+                .Sum(x => x.Quantity);
+        }
     }
 
     public int GetNqQuantity(
-        ulong itemId,
+        uint baseItemId,
         InventorySource source)
     {
-        return items
-            .Where(x =>
-                x.ItemId == itemId &&
-                !x.IsHq &&
-                x.Storage == source.Storage &&
-                x.OwnerId == source.OwnerId &&
-                x.Container == source.Container)
-            .Sum(x => x.Quantity);
+        lock (syncLock)
+        {
+            return items
+                .Where(x =>
+                    x.BaseItemId == baseItemId &&
+                    !x.IsHq &&
+                    x.Storage == source.Storage &&
+                    x.OwnerId == source.OwnerId &&
+                    x.Container == source.Container)
+                .Sum(x => x.Quantity);
+        }
     }
 
     public int GetHqQuantity(
-        ulong itemId,
+        uint baseItemId,
         InventorySource source)
     {
-        return items
-            .Where(x =>
-                x.ItemId == itemId &&
-                x.IsHq &&
-                x.Storage == source.Storage &&
-                x.OwnerId == source.OwnerId &&
-                x.Container == source.Container)
-            .Sum(x => x.Quantity);
+        lock (syncLock)
+        {
+            return items
+                .Where(x =>
+                    x.BaseItemId == baseItemId &&
+                    x.IsHq &&
+                    x.Storage == source.Storage &&
+                    x.OwnerId == source.OwnerId &&
+                    x.Container == source.Container)
+                .Sum(x => x.Quantity);
+        }
     }
 
     public IEnumerable<InventoryItemSnapshot> Find(
-    InventorySource source,
-    bool isHq)
+        InventorySource source,
+        bool isHq)
     {
-        return items.Where(x =>
-            x.ItemId != 0 &&
-            x.IsHq == isHq &&
-            x.Storage == source.Storage &&
-            x.OwnerId == source.OwnerId &&
-            x.Container == source.Container);
+        lock (syncLock)
+        {
+            return items
+                .Where(x =>
+                    x.BaseItemId != 0 &&
+                    x.IsHq == isHq &&
+                    x.Storage == source.Storage &&
+                    x.OwnerId == source.OwnerId &&
+                    x.Container == source.Container)
+                .ToList();
+        }
     }
 
-
-
+    private static string CreateComparisonKey(
+        InventoryItemSnapshot item)
+    {
+        return string.Join(
+            "|",
+            item.BaseItemId,
+            item.RawItemId,
+            item.Quantity,
+            item.IsHq,
+            item.Storage,
+            item.OwnerId,
+            item.Container,
+            item.Slot);
+    }
 }

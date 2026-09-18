@@ -1,7 +1,7 @@
 namespace FROG.Core.Inventory;
 
 public sealed record RequirementAllocation(
-    ulong ItemId,
+    uint BaseItemId,
     InventorySource Source,
     int Quantity,
     bool IsHq

@@ -1,5 +1,6 @@
 using System;
-using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.Inventory;
@@ -34,6 +35,10 @@ public class MainWindow : Window, IDisposable
     {
         ImGui.Text("FROG");
         ImGui.Separator();
+
+        DrawBuildInfo();
+
+        ImGui.Spacing();
 
         var playerState = Plugin.PlayerState;
 
@@ -74,8 +79,6 @@ public class MainWindow : Window, IDisposable
 
         ImGui.Spacing();
 
-        ScanPlayerInventory();
-
         ImGui.Text("INVENTARIO");
         ImGui.Separator();
 
@@ -101,73 +104,151 @@ public class MainWindow : Window, IDisposable
 
         ImGui.Spacing();
 
+        DrawSyncDiagnostics();
+
+        ImGui.Spacing();
+
         ImGui.Text("RICERCA NELL'INDICE");
         ImGui.Separator();
 
-        ImGui.InputInt("Item ID", ref searchItemId);
+        ImGui.InputInt("Base Item ID", ref searchItemId);
 
         if (searchItemId > 0)
         {
-            var itemId = (ulong)searchItemId;
+            var baseItemId = (uint)searchItemId;
+
             var totalQuantity =
-                plugin.InventoryIndex.GetTotalQuantity(itemId);
+                plugin.InventoryIndex.GetTotalQuantity(baseItemId);
 
-            var nqQuantity = plugin.InventoryIndex.GetNqQuantity(itemId);
-            var hqQuantity = plugin.InventoryIndex.GetHqQuantity(itemId);
+            var nqQuantity =
+                plugin.InventoryIndex.GetNqQuantity(baseItemId);
 
-            ImGui.Text($"Item ID: {itemId}");
+            var hqQuantity =
+                plugin.InventoryIndex.GetHqQuantity(baseItemId);
+
+            ImGui.Text($"Base Item ID: {baseItemId}");
             ImGui.Text($"Quantità totale: {totalQuantity}");
             ImGui.Text($"NQ: {nqQuantity}");
             ImGui.Text($"HQ: {hqQuantity}");
         }
     }
 
-    private void ScanPlayerInventory()
+    private void DrawSyncDiagnostics()
     {
-        var snapshots = new List<InventoryItemSnapshot>();
+        ImGui.Text("DEBUG SYNC RAM");
+        ImGui.Separator();
 
-        AddInventorySnapshots(
-            snapshots,
-            GameInventoryType.Inventory1);
+        if (plugin.LastSyncAtUtc == null)
+        {
+            ImGui.Text("Nessuna sincronizzazione eseguita.");
+            return;
+        }
 
-        AddInventorySnapshots(
-            snapshots,
-            GameInventoryType.Inventory2);
+        ImGui.Text(
+            $"Ultimo sync UTC: {plugin.LastSyncAtUtc:HH:mm:ss.fff}");
 
-        AddInventorySnapshots(
-            snapshots,
-            GameInventoryType.Inventory3);
+        ImGui.Text(
+            $"Character ID: {plugin.LastSyncCharacterId}");
 
-        AddInventorySnapshots(
-            snapshots,
-            GameInventoryType.Inventory4);
+        ImGui.Spacing();
 
-        plugin.InventoryIndex.ReplaceAll(snapshots);
+        ImGui.Text("DATI LETTI DA GAME INVENTORY");
+
+        if (searchItemId > 0)
+        {
+            var baseItemId = (uint)searchItemId;
+
+            var liveSnapshots = plugin.LastSyncSnapshots
+                .Where(x =>
+                    x.BaseItemId == baseItemId &&
+                    x.OwnerId == plugin.LastSyncCharacterId)
+                .OrderBy(x => x.Container)
+                .ThenBy(x => x.Slot)
+                .ToList();
+
+            if (liveSnapshots.Count == 0)
+            {
+                ImGui.Text("Nessuna entry trovata per questo Base Item ID.");
+            }
+            else
+            {
+                foreach (var snapshot in liveSnapshots)
+                {
+                    ImGui.Text(
+                        $"Container {snapshot.Container} | " +
+                        $"Slot {snapshot.Slot} | " +
+                        $"Qty {snapshot.Quantity} | " +
+                        $"Raw {snapshot.RawItemId}");
+                }
+            }
+        }
+        else
+        {
+            ImGui.Text(
+                "Inserisci il Base Item ID nella ricerca per vedere i dati dello sync.");
+        }
+
+        ImGui.Spacing();
+
+        ImGui.Text("DATI PRESENTI NELL'INVENTORY INDEX IN RAM");
+
+        if (searchItemId > 0)
+        {
+            var baseItemId = (uint)searchItemId;
+
+            var indexSnapshots = plugin.LastSyncIndexSnapshots
+                .Where(x => x.BaseItemId == baseItemId)
+                .OrderBy(x => x.Container)
+                .ThenBy(x => x.Slot)
+                .ToList();
+
+            if (indexSnapshots.Count == 0)
+            {
+                ImGui.Text("Nessuna entry trovata nell'indice.");
+            }
+            else
+            {
+                foreach (var snapshot in indexSnapshots)
+                {
+                    ImGui.Text(
+                        $"Container {snapshot.Container} | " +
+                        $"Slot {snapshot.Slot} | " +
+                        $"Qty {snapshot.Quantity} | " +
+                        $"Raw {snapshot.RawItemId}");
+                }
+            }
+        }
+        else
+        {
+            ImGui.Text(
+                "Inserisci il Base Item ID nella ricerca per vedere l'indice.");
+        }
     }
 
-    private static void AddInventorySnapshots(
-        List<InventoryItemSnapshot> snapshots,
-        GameInventoryType inventoryType)
+    private static void DrawBuildInfo()
     {
-        var inventoryItems =
-            Plugin.GameInventory.GetInventoryItems(inventoryType);
+        var assemblyPath = Plugin.PluginInterface.AssemblyLocation.FullName;
 
-        for (var slot = 0; slot < inventoryItems.Length; slot++)
+        if (!string.IsNullOrWhiteSpace(assemblyPath) &&
+            File.Exists(assemblyPath))
         {
-            var item = inventoryItems[slot];
+            var lastWriteTime = File.GetLastWriteTime(assemblyPath);
 
-            if (item.ItemId == 0)
-                continue;
+            ImGui.Text(
+                $"DLL aggiornata: {lastWriteTime:dd/MM/yyyy HH:mm:ss}");
 
-            snapshots.Add(
-                new InventoryItemSnapshot(
-                    item.ItemId,
-                    item.Quantity,
-                    item.IsHq,
-                    StorageType.CharacterInventory,
-                    Plugin.PlayerState.ContentId,
-                    (uint)inventoryType,
-                    slot));
+            ImGui.Text($"DLL: {assemblyPath}");
+        }
+        else
+        {
+            ImGui.Text("DLL aggiornata: percorso non disponibile.");
+        }
+
+        var version = typeof(Plugin).Assembly.GetName().Version;
+
+        if (version != null)
+        {
+            ImGui.Text($"Versione assembly: {version}");
         }
     }
 
@@ -189,7 +270,7 @@ public class MainWindow : Window, IDisposable
                 continue;
 
             ImGui.Text(
-                $"ItemId {item.ItemId} x{item.Quantity}" +
+                $"Base {item.BaseItemId} | Raw {item.ItemId} x{item.Quantity}" +
                 (item.IsHq ? " [HQ]" : " [NQ]"));
 
             shown++;

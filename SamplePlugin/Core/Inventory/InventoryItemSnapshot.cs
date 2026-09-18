@@ -1,11 +1,16 @@
+using System;
+
 namespace FROG.Core.Inventory;
 
 public sealed record InventoryItemSnapshot(
-    ulong ItemId,
+    uint BaseItemId,
+    uint RawItemId,
     int Quantity,
     bool IsHq,
     StorageType Storage,
     ulong OwnerId,
     uint Container,
-    int Slot
+    int Slot,
+    DateTime ObservedAtUtc,
+    bool IsVerified
 );

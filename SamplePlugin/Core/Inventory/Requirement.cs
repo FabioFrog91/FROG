@@ -10,7 +10,7 @@ public enum RequirementQualityPolicy
 }
 
 public sealed record Requirement(
-    ulong ItemId,
+    uint BaseItemId,
     int Quantity,
     RequirementQualityPolicy QualityPolicy
 );

@@ -14,7 +14,7 @@ public sealed class InventoryStackResolver
 
         var matchingItems = inventoryIndex
             .Find(allocation.Source, allocation.IsHq)
-            .Where(x => x.ItemId == allocation.ItemId)
+            .Where(x => x.BaseItemId == allocation.BaseItemId)
             .OrderBy(x => x.Container)
             .ThenBy(x => x.Slot)
             .ToList();
