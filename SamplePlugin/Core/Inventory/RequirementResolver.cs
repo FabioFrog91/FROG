@@ -9,16 +9,9 @@ public sealed class RequirementResolver
     public RequirementResolution Resolve(
         Requirement requirement,
         InventoryIndex inventoryIndex,
-        InventorySourceCatalog sourceCatalog)
+        InventorySourceCatalog sourceCatalog,
+        ResolutionPolicy resolutionPolicy)
     {
-        var usableSources = resolutionPolicy.Sources
-            .Where(source =>
-                sourceCatalog.Sources.Any(policy =>
-                    policy.Source == source &&
-                    policy.Read &&
-                    policy.Use))
-            .ToList();
-
         if (requirement.Quantity <= 0)
         {
             return new RequirementResolution(
@@ -27,6 +20,14 @@ public sealed class RequirementResolver
                 0,
                 Array.Empty<RequirementAllocation>());
         }
+
+        var usableSources = resolutionPolicy.Sources
+            .Where(source =>
+                sourceCatalog.Sources.Any(policy =>
+                    policy.Source == source &&
+                    policy.Read &&
+                    policy.Use))
+            .ToList();
 
         var allocations = requirement.QualityPolicy switch
         {
@@ -86,7 +87,7 @@ public sealed class RequirementResolver
         var allocations = new List<RequirementAllocation>();
         var remaining = requirement.Quantity;
 
-        foreach (var sourcePolicy in sources)
+        foreach (var source in sources)
         {
             var quantity = isHq
                 ? inventoryIndex.GetHqQuantity(
@@ -94,7 +95,7 @@ public sealed class RequirementResolver
                     source)
                 : inventoryIndex.GetNqQuantity(
                     requirement.BaseItemId,
-                    sourcePolicy.Source);
+                    source);
 
             var used = Math.Min(quantity, remaining);
 
@@ -103,7 +104,7 @@ public sealed class RequirementResolver
                 allocations.Add(
                     new RequirementAllocation(
                         requirement.BaseItemId,
-                        sourcePolicy.Source,
+                        source,
                         used,
                         isHq));
             }
@@ -120,7 +121,7 @@ public sealed class RequirementResolver
     private static List<RequirementAllocation> AllocatePreferredQuality(
         Requirement requirement,
         InventoryIndex inventoryIndex,
-        IReadOnlyList<SourcePolicy> sources,
+        IReadOnlyList<InventorySource> sources,
         bool preferredIsHq)
     {
         var allocations = AllocateQuality(
@@ -149,22 +150,22 @@ public sealed class RequirementResolver
     private static List<RequirementAllocation> AllocateRemainingQuality(
         Requirement requirement,
         InventoryIndex inventoryIndex,
-        IReadOnlyList<SourcePolicy> sources,
+        IReadOnlyList<InventorySource> sources,
         bool isHq,
         int quantityNeeded)
     {
         var allocations = new List<RequirementAllocation>();
         var remaining = quantityNeeded;
 
-        foreach (var sourcePolicy in sources)
+        foreach (var source in sources)
         {
             var quantity = isHq
                 ? inventoryIndex.GetHqQuantity(
                     requirement.BaseItemId,
-                    sourcePolicy.Source)
+                    source)
                 : inventoryIndex.GetNqQuantity(
                     requirement.BaseItemId,
-                    sourcePolicy.Source);
+                    source);
 
             var used = Math.Min(quantity, remaining);
 
@@ -173,7 +174,7 @@ public sealed class RequirementResolver
                 allocations.Add(
                     new RequirementAllocation(
                         requirement.BaseItemId,
-                        sourcePolicy.Source,
+                        source,
                         used,
                         isHq));
             }
@@ -190,21 +191,20 @@ public sealed class RequirementResolver
     private static List<RequirementAllocation> AllocateAny(
         Requirement requirement,
         InventoryIndex inventoryIndex,
-        IReadOnlyList<SourcePolicy> sources)
+        IReadOnlyList<InventorySource> sources)
     {
         var allocations = new List<RequirementAllocation>();
         var remaining = requirement.Quantity;
 
-        foreach (var sourcePolicy in sources)
+        foreach (var source in sources)
         {
             var items = inventoryIndex
                 .Find(requirement.BaseItemId)
                 .Where(x =>
-                    x.Storage == sourcePolicy.Source.Storage &&
-                    x.OwnerId == sourcePolicy.Source.OwnerId &&
-                    x.Container == sourcePolicy.Source.Container)
-                .OrderBy(x => x.IsHq)
-                .ThenBy(x => x.Slot)
+                    x.Storage == source.Storage &&
+                    x.OwnerId == source.OwnerId &&
+                    x.Container == source.Container)
+                .OrderBy(x => x.Slot)
                 .ToList();
 
             foreach (var item in items)
@@ -218,7 +218,7 @@ public sealed class RequirementResolver
                     allocations.Add(
                         new RequirementAllocation(
                             requirement.BaseItemId,
-                            sourcePolicy.Source,
+                            source,
                             used,
                             item.IsHq));
                 }
