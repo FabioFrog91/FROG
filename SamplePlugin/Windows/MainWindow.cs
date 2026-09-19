@@ -258,6 +258,46 @@ public class MainWindow : Window, IDisposable
 
         ImGui.Spacing();
 
+        if (ImGui.Button("COPIA TUTTO RESOLVER"))
+        {
+            ImGui.SetClipboardText(
+                BuildResolverClipboardText(
+                    importedRequirementSet,
+                    sourceCatalog,
+                    resolutionPolicy,
+                    plan));
+        }
+
+        ImGui.SameLine();
+
+        if (ImGui.Button("COPIA ORDINE PRIORITÀ"))
+        {
+            ImGui.SetClipboardText(
+                BuildPriorityClipboardText(
+                    resolutionPolicy,
+                    sourceCatalog));
+        }
+
+        ImGui.SameLine();
+
+        if (ImGui.Button("COPIA RESOLUTION"))
+        {
+            ImGui.SetClipboardText(
+                BuildResolutionClipboardText(
+                    importedRequirementSet,
+                    plan));
+        }
+
+        ImGui.SameLine();
+
+        if (ImGui.Button("COPIA TRANSFER INTENTS"))
+        {
+            ImGui.SetClipboardText(
+                BuildTransferIntentsClipboardText(plan));
+        }
+
+        ImGui.Spacing();
+
         if (ImGui.CollapsingHeader(
                 "ORDINE PRIORITÀ",
                 ImGuiTreeNodeFlags.DefaultOpen))
@@ -266,8 +306,28 @@ public class MainWindow : Window, IDisposable
                  i < resolutionPolicy.Sources.Count;
                  i++)
             {
+                var source =
+                    resolutionPolicy.Sources[i];
+
+                var sourcePolicy =
+                    sourceCatalog.Sources
+                        .FirstOrDefault(x => x.Source == source);
+
+                var read =
+                    sourcePolicy?.Read == true
+                        ? "YES"
+                        : "NO";
+
+                var use =
+                    sourcePolicy?.Use == true
+                        ? "YES"
+                        : "NO";
+
                 ImGui.Text(
-                    $"{i + 1}. {GetSourceName(resolutionPolicy.Sources[i])}");
+                    $"{i + 1}. " +
+                    $"{GetSourceName(source)} | " +
+                    $"{GetContainerName(source)} | " +
+                    $"READ={read} | USE={use}");
             }
         }
 
@@ -289,6 +349,7 @@ public class MainWindow : Window, IDisposable
                 {
                     ImGui.Text(
                         $"  -> {GetSourceName(allocation.Source)} | " +
+                        $"{GetContainerName(allocation.Source)} | " +
                         $"{(allocation.IsHq ? "HQ" : "NQ")} | " +
                         $"Qty {allocation.Quantity}");
                 }
@@ -315,6 +376,7 @@ public class MainWindow : Window, IDisposable
                     ImGui.Text(
                         $"{GetItemName(intent.BaseItemId)} | " +
                         $"{GetSourceName(intent.Source)} | " +
+                        $"{GetContainerName(intent.Source)} | " +
                         $"{(intent.IsHq ? "HQ" : "NQ")} | " +
                         $"Qty {intent.Quantity}");
                 }
@@ -526,8 +588,8 @@ public class MainWindow : Window, IDisposable
             indexSnapshots);
 
         ImGui.Spacing();
-ImGui.Spacing();
-}
+        ImGui.Spacing();
+    }
 
     private void DrawDebugTable(
         IReadOnlyList<InventoryItemSnapshot> liveSnapshots,
@@ -690,6 +752,174 @@ ImGui.Spacing();
             snapshot.Quantity,
             snapshot.IsHq ? "HQ" : "NQ",
             snapshot.IsVerified ? "YES" : "NO");
+    }
+
+    private string BuildResolverClipboardText(
+        RequirementSet requirementSet,
+        InventorySourceCatalog sourceCatalog,
+        ResolutionPolicy resolutionPolicy,
+        TransferPlan plan)
+    {
+        var lines =
+        new List<string>
+        {
+            "FROG DEBUG | RESOLVER / TRANSFER PLAN",
+            $"GeneratedUtc={DateTime.UtcNow:O}",
+            $"MainCharacterId={(Plugin.PlayerState.IsLoaded ? Plugin.PlayerState.ContentId : 0)}",
+            $"Requirements={requirementSet.Requirements.Count}",
+            $"Sources={resolutionPolicy.Sources.Count}",
+            $"Resolutions={plan.Resolutions.Count}",
+            $"Intents={plan.Intents.Count}",
+            $"Missing={plan.Missing}",
+            $"Complete={plan.IsComplete}",
+            string.Empty,
+            "===== ORDINE PRIORITÀ =====",
+                BuildPriorityClipboardText(
+                    resolutionPolicy,
+                    sourceCatalog),
+                string.Empty,
+                "===== RESOLUTION =====",
+                BuildResolutionClipboardText(
+                    requirementSet,
+                    plan),
+                string.Empty,
+                "===== TRANSFER INTENTS =====",
+                BuildTransferIntentsClipboardText(plan)
+            };
+
+        return string.Join(
+            Environment.NewLine,
+            lines);
+    }
+
+    private string BuildPriorityClipboardText(
+        ResolutionPolicy resolutionPolicy,
+        InventorySourceCatalog sourceCatalog)
+    {
+        var lines =
+        new List<string>
+        {
+            "FROG DEBUG | ORDINE PRIORITÀ",
+            $"GeneratedUtc={DateTime.UtcNow:O}",
+            $"MainCharacterId={(Plugin.PlayerState.IsLoaded ? Plugin.PlayerState.ContentId : 0)}",
+            string.Empty,
+            "PRIORITY\tSTORAGE\tSOURCE\tOWNER_ID\tCONTAINER\tREAD\tUSE"
+        };
+
+        for (var i = 0;
+             i < resolutionPolicy.Sources.Count;
+             i++)
+        {
+            var source =
+                resolutionPolicy.Sources[i];
+
+            var sourcePolicy =
+                sourceCatalog.Sources
+                    .FirstOrDefault(x => x.Source == source);
+
+            lines.Add(
+                string.Join(
+                    "\t",
+                    i + 1,
+                    source.Storage,
+                    GetSourceName(source),
+                    source.OwnerId,
+                    source.Container,
+                    (sourcePolicy?.Read == true ? "YES" : "NO"),
+                    (sourcePolicy?.Use == true ? "YES" : "NO")));
+        }
+
+        return string.Join(
+            Environment.NewLine,
+            lines);
+    }
+
+    private string BuildResolutionClipboardText(
+        RequirementSet requirementSet,
+        TransferPlan plan)
+    {
+        var lines =
+            new List<string>
+            {
+                "FROG DEBUG | RESOLUTION",
+                $"GeneratedUtc={DateTime.UtcNow:O}",
+                $"Complete={plan.IsComplete}",
+                $"Missing={plan.Missing}",
+                string.Empty,
+                "ITEM\tREQUIRED\tAVAILABLE\tMISSING\tSOURCE\tQUALITY\tQTY"
+            };
+
+        foreach (var resolution in plan.Resolutions)
+        {
+            if (resolution.Allocations.Count == 0)
+            {
+                lines.Add(
+                    string.Join(
+                        "\t",
+                        GetItemName(resolution.Requirement.BaseItemId),
+                        resolution.Requirement.Quantity,
+                        resolution.Available,
+                        resolution.Missing,
+                        "-",
+                        "-",
+                        0));
+
+                continue;
+            }
+
+            foreach (var allocation in resolution.Allocations)
+            {
+                lines.Add(
+                    string.Join(
+                        "\t",
+                        GetItemName(resolution.Requirement.BaseItemId),
+                        resolution.Requirement.Quantity,
+                        resolution.Available,
+                        resolution.Missing,
+                        GetSourceName(allocation.Source),
+                        allocation.IsHq ? "HQ" : "NQ",
+                        allocation.Quantity));
+            }
+        }
+
+        return string.Join(
+            Environment.NewLine,
+            lines);
+    }
+
+    private string BuildTransferIntentsClipboardText(
+        TransferPlan plan)
+    {
+        var lines =
+            new List<string>
+            {
+                "FROG DEBUG | TRANSFER INTENTS",
+                $"GeneratedUtc={DateTime.UtcNow:O}",
+                $"IntentCount={plan.Intents.Count}",
+                $"Complete={plan.IsComplete}",
+                $"Missing={plan.Missing}",
+                string.Empty,
+                "ITEM\tBASE_ID\tSOURCE\tSTORAGE\tOWNER_ID\tCONTAINER\tQUALITY\tQTY"
+            };
+
+        foreach (var intent in plan.Intents)
+        {
+            lines.Add(
+                string.Join(
+                    "\t",
+                    GetItemName(intent.BaseItemId),
+                    intent.BaseItemId,
+                    GetSourceName(intent.Source),
+                    intent.Source.Storage,
+                    intent.Source.OwnerId,
+                    intent.Source.Container,
+                    intent.IsHq ? "HQ" : "NQ",
+                    intent.Quantity));
+        }
+
+        return string.Join(
+            Environment.NewLine,
+            lines);
     }
 
     private static void DrawBuildInfo()
@@ -964,19 +1194,29 @@ ImGui.Spacing();
     private static string GetContainerName(
         InventoryItemSnapshot snapshot)
     {
-        return snapshot.Storage switch
+        return GetContainerName(
+            new InventorySource(
+                snapshot.Storage,
+                snapshot.OwnerId,
+                snapshot.Container));
+    }
+
+    private static string GetContainerName(
+        InventorySource source)
+    {
+        return source.Storage switch
         {
             StorageType.CharacterInventory =>
-                GetCharacterContainerName(snapshot.Container),
+                GetCharacterContainerName(source.Container),
 
             StorageType.Retainer =>
-                GetRetainerContainerName(snapshot.Container),
+                GetRetainerContainerName(source.Container),
 
             StorageType.FreeCompanyChest =>
-                GetFreeCompanyContainerName(snapshot.Container),
+                GetFreeCompanyContainerName(source.Container),
 
             _ =>
-                $"Container {snapshot.Container}"
+                $"Container {source.Container}"
         };
     }
 
@@ -1007,13 +1247,13 @@ ImGui.Spacing();
     {
         return container switch
         {
-            10001 => "Retainer Page 1",
-            10002 => "Retainer Page 2",
-            10003 => "Retainer Page 3",
-            10004 => "Retainer Page 4",
-            10005 => "Retainer Page 5",
-            10006 => "Retainer Page 6",
-            10007 => "Retainer Page 7",
+            10000 => "Retainer Page 1",
+            10001 => "Retainer Page 2",
+            10002 => "Retainer Page 3",
+            10003 => "Retainer Page 4",
+            10004 => "Retainer Page 5",
+            10005 => "Retainer Page 6",
+            10006 => "Retainer Page 7",
 
             _ =>
                 $"Retainer Container ({container})"
@@ -1025,11 +1265,11 @@ ImGui.Spacing();
     {
         return container switch
         {
-            20001 => "FC Chest Page 1",
-            20002 => "FC Chest Page 2",
-            20003 => "FC Chest Page 3",
-            20004 => "FC Chest Page 4",
-            20005 => "FC Chest Page 5",
+            20000 => "FC Chest Page 1",
+            20001 => "FC Chest Page 2",
+            20002 => "FC Chest Page 3",
+            20003 => "FC Chest Page 4",
+            20004 => "FC Chest Page 5",
 
             _ =>
                 $"FC Chest Container ({container})"
