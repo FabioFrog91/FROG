@@ -21,6 +21,8 @@ public class MainWindow : Window, IDisposable
     private readonly ICharacterMonitor characterMonitor;
 
     private RequirementSet? importedRequirementSet;
+    private PlannerPlan? globalPlannerPlan;
+    private readonly OptimizationSettings optimizationSettings = new();
 
     private int searchItemId;
 
@@ -298,6 +300,13 @@ public class MainWindow : Window, IDisposable
 
         ImGui.Spacing();
 
+        ImGui.Spacing();
+        DrawGlobalPlannerDiagnostics(
+            importedRequirementSet,
+            resolutionPolicy);
+
+        ImGui.Spacing();
+
         if (ImGui.CollapsingHeader(
                 "ORDINE PRIORITÀ",
                 ImGuiTreeNodeFlags.DefaultOpen))
@@ -381,6 +390,89 @@ public class MainWindow : Window, IDisposable
                         $"Qty {intent.Quantity}");
                 }
             }
+        }
+    }
+
+    private void DrawGlobalPlannerDiagnostics(
+        RequirementSet requirementSet,
+        ResolutionPolicy resolutionPolicy)
+    {
+        ImGui.Text("GLOBAL TRANSFER PLANNER");
+        ImGui.Separator();
+
+        ImGui.TextWrapped(
+            "Planner globale: risolve l'intera lista considerando inventario principale, retainer, FC e cambi personaggio.");
+
+        if (ImGui.Button("CALCOLA PIANO GLOBALE"))
+        {
+            var mainCharacterId =
+                Plugin.PlayerState.IsLoaded
+                    ? Plugin.PlayerState.ContentId
+                    : 0;
+
+            if (mainCharacterId != 0)
+            {
+                var state =
+                    new PlannerState(
+                        mainCharacterId,
+                        mainCharacterId,
+                        plugin.InventoryIndex.Items);
+
+                globalPlannerPlan =
+                    new GlobalTransferPlanner().Plan(
+                        requirementSet,
+                        state,
+                        resolutionPolicy,
+                        optimizationSettings);
+            }
+        }
+
+        if (globalPlannerPlan == null)
+        {
+            ImGui.Text("Nessun piano globale calcolato.");
+            return;
+        }
+
+        ImGui.Text(
+            $"Risultato: {globalPlannerPlan.Result}");
+
+        ImGui.Text(
+            $"Mancante: {globalPlannerPlan.Missing}");
+
+        ImGui.Text(
+            $"Cambi personaggio: {globalPlannerPlan.CharacterSwitches}");
+
+        ImGui.Text(
+            $"Accessi retainer: {globalPlannerPlan.RetainerAccesses}");
+
+        ImGui.Text(
+            $"Hop logici: {globalPlannerPlan.TransferHops}");
+
+        ImGui.Text(
+            $"Azioni: {globalPlannerPlan.Actions.Count}");
+
+        foreach (var action in globalPlannerPlan.Actions)
+        {
+            if (action.Type == PlannerActionType.SwitchCharacter)
+            {
+                ImGui.Text(
+                    $"SWITCH {action.FromCharacterId} -> {action.ToCharacterId}");
+
+                continue;
+            }
+
+            if (action.Source is null ||
+                action.Destination is null)
+            {
+                continue;
+            }
+
+            ImGui.Text(
+                $"{GetItemName(action.BaseItemId)} | " +
+                $"{(action.IsHq ? "HQ" : "NQ")} | " +
+                $"Qty {action.Quantity} | " +
+                $"{GetSourceName(action.Source)} -> " +
+                $"{GetSourceName(action.Destination)}");
         }
     }
 
@@ -1098,181 +1190,3 @@ public class MainWindow : Window, IDisposable
     private string GetFreeCompanySourceName(
         InventorySource source)
     {
-        var freeCompanyName =
-            characterMonitor.GetCharacterNameById(
-                source.OwnerId);
-
-        if (string.IsNullOrWhiteSpace(freeCompanyName))
-        {
-            var freeCompany =
-                characterMonitor.GetCharacterById(
-                    source.OwnerId);
-
-            freeCompanyName =
-                freeCompany?.Name.ToString();
-        }
-
-        if (string.IsNullOrWhiteSpace(freeCompanyName))
-        {
-            freeCompanyName =
-                $"Free Company {source.OwnerId}";
-        }
-
-        return freeCompanyName;
-    }
-
-    private string GetOwnerName(
-        InventoryItemSnapshot snapshot)
-    {
-        return snapshot.Storage switch
-        {
-            StorageType.CharacterInventory =>
-                GetCharacterInventoryOwnerName(snapshot.OwnerId),
-
-            StorageType.Retainer =>
-                GetRetainerOwnerName(snapshot.OwnerId),
-
-            StorageType.FreeCompanyChest =>
-                GetFreeCompanyOwnerName(snapshot.OwnerId),
-
-            _ =>
-                snapshot.OwnerId.ToString()
-        };
-    }
-
-    private string GetCharacterInventoryOwnerName(
-        ulong ownerId)
-    {
-        var characterName =
-            characterMonitor.GetCharacterNameById(ownerId);
-
-        if (!string.IsNullOrWhiteSpace(characterName))
-            return characterName;
-
-        if (Plugin.PlayerState.IsLoaded &&
-            Plugin.PlayerState.ContentId == ownerId)
-        {
-            return Plugin.PlayerState.CharacterName;
-        }
-
-        return $"Character {ownerId}";
-    }
-
-    private string GetRetainerOwnerName(
-        ulong ownerId)
-    {
-        var retainerName =
-            characterMonitor.GetCharacterNameById(ownerId);
-
-        if (!string.IsNullOrWhiteSpace(retainerName))
-            return retainerName;
-
-        return $"Retainer {ownerId}";
-    }
-
-    private string GetFreeCompanyOwnerName(
-        ulong ownerId)
-    {
-        var freeCompanyName =
-            characterMonitor.GetCharacterNameById(ownerId);
-
-        if (!string.IsNullOrWhiteSpace(freeCompanyName))
-            return freeCompanyName;
-
-        var freeCompany =
-            characterMonitor.GetCharacterById(ownerId);
-
-        var name =
-            freeCompany?.Name.ToString();
-
-        if (!string.IsNullOrWhiteSpace(name))
-            return name;
-
-        return $"Free Company {ownerId}";
-    }
-
-    private static string GetContainerName(
-        InventoryItemSnapshot snapshot)
-    {
-        return GetContainerName(
-            new InventorySource(
-                snapshot.Storage,
-                snapshot.OwnerId,
-                snapshot.Container));
-    }
-
-    private static string GetContainerName(
-        InventorySource source)
-    {
-        return source.Storage switch
-        {
-            StorageType.CharacterInventory =>
-                GetCharacterContainerName(source.Container),
-
-            StorageType.Retainer =>
-                GetRetainerContainerName(source.Container),
-
-            StorageType.FreeCompanyChest =>
-                GetFreeCompanyContainerName(source.Container),
-
-            _ =>
-                $"Container {source.Container}"
-        };
-    }
-
-    private static string GetCharacterContainerName(
-        uint container)
-    {
-        return container switch
-        {
-            (uint)GameInventoryType.Inventory1 =>
-                "Inventory 1",
-
-            (uint)GameInventoryType.Inventory2 =>
-                "Inventory 2",
-
-            (uint)GameInventoryType.Inventory3 =>
-                "Inventory 3",
-
-            (uint)GameInventoryType.Inventory4 =>
-                "Inventory 4",
-
-            _ =>
-                $"Inventory ({container})"
-        };
-    }
-
-    private static string GetRetainerContainerName(
-        uint container)
-    {
-        return container switch
-        {
-            10000 => "Retainer Page 1",
-            10001 => "Retainer Page 2",
-            10002 => "Retainer Page 3",
-            10003 => "Retainer Page 4",
-            10004 => "Retainer Page 5",
-            10005 => "Retainer Page 6",
-            10006 => "Retainer Page 7",
-
-            _ =>
-                $"Retainer Container ({container})"
-        };
-    }
-
-    private static string GetFreeCompanyContainerName(
-        uint container)
-    {
-        return container switch
-        {
-            20000 => "FC Chest Page 1",
-            20001 => "FC Chest Page 2",
-            20002 => "FC Chest Page 3",
-            20003 => "FC Chest Page 4",
-            20004 => "FC Chest Page 5",
-
-            _ =>
-                $"FC Chest Container ({container})"
-        };
-    }
-}
