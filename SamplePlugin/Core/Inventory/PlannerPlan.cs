@@ -39,10 +39,7 @@ public sealed class PlannerPlan
                 action.Type == PlannerActionType.Move &&
                 action.Source is not null &&
                 action.Destination is not null)
-            .Select(action =>
-                $"{action.Source!.Storage}:{action.Source.OwnerId}:{action.Source.Container}" +
-                $">" +
-                $"{action.Destination!.Storage}:{action.Destination.OwnerId}:{action.Destination.Container}")
+            .Select(BuildLogicalHopKey)
             .Distinct()
             .Count();
 
@@ -79,4 +76,14 @@ public sealed class PlannerPlan
             actions,
             result,
             missing);
+
+    private static string BuildLogicalHopKey(
+        PlannerAction action)
+    {
+        var source = action.Source!;
+        var destination = action.Destination!;
+
+        return $"{source.Storage}:{source.OwnerId}" +
+               $"->{destination.Storage}:{destination.OwnerId}";
+    }
 }
