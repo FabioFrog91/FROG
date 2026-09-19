@@ -5,7 +5,7 @@ using Dalamud.Plugin.Services;
 
 namespace FROG.Core.Inventory.Providers;
 
-public sealed class PlayerInventory : IPlayerInventory
+public sealed class PlayerInventory : PlayerInventoryAPI
 {
     private readonly IGameInventory gameInventory;
     private readonly IPlayerState playerState;
