@@ -61,7 +61,7 @@ public sealed class Plugin : HostedPlugin
 
     private CancellationTokenSource? loginSyncCancellation;
 
-    private readonly ICharacterInventoryProvider characterInventoryProvider;
+    private readonly PlayerInventoryAPI playerInventory;
 
     public Configuration Configuration { get; private set; } = null!;
 
@@ -90,8 +90,8 @@ public sealed class Plugin : HostedPlugin
     public Plugin(IDalamudPluginInterface pluginInterface)
         : base(pluginInterface)
     {
-        characterInventoryProvider =
-            new CharacterInventoryProvider(
+        playerInventory =
+            new PlayerInventory(
                 GameInventory,
                 PlayerState);
 
@@ -174,8 +174,8 @@ public sealed class Plugin : HostedPlugin
             .SingleInstance();
 
         containerBuilder
-            .RegisterType<CriticalCommonLibInventoryProvider>()
-            .As<ICriticalCommonLibInventoryProvider>()
+            .RegisterType<StorageReader>()
+            .As<StorageReaderAPI>()
             .SingleInstance();
 
         CclInventoryBootstrap.Register(containerBuilder);
@@ -332,7 +332,7 @@ public sealed class Plugin : HostedPlugin
             if (cancellationToken.IsCancellationRequested)
                 return;
 
-            if (!characterInventoryProvider.TryGetCurrentCharacter(
+            if (!playerInventory.TryGetCurrentCharacter(
                     out var characterId))
             {
                 continue;
@@ -357,7 +357,7 @@ public sealed class Plugin : HostedPlugin
 
     internal void SyncPlayerInventory()
     {
-        if (!characterInventoryProvider.TryGetCurrentCharacter(
+        if (!playerInventory.TryGetCurrentCharacter(
                 out var characterId))
         {
             return;
@@ -375,7 +375,7 @@ public sealed class Plugin : HostedPlugin
         LastSyncAtUtc = observedAtUtc;
 
         var allSnapshots =
-            characterInventoryProvider.ReadCurrentInventory(
+            playerInventory.ReadCurrentInventory(
                 characterId,
                 observedAtUtc);
 
@@ -395,11 +395,11 @@ public sealed class Plugin : HostedPlugin
     }
 
     internal void SyncStorageSources(
-        ICriticalCommonLibInventoryProvider storageProvider)
+        StorageReaderAPI storageReader)
     {
         var observedAtUtc = DateTime.UtcNow;
 
-        if (storageProvider.TryReadActiveRetainer(
+        if (storageReader.TryReadActiveRetainer(
                 observedAtUtc,
                 out var retainerSources,
                 out var retainerSnapshots))
@@ -419,7 +419,7 @@ public sealed class Plugin : HostedPlugin
             }
         }
 
-        if (storageProvider.TryReadActiveFreeCompany(
+        if (storageReader.TryReadActiveFreeCompany(
                 observedAtUtc,
                 out var freeCompanySources,
                 out var freeCompanySnapshots))
@@ -484,18 +484,18 @@ internal sealed class FrogInventoryStartup : IHostedService
 {
     private readonly IInventoryMonitor inventoryMonitor;
     private readonly IInventoryScanner inventoryScanner;
-    private readonly ICriticalCommonLibInventoryProvider storageProvider;
+    private readonly StorageReaderAPI storageReader;
     private readonly Plugin plugin;
 
     public FrogInventoryStartup(
         IInventoryMonitor inventoryMonitor,
         IInventoryScanner inventoryScanner,
-        ICriticalCommonLibInventoryProvider storageProvider,
+        StorageReaderAPI storageReader,
         Plugin plugin)
     {
         this.inventoryMonitor = inventoryMonitor;
         this.inventoryScanner = inventoryScanner;
-        this.storageProvider = storageProvider;
+        this.storageReader = storageReader;
         this.plugin = plugin;
     }
 
@@ -526,6 +526,6 @@ internal sealed class FrogInventoryStartup : IHostedService
         InventoryMonitor.ItemChanges? itemChanges)
     {
         plugin.SyncPlayerInventory();
-        plugin.SyncStorageSources(storageProvider);
+        plugin.SyncStorageSources(storageReader);
     }
 }
