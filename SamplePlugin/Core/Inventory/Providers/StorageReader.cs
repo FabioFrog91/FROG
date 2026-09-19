@@ -1,0 +1,186 @@
+using System;
+using System.Collections.Generic;
+using CriticalCommonLib.Services;
+using Dalamud.Utility;
+using FFXIVClientStructs.FFXIV.Client.Game;
+
+namespace FROG.Core.Inventory.Providers;
+
+public sealed class StorageReader
+    : IStorageReader
+{
+    private static readonly InventoryType[] RetainerPageTypes =
+    {
+        InventoryType.RetainerPage1,
+        InventoryType.RetainerPage2,
+        InventoryType.RetainerPage3,
+        InventoryType.RetainerPage4,
+        InventoryType.RetainerPage5,
+        InventoryType.RetainerPage6,
+        InventoryType.RetainerPage7
+    };
+
+    private readonly ICharacterMonitor characterMonitor;
+
+    public StorageReader(
+        ICharacterMonitor characterMonitor)
+    {
+        this.characterMonitor = characterMonitor;
+    }
+
+    public unsafe bool TryReadActiveRetainer(
+        DateTime observedAtUtc,
+        out IReadOnlyList<InventorySource> sources,
+        out IReadOnlyList<InventoryItemSnapshot> snapshots)
+    {
+        sources = Array.Empty<InventorySource>();
+        snapshots = Array.Empty<InventoryItemSnapshot>();
+
+        var retainerId = characterMonitor.ActiveRetainerId;
+
+        if (retainerId == 0)
+            return false;
+
+        var inventoryManager = InventoryManager.Instance();
+
+        if (inventoryManager == null)
+            return false;
+
+        var parentCharacterId =
+            characterMonitor.GetParentCharacterById(retainerId)?.CharacterId ?? 0;
+
+        var sourceList = new List<InventorySource>();
+        var snapshotList = new List<InventoryItemSnapshot>();
+
+        foreach (var containerType in RetainerPageTypes)
+        {
+            var container =
+                inventoryManager->GetInventoryContainer(containerType);
+
+            if (container == null || !container->IsLoaded)
+            {
+                sources = Array.Empty<InventorySource>();
+                snapshots = Array.Empty<InventoryItemSnapshot>();
+                return false;
+            }
+
+            var source = new InventorySource(
+                StorageType.Retainer,
+                retainerId,
+                (uint)containerType,
+                parentCharacterId);
+
+            sourceList.Add(source);
+
+            for (var slot = 0; slot < container->Size; slot++)
+            {
+                var item = container->Items[slot];
+
+                if (item.ItemId == 0)
+                    continue;
+
+                var baseItem = ItemUtil.GetBaseId(item.ItemId);
+                var isHq = item.Flags.HasFlag(InventoryItem.ItemFlags.HighQuality);
+
+                snapshotList.Add(
+                    new InventoryItemSnapshot(
+                        baseItem.ItemId,
+                        item.ItemId,
+                        item.Quantity,
+                        isHq,
+                        StorageType.Retainer,
+                        retainerId,
+                        (uint)containerType,
+                        slot,
+                        observedAtUtc,
+                        true));
+            }
+        }
+
+        sources = sourceList;
+        snapshots = snapshotList;
+
+        return true;
+    }
+
+    public bool TryReadActiveFreeCompany(
+        DateTime observedAtUtc,
+        out IReadOnlyList<InventorySource> sources,
+        out IReadOnlyList<InventoryItemSnapshot> snapshots)
+    {
+        sources = Array.Empty<InventorySource>();
+        snapshots = Array.Empty<InventoryItemSnapshot>();
+
+        var freeCompanyId =
+            characterMonitor.ActiveFreeCompanyId;
+
+        if (freeCompanyId == 0)
+            return false;
+
+        var sourceList = new List<InventorySource>();
+        var snapshotList = new List<InventoryItemSnapshot>();
+
+        var freeCompanyPages = new[]
+        {
+            InventoryType.FreeCompanyPage1,
+            InventoryType.FreeCompanyPage2,
+            InventoryType.FreeCompanyPage3,
+            InventoryType.FreeCompanyPage4,
+            InventoryType.FreeCompanyPage5
+        };
+
+        unsafe
+        {
+            var inventoryManager = InventoryManager.Instance();
+
+            if (inventoryManager == null)
+                return false;
+
+            foreach (var containerType in freeCompanyPages)
+            {
+                var container =
+                    inventoryManager->GetInventoryContainer(containerType);
+
+                if (container == null || !container->IsLoaded)
+                    continue;
+
+                var source = new InventorySource(
+                    StorageType.FreeCompanyChest,
+                    freeCompanyId,
+                    (uint)containerType,
+                    characterMonitor.ActiveCharacterId);
+
+                sourceList.Add(source);
+
+                for (var slot = 0; slot < container->Size; slot++)
+                {
+                    var item = container->Items[slot];
+
+                    if (item.ItemId == 0)
+                        continue;
+
+                    var baseItem = ItemUtil.GetBaseId(item.ItemId);
+                    var isHq = baseItem.Kind == ItemKind.Hq;
+
+                    snapshotList.Add(
+                        new InventoryItemSnapshot(
+                            baseItem.ItemId,
+                            item.ItemId,
+                            item.Quantity,
+                            isHq,
+                            StorageType.FreeCompanyChest,
+                            freeCompanyId,
+                            (uint)containerType,
+                            slot,
+                            observedAtUtc,
+                            true));
+                }
+            }
+        }
+
+        sources = sourceList;
+        snapshots = snapshotList;
+
+        return sourceList.Count > 0;
+    }
+}
