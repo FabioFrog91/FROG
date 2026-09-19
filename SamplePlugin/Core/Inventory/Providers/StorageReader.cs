@@ -160,7 +160,7 @@ public sealed class StorageReader
                         continue;
 
                     var baseItem = ItemUtil.GetBaseId(item.ItemId);
-                    var isHq = baseItem.Kind == ItemKind.Hq;
+                    var isHq = item.Flags.HasFlag(InventoryItem.ItemFlags.HighQuality);
 
                     snapshotList.Add(
                         new InventoryItemSnapshot(
