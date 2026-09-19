@@ -7,7 +7,7 @@ using FFXIVClientStructs.FFXIV.Client.Game;
 namespace FROG.Core.Inventory.Providers;
 
 public sealed class StorageReader
-    : IStorageReader
+    : StorageReaderAPI
 {
     private static readonly InventoryType[] RetainerPageTypes =
     {
