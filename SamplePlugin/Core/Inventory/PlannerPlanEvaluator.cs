@@ -1,93 +1,72 @@
-using FROG.Core.Inventory;
 using System;
+using System.Collections.Generic;
 using System.Linq;
 
-namespace SamplePlugin.Core.Inventory;
+namespace FROG.Core.Inventory;
 
 public sealed class PlannerPlanEvaluator
 {
     public PlannerPlanScore Evaluate(
         PlannerPlan plan,
+        RequirementSet requirements,
         ResolutionPolicy resolutionPolicy)
     {
-        var retainerAccesses = plan.Actions
-            .Where(action =>
-                action.Type == PlannerActionType.Move &&
-                action.Source is not null &&
-                action.Source.Storage == StorageType.Retainer)
-            .Select(action => action.Source!)
-            .Distinct()
-            .Count();
-
         var consumedStacks = CalculateConsumedStacks(plan);
         var sourcePriority = CalculateSourcePriority(plan, resolutionPolicy);
         var freshness = CalculateFreshness(plan);
         var alphabetical = CalculateAlphabeticalKey(plan);
+        var qualityFallback = CalculateQualityFallback(plan.FinalState, requirements);
 
         return new PlannerPlanScore(
             plan.CharacterSwitches,
-            retainerAccesses,
+            plan.RetainerAccesses,
             consumedStacks,
             plan.TransferHops,
             sourcePriority,
             freshness,
-            alphabetical);
+            alphabetical,
+            qualityFallback);
     }
 
     private static int CalculateConsumedStacks(PlannerPlan plan)
     {
-        var consumed = 0;
+        var initialStacks = plan.InitialState.Items
+            .Where(item => item.Storage == StorageType.Retainer)
+            .ToDictionary(
+                item => BuildStackKey(item),
+                item => item.Quantity);
 
-        foreach (var action in plan.Actions)
-        {
-            if (action.Type != PlannerActionType.Move ||
-                action.Source is null)
-            {
-                continue;
-            }
+        var finalStacks = plan.FinalState.Items
+            .Where(item => item.Storage == StorageType.Retainer)
+            .ToDictionary(
+                item => BuildStackKey(item),
+                item => item.Quantity);
 
-            var before = plan.InitialState
-                .Find(action.Source)
-                .Where(item =>
-                    item.BaseItemId == action.BaseItemId &&
-                    item.IsHq == action.IsHq)
-                .Sum(item => item.Quantity);
-
-            var after = plan.FinalState
-                .Find(action.Source)
-                .Where(item =>
-                    item.BaseItemId == action.BaseItemId &&
-                    item.IsHq == action.IsHq)
-                .Sum(item => item.Quantity);
-
-            if (before > 0 && after == 0)
-                consumed++;
-        }
-
-        return consumed;
+        return initialStacks.Count(pair =>
+            pair.Value > 0 &&
+            !finalStacks.TryGetValue(pair.Key, out var finalQuantity) ||
+            pair.Value > 0 &&
+            finalStacks.TryGetValue(pair.Key, out var remaining) &&
+            remaining == 0);
     }
+
+    private static string BuildStackKey(InventoryItemSnapshot item) =>
+        $"{item.OwnerId}:{item.Container}:{item.Slot}:{item.BaseItemId}:{item.IsHq}";
 
     private static int CalculateSourcePriority(
         PlannerPlan plan,
         ResolutionPolicy resolutionPolicy)
     {
         var total = 0;
+        var sources = resolutionPolicy.Sources.ToList();
 
         foreach (var action in plan.Actions)
         {
-            if (action.Type != PlannerActionType.Move ||
-                action.Source is null)
-            {
+            if (action.Type != PlannerActionType.Move || action.Source is null)
                 continue;
-            }
 
-            var index = resolutionPolicy.Sources
-                .ToList()
-                .IndexOf(action.Source);
-
-            total += index < 0
-                ? resolutionPolicy.Sources.Count
-                : index;
+            var index = sources.IndexOf(action.Source);
+            total += index < 0 ? sources.Count : index;
         }
 
         return total;
@@ -110,12 +89,11 @@ public sealed class PlannerPlanEvaluator
 
         return timestamps.Count == 0
             ? DateTime.MinValue
-            : timestamps.Max();
+            : timestamps.Min();
     }
 
-    private static string CalculateAlphabeticalKey(PlannerPlan plan)
-    {
-        return string.Join(
+    private static string CalculateAlphabeticalKey(PlannerPlan plan) =>
+        string.Join(
             "|",
             plan.Actions
                 .Where(action =>
@@ -124,6 +102,46 @@ public sealed class PlannerPlanEvaluator
                 .Select(action =>
                     $"{action.Source!.Storage}:{action.Source.OwnerId}:{action.Source.Container}")
                 .OrderBy(value => value));
+
+    private static int CalculateQualityFallback(
+        PlannerState state,
+        RequirementSet requirements)
+    {
+        var fallback = 0;
+
+        foreach (var requirement in requirements.Requirements)
+        {
+            if (requirement.QualityPolicy != RequirementQualityPolicy.HqFirst &&
+                requirement.QualityPolicy != RequirementQualityPolicy.NqFirst)
+            {
+                continue;
+            }
+
+            var hq = state.GetMainInventoryQuantity(
+                requirement.BaseItemId,
+                true);
+
+            var nq = state.GetMainInventoryQuantity(
+                requirement.BaseItemId,
+                false);
+
+            if (requirement.QualityPolicy == RequirementQualityPolicy.HqFirst)
+            {
+                var preferred = Math.Min(requirement.Quantity, hq);
+                fallback += Math.Min(
+                    Math.Max(0, requirement.Quantity - preferred),
+                    nq);
+            }
+            else
+            {
+                var preferred = Math.Min(requirement.Quantity, nq);
+                fallback += Math.Min(
+                    Math.Max(0, requirement.Quantity - preferred),
+                    hq);
+            }
+        }
+
+        return fallback;
     }
 }
 
@@ -134,12 +152,19 @@ public sealed record PlannerPlanScore(
     int TransferHops,
     int SourcePriority,
     DateTime Freshness,
-    string Alphabetical)
+    string Alphabetical,
+    int QualityFallback)
 {
     public int CompareTo(
         PlannerPlanScore other,
         OptimizationSettings settings)
     {
+        var qualityComparison =
+            QualityFallback.CompareTo(other.QualityFallback);
+
+        if (qualityComparison != 0)
+            return qualityComparison;
+
         foreach (var criterion in settings.Criteria)
         {
             var comparison = criterion switch

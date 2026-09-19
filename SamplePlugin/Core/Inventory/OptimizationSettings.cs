@@ -8,8 +8,7 @@ public sealed class OptimizationSettings
 {
     private readonly List<OptimizationCriterion> criteria;
 
-    public IReadOnlyList<OptimizationCriterion> Criteria =>
-        criteria;
+    public IReadOnlyList<OptimizationCriterion> Criteria => criteria;
 
     public OptimizationSettings()
     {
@@ -29,7 +28,6 @@ public sealed class OptimizationSettings
         IEnumerable<OptimizationCriterion> criteria)
     {
         this.criteria = criteria.ToList();
-
         EnsureAllCriteriaArePresent();
     }
 
@@ -42,15 +40,10 @@ public sealed class OptimizationSettings
                 "The optimization criterion is not configured.",
                 nameof(criterion));
 
-        if (targetIndex < 0 ||
-            targetIndex >= criteria.Count)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(targetIndex));
-        }
+        if (targetIndex < 0 || targetIndex >= criteria.Count)
+            throw new ArgumentOutOfRangeException(nameof(targetIndex));
 
-        var currentIndex =
-            criteria.IndexOf(criterion);
+        var currentIndex = criteria.IndexOf(criterion);
 
         if (currentIndex == targetIndex)
             return;
@@ -59,11 +52,8 @@ public sealed class OptimizationSettings
         criteria.Insert(targetIndex, criterion);
     }
 
-    public bool Contains(
-        OptimizationCriterion criterion)
-    {
-        return criteria.Contains(criterion);
-    }
+    public bool Contains(OptimizationCriterion criterion) =>
+        criteria.Contains(criterion);
 
     private void EnsureAllCriteriaArePresent()
     {
@@ -76,8 +66,7 @@ public sealed class OptimizationSettings
             }
         }
 
-        if (criteria.Count !=
-            Enum.GetValues<OptimizationCriterion>().Length)
+        if (criteria.Count != Enum.GetValues<OptimizationCriterion>().Length)
         {
             throw new InvalidOperationException(
                 "Optimization criteria must contain each criterion exactly once.");

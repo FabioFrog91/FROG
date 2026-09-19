@@ -7,65 +7,94 @@ namespace FROG.Core.Inventory;
 public sealed class PlannerState
 {
     private readonly List<InventoryItemSnapshot> items;
+    private readonly HashSet<ulong> visitedCharacters;
 
+    public ulong MainCharacterId { get; }
     public ulong CurrentCharacterId { get; }
-
-    public IReadOnlyList<InventoryItemSnapshot> Items =>
-        items.ToList();
+    public IReadOnlyList<InventoryItemSnapshot> Items => items.ToList();
+    public IReadOnlyCollection<ulong> VisitedCharacters => visitedCharacters.ToList();
 
     public PlannerState(
+        ulong mainCharacterId,
         ulong currentCharacterId,
         IEnumerable<InventoryItemSnapshot> items)
     {
+        if (mainCharacterId == 0)
+            throw new ArgumentOutOfRangeException(nameof(mainCharacterId));
+
+        if (currentCharacterId == 0)
+            throw new ArgumentOutOfRangeException(nameof(currentCharacterId));
+
+        MainCharacterId = mainCharacterId;
         CurrentCharacterId = currentCharacterId;
         this.items = items.ToList();
+        visitedCharacters = new HashSet<ulong>();
+
+        if (currentCharacterId != mainCharacterId)
+            visitedCharacters.Add(currentCharacterId);
     }
 
-    public PlannerState WithCurrentCharacter(
-        ulong characterId)
+    private PlannerState(
+        ulong mainCharacterId,
+        ulong currentCharacterId,
+        IEnumerable<InventoryItemSnapshot> items,
+        IEnumerable<ulong> visitedCharacters)
     {
+        MainCharacterId = mainCharacterId;
+        CurrentCharacterId = currentCharacterId;
+        this.items = items.ToList();
+        this.visitedCharacters = visitedCharacters.ToHashSet();
+    }
+
+    public bool HasVisitedCharacter(ulong characterId) =>
+        characterId != MainCharacterId &&
+        visitedCharacters.Contains(characterId);
+
+    public PlannerState WithCurrentCharacter(ulong characterId)
+    {
+        if (characterId == 0)
+            throw new ArgumentOutOfRangeException(nameof(characterId));
+
+        var updatedVisited = visitedCharacters.ToHashSet();
+
+        if (characterId != MainCharacterId)
+            updatedVisited.Add(characterId);
+
         return new PlannerState(
+            MainCharacterId,
             characterId,
-            items);
+            items,
+            updatedVisited);
     }
 
-    public PlannerState WithItems(
-        IEnumerable<InventoryItemSnapshot> newItems)
-    {
-        return new PlannerState(
+    public PlannerState WithItems(IEnumerable<InventoryItemSnapshot> newItems) =>
+        new PlannerState(
+            MainCharacterId,
             CurrentCharacterId,
-            newItems);
-    }
+            newItems,
+            visitedCharacters);
 
-    public IReadOnlyList<InventoryItemSnapshot> Find(
-        InventorySource source)
-    {
-        return items
+    public IReadOnlyList<InventoryItemSnapshot> Find(InventorySource source) =>
+        items
             .Where(item =>
                 item.Storage == source.Storage &&
                 item.OwnerId == source.OwnerId &&
                 item.Container == source.Container)
             .OrderBy(item => item.Slot)
             .ToList();
-    }
 
     public IEnumerable<InventoryItemSnapshot> Find(
         uint baseItemId,
-        bool isHq)
-    {
-        return items
-            .Where(item =>
-                item.BaseItemId == baseItemId &&
-                item.IsHq == isHq)
-            .ToList();
-    }
+        bool isHq) =>
+        items.Where(item =>
+            item.BaseItemId == baseItemId &&
+            item.IsHq == isHq);
 
     public int GetQuantity(
         uint baseItemId,
         bool isHq,
-        InventorySource source)
-    {
-        return items
+        InventorySource source) =>
+        items
             .Where(item =>
                 item.BaseItemId == baseItemId &&
                 item.IsHq == isHq &&
@@ -73,51 +102,59 @@ public sealed class PlannerState
                 item.OwnerId == source.OwnerId &&
                 item.Container == source.Container)
             .Sum(item => item.Quantity);
-    }
 
     public int GetMainInventoryQuantity(
         uint baseItemId,
-        bool isHq)
-    {
-        return items
+        bool isHq) =>
+        GetCharacterInventoryQuantity(
+            MainCharacterId,
+            baseItemId,
+            isHq);
+
+    public int GetCharacterInventoryQuantity(
+        ulong characterId,
+        uint baseItemId,
+        bool isHq) =>
+        items
             .Where(item =>
                 item.BaseItemId == baseItemId &&
                 item.IsHq == isHq &&
                 item.Storage == StorageType.CharacterInventory &&
-                item.OwnerId == CurrentCharacterId)
+                item.OwnerId == characterId)
             .Sum(item => item.Quantity);
-    }
 
-    public int GetTotalMainInventoryQuantity(
-        uint baseItemId)
-    {
-        return items
+    public int GetFreeCompanyQuantity(
+        uint baseItemId,
+        bool isHq) =>
+        items
+            .Where(item =>
+                item.BaseItemId == baseItemId &&
+                item.IsHq == isHq &&
+                item.Storage == StorageType.FreeCompanyChest)
+            .Sum(item => item.Quantity);
+
+    public int GetTotalMainInventoryQuantity(uint baseItemId) =>
+        items
             .Where(item =>
                 item.BaseItemId == baseItemId &&
                 item.Storage == StorageType.CharacterInventory &&
-                item.OwnerId == CurrentCharacterId)
+                item.OwnerId == MainCharacterId)
             .Sum(item => item.Quantity);
-    }
 
     public int GetAvailableQuantity(
         uint baseItemId,
-        bool isHq)
-    {
-        return items
+        bool isHq) =>
+        items
             .Where(item =>
                 item.BaseItemId == baseItemId &&
                 item.IsHq == isHq)
             .Sum(item => item.Quantity);
-    }
 
-    public bool ContainsSource(
-        InventorySource source)
-    {
-        return items.Any(item =>
+    public bool ContainsSource(InventorySource source) =>
+        items.Any(item =>
             item.Storage == source.Storage &&
             item.OwnerId == source.OwnerId &&
             item.Container == source.Container);
-    }
 
     public PlannerState Move(
         InventorySource source,
@@ -129,55 +166,45 @@ public sealed class PlannerState
         if (quantity <= 0)
             throw new ArgumentOutOfRangeException(nameof(quantity));
 
-        var available = GetQuantity(
-            baseItemId,
-            isHq,
-            source);
+        var matchingSourceItems = items
+            .Where(item =>
+                item.BaseItemId == baseItemId &&
+                item.IsHq == isHq &&
+                item.Storage == source.Storage &&
+                item.OwnerId == source.OwnerId &&
+                item.Container == source.Container)
+            .OrderBy(item => item.Slot)
+            .ToList();
 
-        if (available < quantity)
+        if (matchingSourceItems.Sum(item => item.Quantity) < quantity)
         {
             throw new InvalidOperationException(
                 "The planner state does not contain enough items in the source.");
         }
 
-        var updatedItems = items
-            .Select(item => item)
-            .ToList();
-
+        var rawItemId = matchingSourceItems[0].RawItemId;
+        var updatedItems = items.ToList();
         var remaining = quantity;
 
-        for (var i = 0; i < updatedItems.Count && remaining > 0; i++)
+        foreach (var sourceItem in matchingSourceItems)
         {
-            var item = updatedItems[i];
+            if (remaining == 0)
+                break;
 
-            if (item.BaseItemId != baseItemId ||
-                item.IsHq != isHq ||
-                item.Storage != source.Storage ||
-                item.OwnerId != source.OwnerId ||
-                item.Container != source.Container)
-            {
+            var index = updatedItems.IndexOf(sourceItem);
+            if (index < 0)
                 continue;
-            }
 
             var moved = Math.Min(
-                item.Quantity,
+                sourceItem.Quantity,
                 remaining);
 
-            var newQuantity = item.Quantity - moved;
+            var newQuantity = sourceItem.Quantity - moved;
 
             if (newQuantity == 0)
-            {
-                updatedItems.RemoveAt(i);
-                i--;
-            }
+                updatedItems.RemoveAt(index);
             else
-            {
-                updatedItems[i] =
-                    item with
-                    {
-                        Quantity = newQuantity
-                    };
-            }
+                updatedItems[index] = sourceItem with { Quantity = newQuantity };
 
             remaining -= moved;
         }
@@ -188,18 +215,16 @@ public sealed class PlannerState
                 "The planner state could not consume the requested quantity.");
         }
 
-        var destinationItemIndex =
-            updatedItems.FindIndex(item =>
-                item.BaseItemId == baseItemId &&
-                item.IsHq == isHq &&
-                item.Storage == destination.Storage &&
-                item.OwnerId == destination.OwnerId &&
-                item.Container == destination.Container);
+        var destinationItemIndex = updatedItems.FindIndex(item =>
+            item.BaseItemId == baseItemId &&
+            item.IsHq == isHq &&
+            item.Storage == destination.Storage &&
+            item.OwnerId == destination.OwnerId &&
+            item.Container == destination.Container);
 
         if (destinationItemIndex >= 0)
         {
-            var destinationItem =
-                updatedItems[destinationItemIndex];
+            var destinationItem = updatedItems[destinationItemIndex];
 
             updatedItems[destinationItemIndex] =
                 destinationItem with
@@ -209,20 +234,19 @@ public sealed class PlannerState
         }
         else
         {
-            var nextSlot =
-                updatedItems
-                    .Where(item =>
-                        item.Storage == destination.Storage &&
-                        item.OwnerId == destination.OwnerId &&
-                        item.Container == destination.Container)
-                    .Select(item => item.Slot)
-                    .DefaultIfEmpty(-1)
-                    .Max() + 1;
+            var nextSlot = updatedItems
+                .Where(item =>
+                    item.Storage == destination.Storage &&
+                    item.OwnerId == destination.OwnerId &&
+                    item.Container == destination.Container)
+                .Select(item => item.Slot)
+                .DefaultIfEmpty(-1)
+                .Max() + 1;
 
             updatedItems.Add(
                 new InventoryItemSnapshot(
                     baseItemId,
-                    0,
+                    rawItemId,
                     quantity,
                     isHq,
                     destination.Storage,
@@ -234,7 +258,9 @@ public sealed class PlannerState
         }
 
         return new PlannerState(
+            MainCharacterId,
             CurrentCharacterId,
-            updatedItems);
+            updatedItems,
+            visitedCharacters);
     }
 }

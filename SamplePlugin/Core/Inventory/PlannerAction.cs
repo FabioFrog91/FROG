@@ -1,6 +1,6 @@
 using FROG.Core.Inventory;
 
-namespace SamplePlugin.Core.Inventory;
+namespace FROG.Core.Inventory;
 
 public enum PlannerActionType
 {
@@ -23,9 +23,8 @@ public sealed record PlannerAction(
         InventorySource destination,
         uint baseItemId,
         bool isHq,
-        int quantity)
-    {
-        return new PlannerAction(
+        int quantity) =>
+        new(
             PlannerActionType.Move,
             source,
             destination,
@@ -34,13 +33,11 @@ public sealed record PlannerAction(
             quantity,
             0,
             0);
-    }
 
     public static PlannerAction SwitchCharacter(
         ulong fromCharacterId,
-        ulong toCharacterId)
-    {
-        return new PlannerAction(
+        ulong toCharacterId) =>
+        new(
             PlannerActionType.SwitchCharacter,
             null,
             null,
@@ -49,5 +46,4 @@ public sealed record PlannerAction(
             0,
             fromCharacterId,
             toCharacterId);
-    }
 }

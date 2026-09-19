@@ -1,5 +1,3 @@
-using SamplePlugin.Core.Inventory;
-using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -16,23 +14,37 @@ public sealed class PlannerPlan
     private readonly List<PlannerAction> actions;
 
     public PlannerState InitialState { get; }
-
     public PlannerState FinalState { get; }
-
-    public IReadOnlyList<PlannerAction> Actions =>
-        actions;
-
+    public IReadOnlyList<PlannerAction> Actions => actions;
     public PlannerPlanResult Result { get; }
-
     public int Missing { get; }
 
     public int CharacterSwitches =>
         actions.Count(action =>
             action.Type == PlannerActionType.SwitchCharacter);
 
+    public int RetainerAccesses =>
+        actions
+            .Where(action =>
+                action.Type == PlannerActionType.Move &&
+                action.Source?.Storage == StorageType.Retainer)
+            .Select(action =>
+                $"{action.Source!.OwnerId}:{action.Source.ParentCharacterId}")
+            .Distinct()
+            .Count();
+
     public int TransferHops =>
-        actions.Count(action =>
-            action.Type == PlannerActionType.Move);
+        actions
+            .Where(action =>
+                action.Type == PlannerActionType.Move &&
+                action.Source is not null &&
+                action.Destination is not null)
+            .Select(action =>
+                $"{action.Source!.Storage}:{action.Source.OwnerId}:{action.Source.Container}" +
+                $">" +
+                $"{action.Destination!.Storage}:{action.Destination.OwnerId}:{action.Destination.Container}")
+            .Distinct()
+            .Count();
 
     public PlannerPlan(
         PlannerState initialState,
@@ -50,29 +62,21 @@ public sealed class PlannerPlan
 
     public PlannerPlan Append(
         PlannerAction action,
-        PlannerState state)
-    {
-        var updatedActions = actions
-            .Append(action)
-            .ToList();
-
-        return new PlannerPlan(
+        PlannerState state) =>
+        new(
             InitialState,
             state,
-            updatedActions,
+            actions.Append(action),
             Result,
             Missing);
-    }
 
     public PlannerPlan WithResult(
         PlannerPlanResult result,
-        int missing)
-    {
-        return new PlannerPlan(
+        int missing) =>
+        new(
             InitialState,
             FinalState,
             actions,
             result,
             missing);
-    }
 }
