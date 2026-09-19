@@ -93,7 +93,8 @@ public sealed class StorageReader
                         (uint)containerType,
                         slot,
                         observedAtUtc,
-                        true));
+                        true,
+                        parentCharacterId));
             }
         }
 
@@ -173,7 +174,8 @@ public sealed class StorageReader
                             (uint)containerType,
                             slot,
                             observedAtUtc,
-                            true));
+                            true,
+                            characterMonitor.ActiveCharacterId));
                 }
             }
         }

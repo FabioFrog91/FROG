@@ -35,33 +35,43 @@ public sealed class SourceCatalog
         return sources;
     }
 
-    private static void AddCharacterInventorySources(
+    private void AddCharacterInventorySources(
         List<InventorySource> sources,
         ulong characterId)
     {
-        sources.Add(
-            new InventorySource(
-                StorageType.CharacterInventory,
-                characterId,
-                (uint)GameInventoryType.Inventory1));
+        var character =
+            characterMonitor.GetCharacterById(characterId);
+
+        var characterName =
+            character?.FormattedName ?? "Unknown";
 
         sources.Add(
             new InventorySource(
                 StorageType.CharacterInventory,
                 characterId,
-                (uint)GameInventoryType.Inventory2));
+                (uint)GameInventoryType.Inventory1,
+                OwnerName: characterName));
 
         sources.Add(
             new InventorySource(
                 StorageType.CharacterInventory,
                 characterId,
-                (uint)GameInventoryType.Inventory3));
+                (uint)GameInventoryType.Inventory2,
+                OwnerName: characterName));
 
         sources.Add(
             new InventorySource(
                 StorageType.CharacterInventory,
                 characterId,
-                (uint)GameInventoryType.Inventory4));
+                (uint)GameInventoryType.Inventory3,
+                OwnerName: characterName));
+
+        sources.Add(
+            new InventorySource(
+                StorageType.CharacterInventory,
+                characterId,
+                (uint)GameInventoryType.Inventory4,
+                OwnerName: characterName));
     }
 
     private void AddRetainerSources(
@@ -75,66 +85,78 @@ public sealed class SourceCatalog
         {
             var retainerId = retainer.Key;
 
+            var retainerName =
+                retainer.Value.FormattedName;
+
             AddRetainerContainers(
                 sources,
                 retainerId,
-                characterId);
+                characterId,
+                retainerName);
         }
     }
 
     private static void AddRetainerContainers(
         List<InventorySource> sources,
         ulong retainerId,
-        ulong characterId)
+        ulong characterId,
+        string retainerName)
     {
         sources.Add(
             new InventorySource(
                 StorageType.Retainer,
                 retainerId,
                 (uint)GameInventoryType.RetainerPage1,
-                characterId));
+                characterId,
+                retainerName));
 
         sources.Add(
             new InventorySource(
                 StorageType.Retainer,
                 retainerId,
                 (uint)GameInventoryType.RetainerPage2,
-                characterId));
+                characterId,
+                retainerName));
 
         sources.Add(
             new InventorySource(
                 StorageType.Retainer,
                 retainerId,
                 (uint)GameInventoryType.RetainerPage3,
-                characterId));
+                characterId,
+                retainerName));
 
         sources.Add(
             new InventorySource(
                 StorageType.Retainer,
                 retainerId,
                 (uint)GameInventoryType.RetainerPage4,
-                characterId));
+                characterId,
+                retainerName));
 
         sources.Add(
             new InventorySource(
                 StorageType.Retainer,
                 retainerId,
                 (uint)GameInventoryType.RetainerPage5,
-                characterId));
+                characterId,
+                retainerName));
 
         sources.Add(
             new InventorySource(
                 StorageType.Retainer,
                 retainerId,
                 (uint)GameInventoryType.RetainerPage6,
-                characterId));
+                characterId,
+                retainerName));
 
         sources.Add(
             new InventorySource(
                 StorageType.Retainer,
                 retainerId,
                 (uint)GameInventoryType.RetainerPage7,
-                characterId));
+                characterId,
+                retainerName));
     }
 
     private void AddFreeCompanySources(
@@ -150,41 +172,53 @@ public sealed class SourceCatalog
             return;
         }
 
-        var freeCompanyId = character.FreeCompanyId;
+        var freeCompanyId =
+            character.FreeCompanyId;
+
+        var freeCompany =
+            characterMonitor.GetCharacterById(freeCompanyId);
+
+        var freeCompanyName =
+            freeCompany?.FormattedName ?? "Unknown";
 
         sources.Add(
             new InventorySource(
                 StorageType.FreeCompanyChest,
                 freeCompanyId,
                 (uint)GameInventoryType.FreeCompanyPage1,
-                characterId));
+                characterId,
+                freeCompanyName));
 
         sources.Add(
             new InventorySource(
                 StorageType.FreeCompanyChest,
                 freeCompanyId,
                 (uint)GameInventoryType.FreeCompanyPage2,
-                characterId));
+                characterId,
+                freeCompanyName));
 
         sources.Add(
             new InventorySource(
                 StorageType.FreeCompanyChest,
                 freeCompanyId,
                 (uint)GameInventoryType.FreeCompanyPage3,
-                characterId));
+                characterId,
+                freeCompanyName));
 
         sources.Add(
             new InventorySource(
                 StorageType.FreeCompanyChest,
                 freeCompanyId,
                 (uint)GameInventoryType.FreeCompanyPage4,
-                characterId));
+                characterId,
+                freeCompanyName));
 
         sources.Add(
             new InventorySource(
                 StorageType.FreeCompanyChest,
                 freeCompanyId,
                 (uint)GameInventoryType.FreeCompanyPage5,
-                characterId));
+                characterId,
+                freeCompanyName));
     }
 }

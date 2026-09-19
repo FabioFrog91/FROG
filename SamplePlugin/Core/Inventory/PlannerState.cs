@@ -254,7 +254,8 @@ public sealed class PlannerState
                     destination.Container,
                     nextSlot,
                     DateTime.UtcNow,
-                    false));
+                    false,
+                    destination.ParentCharacterId));
         }
 
         return new PlannerState(

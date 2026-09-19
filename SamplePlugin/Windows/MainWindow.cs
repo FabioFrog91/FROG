@@ -140,6 +140,8 @@ public class MainWindow : Window, IDisposable
 
             importedRequirementSet =
                 importer.Import(text);
+
+            globalPlannerPlan = null;
         }
 
         if (importedRequirementSet == null)
@@ -450,12 +452,27 @@ public class MainWindow : Window, IDisposable
         ImGui.Text(
             $"Azioni: {globalPlannerPlan.Actions.Count}");
 
+        ImGui.Spacing();
+
+        if (ImGui.Button("COPIA PIANO GLOBALE"))
+        {
+            ImGui.SetClipboardText(
+                BuildGlobalPlannerClipboardText(
+                    requirementSet,
+                    globalPlannerPlan));
+        }
+
+        ImGui.Spacing();
+
         foreach (var action in globalPlannerPlan.Actions)
         {
             if (action.Type == PlannerActionType.SwitchCharacter)
             {
                 ImGui.Text(
-                    $"SWITCH {action.FromCharacterId} -> {action.ToCharacterId}");
+                    $"SWITCH {GetCharacterName(action.FromCharacterId)} " +
+                    $"({action.FromCharacterId}) -> " +
+                    $"{GetCharacterName(action.ToCharacterId)} " +
+                    $"({action.ToCharacterId})");
 
                 continue;
             }
@@ -473,6 +490,111 @@ public class MainWindow : Window, IDisposable
                 $"{GetSourceName(action.Source)} -> " +
                 $"{GetSourceName(action.Destination)}");
         }
+    }
+
+    private string BuildGlobalPlannerClipboardText(
+        RequirementSet requirementSet,
+        PlannerPlan plan)
+    {
+        var lines =
+            new List<string>
+            {
+                "FROG DEBUG | GLOBAL TRANSFER PLANNER",
+                $"GeneratedUtc={DateTime.UtcNow:O}",
+                $"MainCharacterId={(Plugin.PlayerState.IsLoaded ? Plugin.PlayerState.ContentId : 0)}",
+                $"Requirements={requirementSet.Requirements.Count}",
+                $"Result={plan.Result}",
+                $"Missing={plan.Missing}",
+                $"CharacterSwitches={plan.CharacterSwitches}",
+                $"RetainerAccesses={plan.RetainerAccesses}",
+                $"TransferHops={plan.TransferHops}",
+                $"Actions={plan.Actions.Count}",
+                string.Empty,
+                "===== ACTIONS ====="
+            };
+
+        var actionIndex = 1;
+
+        foreach (var action in plan.Actions)
+        {
+            if (action.Type == PlannerActionType.SwitchCharacter)
+            {
+                lines.Add(
+                    string.Join(
+                        "\t",
+                        actionIndex,
+                        "SWITCH",
+                        GetCharacterName(action.FromCharacterId),
+                        action.FromCharacterId,
+                        GetCharacterName(action.ToCharacterId),
+                        action.ToCharacterId));
+
+                actionIndex++;
+                continue;
+            }
+
+            if (action.Source is null ||
+                action.Destination is null)
+            {
+                continue;
+            }
+
+            lines.Add(
+                string.Join(
+                    "\t",
+                    actionIndex,
+                    "MOVE",
+                    GetItemName(action.BaseItemId),
+                    action.BaseItemId,
+                    action.IsHq ? "HQ" : "NQ",
+                    action.Quantity,
+                    GetSourceName(action.Source),
+                    action.Source.Storage,
+                    action.Source.OwnerId,
+                    action.Source.ParentCharacterId,
+                    GetContainerName(action.Source),
+                    GetSourceName(action.Destination),
+                    action.Destination.Storage,
+                    action.Destination.OwnerId,
+                    action.Destination.ParentCharacterId,
+                    GetContainerName(action.Destination)));
+
+            actionIndex++;
+        }
+
+        return string.Join(
+            Environment.NewLine,
+            lines);
+    }
+
+    private string GetCharacterName(
+        ulong characterId)
+    {
+        if (characterId == 0)
+            return "Unknown";
+
+        if (Plugin.PlayerState.IsLoaded &&
+            Plugin.PlayerState.ContentId == characterId)
+        {
+            return Plugin.PlayerState.CharacterName;
+        }
+
+        var character =
+            characterMonitor.GetCharacterById(characterId);
+
+        if (character != null &&
+            !string.IsNullOrWhiteSpace(character.FormattedName))
+        {
+            return character.FormattedName;
+        }
+
+        var name =
+            characterMonitor.GetCharacterNameById(characterId);
+
+        if (!string.IsNullOrWhiteSpace(name))
+            return name;
+
+        return $"Character {characterId}";
     }
 
     private void DrawClientDiagnostics()
@@ -865,18 +987,18 @@ public class MainWindow : Window, IDisposable
             $"Complete={plan.IsComplete}",
             string.Empty,
             "===== ORDINE PRIORITÀ =====",
-                BuildPriorityClipboardText(
-                    resolutionPolicy,
-                    sourceCatalog),
-                string.Empty,
-                "===== RESOLUTION =====",
-                BuildResolutionClipboardText(
-                    requirementSet,
-                    plan),
-                string.Empty,
-                "===== TRANSFER INTENTS =====",
-                BuildTransferIntentsClipboardText(plan)
-            };
+            BuildPriorityClipboardText(
+                resolutionPolicy,
+                sourceCatalog),
+            string.Empty,
+            "===== RESOLUTION =====",
+            BuildResolutionClipboardText(
+                requirementSet,
+                plan),
+            string.Empty,
+            "===== TRANSFER INTENTS =====",
+            BuildTransferIntentsClipboardText(plan)
+        };
 
         return string.Join(
             Environment.NewLine,
@@ -1106,56 +1228,94 @@ public class MainWindow : Window, IDisposable
         InventoryItemSnapshot snapshot)
     {
         var parentCharacterId =
-            snapshot.Storage == StorageType.Retainer
-                ? characterMonitor.GetParentCharacterById(
-                    snapshot.OwnerId)?.CharacterId ?? 0
-                : snapshot.Storage == StorageType.FreeCompanyChest
-                    ? characterMonitor.GetCharacterById(
+            snapshot.ParentCharacterId;
+
+        if (parentCharacterId == 0)
+        {
+            parentCharacterId =
+                snapshot.Storage == StorageType.Retainer
+                    ? characterMonitor.GetParentCharacterById(
                         snapshot.OwnerId)?.CharacterId ?? 0
-                    : 0;
+                    : snapshot.Storage == StorageType.FreeCompanyChest
+                        ? characterMonitor.GetCharacterById(
+                            snapshot.OwnerId)?.CharacterId ?? 0
+                        : 0;
+        }
+
+        var ownerName =
+            GetSnapshotOwnerName(snapshot);
 
         return new InventorySource(
             snapshot.Storage,
             snapshot.OwnerId,
             snapshot.Container,
-            parentCharacterId);
+            parentCharacterId,
+            ownerName);
+    }
+
+    private string GetSnapshotOwnerName(
+        InventoryItemSnapshot snapshot)
+    {
+        return snapshot.Storage switch
+        {
+            StorageType.CharacterInventory =>
+                GetCharacterInventoryOwnerName(snapshot.OwnerId),
+
+            StorageType.Retainer =>
+                GetRetainerOwnerName(snapshot.OwnerId),
+
+            StorageType.FreeCompanyChest =>
+                GetFreeCompanyOwnerName(snapshot.OwnerId),
+
+            _ =>
+                snapshot.OwnerId.ToString()
+        };
     }
 
     private string GetSourceName(
         InventorySource source)
     {
-        return source.Storage switch
+        var ownerName =
+            source.OwnerName;
+
+        if (string.IsNullOrWhiteSpace(ownerName))
         {
-            StorageType.CharacterInventory =>
-                GetCharacterInventorySourceName(source),
+            ownerName =
+                source.Storage switch
+                {
+                    StorageType.CharacterInventory =>
+                        GetCharacterInventorySourceName(source),
 
-            StorageType.Retainer =>
-                GetRetainerSourceName(source),
+                    StorageType.Retainer =>
+                        GetRetainerSourceName(source),
 
-            StorageType.FreeCompanyChest =>
-                GetFreeCompanySourceName(source),
+                    StorageType.FreeCompanyChest =>
+                        GetFreeCompanySourceName(source),
 
-            _ =>
-                source.Storage.ToString()
-        };
+                    _ =>
+                        source.Storage.ToString()
+                };
+        }
+
+        if (source.Storage == StorageType.Retainer)
+        {
+            var parentName =
+                GetCharacterName(source.ParentCharacterId);
+
+            if (!string.IsNullOrWhiteSpace(parentName) &&
+                !parentName.StartsWith("Character ", StringComparison.Ordinal))
+            {
+                return $"{ownerName} ({parentName})";
+            }
+        }
+
+        return ownerName;
     }
 
     private string GetCharacterInventorySourceName(
         InventorySource source)
     {
-        var characterName =
-            characterMonitor.GetCharacterNameById(
-                source.OwnerId);
-
-        if (string.IsNullOrWhiteSpace(characterName))
-        {
-            characterName =
-                Plugin.PlayerState.IsLoaded
-                    ? Plugin.PlayerState.CharacterName
-                    : "Personaggio";
-        }
-
-        return characterName;
+        return GetCharacterName(source.OwnerId);
     }
 
     private string GetRetainerSourceName(
@@ -1165,25 +1325,20 @@ public class MainWindow : Window, IDisposable
             characterMonitor.GetCharacterNameById(
                 source.OwnerId);
 
-        if (string.IsNullOrWhiteSpace(retainerName))
-            retainerName = $"Retainer {source.OwnerId}";
+        if (!string.IsNullOrWhiteSpace(retainerName))
+            return retainerName;
 
-        var parentId =
-            characterMonitor.GetParentCharacterById(
-                source.OwnerId)?.CharacterId ?? 0;
+        var retainer =
+            characterMonitor.GetCharacterById(
+                source.OwnerId);
 
-        if (parentId != 0)
+        if (retainer != null &&
+            !string.IsNullOrWhiteSpace(retainer.FormattedName))
         {
-            var parentName =
-                characterMonitor.GetCharacterNameById(parentId);
-
-            if (!string.IsNullOrWhiteSpace(parentName))
-            {
-                return $"{retainerName} ({parentName})";
-            }
+            return retainer.FormattedName;
         }
 
-        return retainerName;
+        return $"Retainer {source.OwnerId}";
     }
 
     private string GetFreeCompanySourceName(
@@ -1193,23 +1348,26 @@ public class MainWindow : Window, IDisposable
             characterMonitor.GetCharacterNameById(
                 source.OwnerId);
 
-        if (string.IsNullOrWhiteSpace(freeCompanyName))
-        {
-            var freeCompany =
-                characterMonitor.GetCharacterById(
-                    source.OwnerId);
+        if (!string.IsNullOrWhiteSpace(freeCompanyName))
+            return freeCompanyName;
 
-            freeCompanyName =
-                freeCompany?.Name.ToString();
+        var freeCompany =
+            characterMonitor.GetCharacterById(
+                source.OwnerId);
+
+        if (freeCompany != null &&
+            !string.IsNullOrWhiteSpace(freeCompany.FormattedName))
+        {
+            return freeCompany.FormattedName;
         }
 
-        if (string.IsNullOrWhiteSpace(freeCompanyName))
-        {
-            freeCompanyName =
-                $"Free Company {source.OwnerId}";
-        }
+        var name =
+            freeCompany?.Name.ToString();
 
-        return freeCompanyName;
+        if (!string.IsNullOrWhiteSpace(name))
+            return name;
+
+        return $"Free Company {source.OwnerId}";
     }
 
     private string GetOwnerName(
@@ -1234,19 +1392,7 @@ public class MainWindow : Window, IDisposable
     private string GetCharacterInventoryOwnerName(
         ulong ownerId)
     {
-        var characterName =
-            characterMonitor.GetCharacterNameById(ownerId);
-
-        if (!string.IsNullOrWhiteSpace(characterName))
-            return characterName;
-
-        if (Plugin.PlayerState.IsLoaded &&
-            Plugin.PlayerState.ContentId == ownerId)
-        {
-            return Plugin.PlayerState.CharacterName;
-        }
-
-        return $"Character {ownerId}";
+        return GetCharacterName(ownerId);
     }
 
     private string GetRetainerOwnerName(
@@ -1257,6 +1403,15 @@ public class MainWindow : Window, IDisposable
 
         if (!string.IsNullOrWhiteSpace(retainerName))
             return retainerName;
+
+        var retainer =
+            characterMonitor.GetCharacterById(ownerId);
+
+        if (retainer != null &&
+            !string.IsNullOrWhiteSpace(retainer.FormattedName))
+        {
+            return retainer.FormattedName;
+        }
 
         return $"Retainer {ownerId}";
     }

@@ -4,5 +4,6 @@ public sealed record InventorySource(
     StorageType Storage,
     ulong OwnerId,
     uint Container,
-    ulong ParentCharacterId = 0
+    ulong ParentCharacterId = 0,
+    string OwnerName = ""
 );

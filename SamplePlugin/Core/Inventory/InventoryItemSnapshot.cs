@@ -12,5 +12,6 @@ public sealed record InventoryItemSnapshot(
     uint Container,
     int Slot,
     DateTime ObservedAtUtc,
-    bool IsVerified
+    bool IsVerified,
+    ulong ParentCharacterId = 0
 );
