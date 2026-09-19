@@ -7,11 +7,65 @@ using FFXIVClientStructs.FFXIV.Client.Game;
 
 namespace FROG.Core.Inventory.Providers;
 
+public sealed record RawRetainerItemDiagnostic(
+    ulong RetainerId,
+    InventoryType ContainerType,
+    int Slot,
+    uint RawItemId,
+    uint BaseItemId,
+    int Quantity,
+    bool IsHq
+);
+
+public sealed record RetainerScannerComparisonDiagnostic(
+    ulong RetainerId,
+    InventoryType ContainerType,
+    int Slot,
+    uint GetInventoryRawItemId,
+    int GetInventoryQuantity,
+    uint RetainerBagRawItemId,
+    int RetainerBagQuantity,
+    bool SameItem,
+    bool SameQuantity
+);
+
 public sealed class CriticalCommonLibInventoryProvider
     : ICriticalCommonLibInventoryProvider
 {
+    private static readonly object diagnosticLock = new();
+
+    private static List<RawRetainerItemDiagnostic> lastRawRetainerItems = new();
+
+    private static List<RetainerScannerComparisonDiagnostic>
+        lastRetainerScannerComparisons = new();
+
     private readonly ICharacterMonitor characterMonitor;
     private readonly IInventoryScanner inventoryScanner;
+
+    public static IReadOnlyList<RawRetainerItemDiagnostic> LastRawRetainerItems
+    {
+        get
+        {
+            lock (diagnosticLock)
+            {
+                return new List<RawRetainerItemDiagnostic>(
+                    lastRawRetainerItems);
+            }
+        }
+    }
+
+    public static IReadOnlyList<RetainerScannerComparisonDiagnostic>
+        LastRetainerScannerComparisons
+    {
+        get
+        {
+            lock (diagnosticLock)
+            {
+                return new List<RetainerScannerComparisonDiagnostic>(
+                    lastRetainerScannerComparisons);
+            }
+        }
+    }
 
     public CriticalCommonLibInventoryProvider(
         ICharacterMonitor characterMonitor,
@@ -28,6 +82,12 @@ public sealed class CriticalCommonLibInventoryProvider
     {
         sources = Array.Empty<InventorySource>();
         snapshots = Array.Empty<InventoryItemSnapshot>();
+
+        SetRawRetainerDiagnostics(
+            Array.Empty<RawRetainerItemDiagnostic>());
+
+        SetRetainerScannerComparisonDiagnostics(
+            Array.Empty<RetainerScannerComparisonDiagnostic>());
 
         var retainerId = characterMonitor.ActiveRetainerId;
 
@@ -46,6 +106,11 @@ public sealed class CriticalCommonLibInventoryProvider
 
         var sourceList = new List<InventorySource>();
         var snapshotList = new List<InventoryItemSnapshot>();
+        var rawDiagnosticList =
+            new List<RawRetainerItemDiagnostic>();
+
+        var comparisonDiagnosticList =
+            new List<RetainerScannerComparisonDiagnostic>();
 
         foreach (var containerType in loadedContainers)
         {
@@ -65,12 +130,24 @@ public sealed class CriticalCommonLibInventoryProvider
                     retainerId,
                     containerType);
 
+            AddScannerComparisonDiagnostics(
+                comparisonDiagnosticList,
+                retainerId,
+                containerType,
+                items);
+
             AddSnapshots(
                 snapshotList,
                 items,
                 source,
-                observedAtUtc);
+                observedAtUtc,
+                rawDiagnosticList,
+                containerType);
         }
+
+        SetRawRetainerDiagnostics(rawDiagnosticList);
+        SetRetainerScannerComparisonDiagnostics(
+            comparisonDiagnosticList);
 
         sources = sourceList;
         snapshots = snapshotList;
@@ -155,11 +232,114 @@ public sealed class CriticalCommonLibInventoryProvider
                containerType <= InventoryType.RetainerPage7;
     }
 
+    private void AddScannerComparisonDiagnostics(
+        List<RetainerScannerComparisonDiagnostic> diagnostics,
+        ulong retainerId,
+        InventoryType containerType,
+        InventoryItem[] getInventoryItems)
+    {
+        var retainerBagItems =
+            GetRetainerBagItems(
+                retainerId,
+                containerType);
+
+        if (retainerBagItems == null)
+            return;
+
+        var maxLength =
+            Math.Max(
+                getInventoryItems.Length,
+                retainerBagItems.Length);
+
+        for (var slot = 0; slot < maxLength; slot++)
+        {
+            var getInventoryItem =
+                slot < getInventoryItems.Length
+                    ? getInventoryItems[slot]
+                    : default;
+
+            var retainerBagItem =
+                slot < retainerBagItems.Length
+                    ? retainerBagItems[slot]
+                    : default;
+
+            if (getInventoryItem.ItemId == 0 &&
+                retainerBagItem.ItemId == 0)
+            {
+                continue;
+            }
+
+            diagnostics.Add(
+                new RetainerScannerComparisonDiagnostic(
+                    retainerId,
+                    containerType,
+                    slot,
+                    getInventoryItem.ItemId,
+                    getInventoryItem.Quantity,
+                    retainerBagItem.ItemId,
+                    retainerBagItem.Quantity,
+                    getInventoryItem.ItemId ==
+                        retainerBagItem.ItemId,
+                    getInventoryItem.Quantity ==
+                        retainerBagItem.Quantity));
+        }
+    }
+
+    private InventoryItem[]? GetRetainerBagItems(
+        ulong retainerId,
+        InventoryType containerType)
+    {
+        if (retainerId != characterMonitor.ActiveRetainerId)
+            return null;
+
+        return containerType switch
+        {
+            InventoryType.RetainerPage1 =>
+                inventoryScanner.RetainerBag1.TryGetValue(
+                    retainerId,
+                    out var page1)
+                    ? page1
+                    : null,
+
+            InventoryType.RetainerPage2 =>
+                inventoryScanner.RetainerBag2.TryGetValue(
+                    retainerId,
+                    out var page2)
+                    ? page2
+                    : null,
+
+            InventoryType.RetainerPage3 =>
+                inventoryScanner.RetainerBag3.TryGetValue(
+                    retainerId,
+                    out var page3)
+                    ? page3
+                    : null,
+
+            InventoryType.RetainerPage4 =>
+                inventoryScanner.RetainerBag4.TryGetValue(
+                    retainerId,
+                    out var page4)
+                    ? page4
+                    : null,
+
+            InventoryType.RetainerPage5 =>
+                inventoryScanner.RetainerBag5.TryGetValue(
+                    retainerId,
+                    out var page5)
+                    ? page5
+                    : null,
+
+            _ => null
+        };
+    }
+
     private static void AddSnapshots(
         List<InventoryItemSnapshot> snapshots,
         InventoryItem[] items,
         InventorySource source,
-        DateTime observedAtUtc)
+        DateTime observedAtUtc,
+        List<RawRetainerItemDiagnostic>? rawDiagnostics = null,
+        InventoryType? containerType = null)
     {
         for (var slot = 0; slot < items.Length; slot++)
         {
@@ -169,19 +349,51 @@ public sealed class CriticalCommonLibInventoryProvider
                 continue;
 
             var baseItem = ItemUtil.GetBaseId(item.ItemId);
+            var isHq = baseItem.Kind == ItemKind.Hq;
+
+            rawDiagnostics?.Add(
+                new RawRetainerItemDiagnostic(
+                    source.OwnerId,
+                    containerType ?? (InventoryType)source.Container,
+                    slot,
+                    item.ItemId,
+                    baseItem.ItemId,
+                    item.Quantity,
+                    isHq));
 
             snapshots.Add(
                 new InventoryItemSnapshot(
                     baseItem.ItemId,
                     item.ItemId,
                     item.Quantity,
-                    baseItem.Kind == ItemKind.Hq,
+                    isHq,
                     source.Storage,
                     source.OwnerId,
                     source.Container,
                     slot,
                     observedAtUtc,
                     true));
+        }
+    }
+
+    private static void SetRawRetainerDiagnostics(
+        IEnumerable<RawRetainerItemDiagnostic> diagnostics)
+    {
+        lock (diagnosticLock)
+        {
+            lastRawRetainerItems =
+                new List<RawRetainerItemDiagnostic>(diagnostics);
+        }
+    }
+
+    private static void SetRetainerScannerComparisonDiagnostics(
+        IEnumerable<RetainerScannerComparisonDiagnostic> diagnostics)
+    {
+        lock (diagnosticLock)
+        {
+            lastRetainerScannerComparisons =
+                new List<RetainerScannerComparisonDiagnostic>(
+                    diagnostics);
         }
     }
 }
