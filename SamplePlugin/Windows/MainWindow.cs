@@ -28,6 +28,8 @@ public class MainWindow : Window, IDisposable
     private Task<PlannerPlan>? globalPlannerTask;
     private GlobalTransferPlannerDiagnostics? globalPlannerDiagnostics;
     private string? globalPlannerError;
+    private int? globalPlannerResolverMissingSnapshot;
+    private DateTime? globalPlannerResolverSyncSnapshot;
     private readonly OptimizationSettings optimizationSettings = new();
 
     private RequirementSet? resolverCachedRequirementSet;
@@ -650,6 +652,19 @@ public class MainWindow : Window, IDisposable
         ImGui.Text(
             $"Mancante: {globalPlannerPlan.Missing}");
 
+        if (globalPlannerResolverMissingSnapshot.HasValue)
+        {
+            var delta =
+                globalPlannerPlan.Missing -
+                globalPlannerResolverMissingSnapshot.Value;
+
+            ImGui.Text(
+                $"Resolver stesso snapshot: {globalPlannerResolverMissingSnapshot.Value}");
+
+            ImGui.Text(
+                $"Delta planner-resolver: {delta:+#;-#;0}");
+        }
+
         ImGui.Text(
             $"Cambi personaggio: {globalPlannerPlan.CharacterSwitches}");
 
@@ -765,6 +780,12 @@ public class MainWindow : Window, IDisposable
 
         globalPlannerPlan = null;
         globalPlannerError = null;
+
+        globalPlannerResolverMissingSnapshot =
+            resolverCachedPlan?.Missing;
+
+        globalPlannerResolverSyncSnapshot =
+            plugin.LastSyncAtUtc;
 
         var planner =
             new GlobalTransferPlanner();
@@ -1088,6 +1109,9 @@ public class MainWindow : Window, IDisposable
                 $"Requirements={requirementSet.Requirements.Count}",
                 $"Result={plan.Result}",
                 $"Missing={plan.Missing}",
+                $"ResolverMissingSnapshot={(globalPlannerResolverMissingSnapshot.HasValue ? globalPlannerResolverMissingSnapshot.Value : -1)}",
+                $"MissingDeltaVsResolver={(globalPlannerResolverMissingSnapshot.HasValue ? plan.Missing - globalPlannerResolverMissingSnapshot.Value : 0)}",
+                $"ResolverSyncSnapshotUtc={(globalPlannerResolverSyncSnapshot.HasValue ? globalPlannerResolverSyncSnapshot.Value.ToString("O") : "n/a")}",
                 $"CharacterSwitches={plan.CharacterSwitches}",
                 $"RetainerAccesses={plan.RetainerAccesses}",
                 $"TransferHops={plan.TransferHops}",
