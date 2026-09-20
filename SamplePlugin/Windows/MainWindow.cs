@@ -34,6 +34,8 @@ public class MainWindow : Window, IDisposable
     private PlanExecutionBaseline? planExecutionBaseline;
     private PlanExecutionVerificationResult? planExecutionVerificationResult;
     private PlanExecutionReconciliationResult? planExecutionReconciliationResult;
+    private string? globalPlannerReplanMessage;
+    private bool autoStartExecutionAfterPlannerCompletion;
     private int? globalPlannerResolverMissingSnapshot;
     private DateTime? globalPlannerResolverSyncSnapshot;
     private readonly OptimizationSettings optimizationSettings = new();
@@ -684,6 +686,13 @@ public class MainWindow : Window, IDisposable
         ImGui.Text(
             $"Azioni: {globalPlannerPlan.Actions.Count}");
 
+        if (!string.IsNullOrWhiteSpace(
+                globalPlannerReplanMessage))
+        {
+            ImGui.TextWrapped(
+                globalPlannerReplanMessage);
+        }
+
         if (globalPlannerDiagnostics != null)
         {
             ImGui.Spacing();
@@ -705,7 +714,11 @@ public class MainWindow : Window, IDisposable
         ImGui.Spacing();
 
         DrawPlanExecutionSession(
-            globalPlannerPlan);
+            globalPlannerPlan,
+            requirementSet);
+
+        if (globalPlannerPlan == null)
+            return;
 
         ImGui.Spacing();
 
@@ -738,7 +751,8 @@ public class MainWindow : Window, IDisposable
     }
 
     private void DrawPlanExecutionSession(
-        PlannerPlan plan)
+        PlannerPlan plan,
+        RequirementSet requirementSet)
     {
         ImGui.Text("ESECUZIONE MANUALE");
         ImGui.Separator();
@@ -825,21 +839,9 @@ public class MainWindow : Window, IDisposable
                     plugin.InventoryIndex,
                     currentCharacterId);
 
-            if (planExecutionVerificationResult.Status ==
-                PlanExecutionVerificationStatus.Verified)
-            {
-                planExecutionSession.TryMarkCurrentVerified();
-                planExecutionBaseline = null;
-                planExecutionReconciliationResult = null;
-
-                ImGui.Text(
-                    "Azione verificata. Passaggio alla successiva.");
-
-                return;
-            }
-
-            if (planExecutionVerificationResult.Status ==
-                PlanExecutionVerificationStatus.Mismatch)
+            if (action.Type == PlannerActionType.Move &&
+                planExecutionVerificationResult.Status !=
+                    PlanExecutionVerificationStatus.WaitingForObservation)
             {
                 var observation =
                     planExecutionVerifier.Observe(
@@ -851,10 +853,33 @@ public class MainWindow : Window, IDisposable
                         action,
                         planExecutionBaseline,
                         observation);
+
+                if (planExecutionReconciliationResult.HasVariance)
+                {
+                    StartExecutionReplanTask(
+                        requirementSet,
+                        plan,
+                        planExecutionReconciliationResult);
+
+                    return;
+                }
             }
             else
             {
                 planExecutionReconciliationResult = null;
+            }
+
+            if (planExecutionVerificationResult.Status ==
+                PlanExecutionVerificationStatus.Verified)
+            {
+                planExecutionSession.TryMarkCurrentVerified();
+                planExecutionBaseline = null;
+                planExecutionReconciliationResult = null;
+
+                ImGui.Text(
+                    "Azione verificata. Passaggio alla successiva.");
+
+                return;
             }
         }
 
@@ -942,16 +967,97 @@ public class MainWindow : Window, IDisposable
         RequirementSet requirementSet,
         ResolutionPolicy resolutionPolicy)
     {
-        if (globalPlannerTask != null)
-            return;
-
-        var mainCharacterId =
+        var currentCharacterId =
             Plugin.PlayerState.IsLoaded
                 ? Plugin.PlayerState.ContentId
                 : 0;
 
-        if (mainCharacterId == 0)
+        if (currentCharacterId == 0)
             return;
+
+        StartGlobalPlannerTask(
+            requirementSet,
+            resolutionPolicy,
+            currentCharacterId,
+            currentCharacterId,
+            replanMessage: null,
+            autoStartExecution: false);
+    }
+
+    private void StartExecutionReplanTask(
+        RequirementSet requirementSet,
+        PlannerPlan previousPlan,
+        PlanExecutionReconciliationResult reconciliation)
+    {
+        if (globalPlannerTask != null)
+            return;
+
+        var currentCharacterId =
+            Plugin.PlayerState.IsLoaded
+                ? Plugin.PlayerState.ContentId
+                : 0;
+
+        var mainCharacterId =
+            previousPlan.InitialState.MainCharacterId;
+
+        if (currentCharacterId == 0 ||
+            mainCharacterId == 0)
+        {
+            return;
+        }
+
+        var currentItems =
+            plugin.InventoryIndex.Items;
+
+        var sources =
+            BuildPlannerSources(
+                currentItems,
+                mainCharacterId);
+
+        var resolutionPolicy =
+            new ResolutionPolicy(
+                sources,
+                mainCharacterId);
+
+        var variance =
+            reconciliation.VarianceQuantity;
+
+        var varianceText =
+            variance switch
+            {
+                > 0 => $"+{variance}",
+                < 0 => variance.ToString(),
+                _ => "0"
+            };
+
+        var replanMessage =
+            $"REPLAN ESECUZIONE: previsto {reconciliation.PlannedQuantity}, " +
+            $"osservato {reconciliation.ObservedTransferredQuantity} " +
+            $"(varianza {varianceText}). Piano residuo ricalcolato dallo stato reale.";
+
+        StartGlobalPlannerTask(
+            requirementSet,
+            resolutionPolicy,
+            mainCharacterId,
+            currentCharacterId,
+            replanMessage,
+            autoStartExecution: true);
+    }
+
+    private void StartGlobalPlannerTask(
+        RequirementSet requirementSet,
+        ResolutionPolicy resolutionPolicy,
+        ulong mainCharacterId,
+        ulong currentCharacterId,
+        string? replanMessage,
+        bool autoStartExecution)
+    {
+        if (globalPlannerTask != null ||
+            mainCharacterId == 0 ||
+            currentCharacterId == 0)
+        {
+            return;
+        }
 
         var requirementSetSnapshot =
             new RequirementSet(
@@ -979,7 +1085,7 @@ public class MainWindow : Window, IDisposable
         var stateSnapshot =
             new PlannerState(
                 mainCharacterId,
-                mainCharacterId,
+                currentCharacterId,
                 plannerItems);
 
         var resolutionPolicySnapshot =
@@ -995,11 +1101,26 @@ public class MainWindow : Window, IDisposable
         globalPlannerError = null;
         ResetPlanExecutionSession();
 
-        globalPlannerResolverMissingSnapshot =
-            resolverCachedPlan?.Missing;
+        globalPlannerReplanMessage =
+            replanMessage;
 
-        globalPlannerResolverSyncSnapshot =
-            plugin.LastSyncAtUtc;
+        autoStartExecutionAfterPlannerCompletion =
+            autoStartExecution;
+
+        if (replanMessage == null)
+        {
+            globalPlannerResolverMissingSnapshot =
+                resolverCachedPlan?.Missing;
+
+            globalPlannerResolverSyncSnapshot =
+                plugin.LastSyncAtUtc;
+        }
+        else
+        {
+            globalPlannerResolverMissingSnapshot = null;
+            globalPlannerResolverSyncSnapshot =
+                plugin.LastSyncAtUtc;
+        }
 
         var planner =
             new GlobalTransferPlanner();
@@ -1034,6 +1155,14 @@ public class MainWindow : Window, IDisposable
 
             globalPlannerError = null;
             ResetPlanExecutionSession();
+
+            if (autoStartExecutionAfterPlannerCompletion &&
+                globalPlannerPlan != null)
+            {
+                planExecutionSession =
+                    new PlanExecutionSession(
+                        globalPlannerPlan);
+            }
         }
         catch (Exception ex)
         {
@@ -1043,6 +1172,7 @@ public class MainWindow : Window, IDisposable
         }
         finally
         {
+            autoStartExecutionAfterPlannerCompletion = false;
             globalPlannerTask = null;
         }
     }
