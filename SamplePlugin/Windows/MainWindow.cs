@@ -22,6 +22,7 @@ public class MainWindow : Window, IDisposable
     private readonly ICharacterMonitor characterMonitor;
     private readonly CharacterCatalog characterCatalog;
     private readonly PlannerSourceBuilder plannerSourceBuilder;
+    private readonly RetainerDisplayLocator retainerDisplayLocator;
 
     private RequirementSet? importedRequirementSet;
     private readonly GlobalPlannerCoordinator globalPlannerCoordinator = new();
@@ -47,12 +48,14 @@ public class MainWindow : Window, IDisposable
     public MainWindow(
         Plugin plugin,
         ICharacterMonitor characterMonitor,
-        CharacterCatalog characterCatalog)
+        CharacterCatalog characterCatalog,
+        RetainerDisplayLocator retainerDisplayLocator)
         : base("FROG")
     {
         this.plugin = plugin;
         this.characterMonitor = characterMonitor;
         this.characterCatalog = characterCatalog;
+        this.retainerDisplayLocator = retainerDisplayLocator;
         plannerSourceBuilder =
             new PlannerSourceBuilder(
                 characterCatalog,
@@ -867,7 +870,11 @@ public class MainWindow : Window, IDisposable
                 $"Qty {action.Quantity}");
 
             ImGui.TextWrapped(
-                $"DA: {GetSourceName(action.Source)} | {GetContainerName(action.Source)}");
+                $"DA: {GetSourceName(action.Source)} | " +
+                GetActionSourceLocationText(
+                    plan,
+                    session.CurrentActionIndex - 1,
+                    action));
 
             ImGui.TextWrapped(
                 $"A: {GetSourceName(action.Destination)} | {GetContainerName(action.Destination)}");
@@ -1366,7 +1373,10 @@ public class MainWindow : Window, IDisposable
                     action.Source.Storage,
                     action.Source.OwnerId,
                     action.Source.ParentCharacterId,
-                    GetContainerName(action.Source),
+                    GetActionSourceLocationText(
+                        plan,
+                        actionIndex - 1,
+                        action),
                     GetSourceName(action.Destination),
                     action.Destination.Storage,
                     action.Destination.OwnerId,
@@ -2251,6 +2261,46 @@ public class MainWindow : Window, IDisposable
         return $"Free Company {ownerId}";
     }
 
+    private string GetActionSourceLocationText(
+        PlannerPlan plan,
+        int actionIndex,
+        PlannerAction action)
+    {
+        if (action.Source is null)
+            return "Source non disponibile";
+
+        if (action.Source.Storage != StorageType.Retainer)
+        {
+            return GetContainerName(
+                action.Source);
+        }
+
+        var displayLocation =
+            retainerDisplayLocator.LocateSource(
+                plan,
+                actionIndex);
+
+        var internalContainer =
+            GetContainerName(
+                action.Source);
+
+        if (!displayLocation.IsAvailable)
+        {
+            return
+                $"Posizione visibile retainer non disponibile | {internalContainer}";
+        }
+
+        var visiblePositions =
+            string.Join(
+                ", ",
+                displayLocation.Positions
+                    .Select(position =>
+                        $"Pagina {position.Page}, slot {position.Slot} x{position.Quantity}"));
+
+        return
+            $"{visiblePositions} | {internalContainer}";
+    }
+
     private static string GetContainerName(
         InventoryItemSnapshot snapshot)
     {
@@ -2310,13 +2360,13 @@ public class MainWindow : Window, IDisposable
     {
         return container switch
         {
-            10000 => "Retainer Page 1",
-            10001 => "Retainer Page 2",
-            10002 => "Retainer Page 3",
-            10003 => "Retainer Page 4",
-            10004 => "Retainer Page 5",
-            10005 => "Retainer Page 6",
-            10006 => "Retainer Page 7",
+            10000 => "Retainer Internal Container 1",
+            10001 => "Retainer Internal Container 2",
+            10002 => "Retainer Internal Container 3",
+            10003 => "Retainer Internal Container 4",
+            10004 => "Retainer Internal Container 5",
+            10005 => "Retainer Internal Container 6",
+            10006 => "Retainer Internal Container 7",
 
             _ =>
                 $"Retainer Container ({container})"
