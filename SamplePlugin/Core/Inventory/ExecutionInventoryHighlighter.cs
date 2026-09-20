@@ -23,6 +23,7 @@ public readonly record struct ExecutionQuantityBadgeAnchor(
 public sealed unsafe class ExecutionInventoryHighlighter
 {
     private const uint SlotNodeOffset = 3;
+    private const int TargetRetryIntervalMs = 100;
 
     private readonly IGameGui gameGui;
     private readonly PlanExecutionRuntime executionRuntime;
@@ -32,7 +33,10 @@ public sealed unsafe class ExecutionInventoryHighlighter
 
     private PlannerPlan? cachedPlan;
     private int cachedActionIndex = -1;
+    private ulong cachedCharacterId;
     private HighlightTarget? cachedTarget;
+    private bool retryTargetWhileUnavailable;
+    private long nextTargetRetryAtMs;
 
     private readonly List<NodeBinding> activeBindings = new();
     private readonly List<ExecutionQuantityBadgeAnchor> quantityBadgeAnchors = new();
@@ -78,16 +82,51 @@ public sealed unsafe class ExecutionInventoryHighlighter
         if (!ReferenceEquals(
                 cachedPlan,
                 runtime.Session.Plan) ||
-            cachedActionIndex != actionIndex)
+            cachedActionIndex != actionIndex ||
+            cachedCharacterId != currentCharacterId)
         {
             Clear();
             cachedPlan = runtime.Session.Plan;
             cachedActionIndex = actionIndex;
+            cachedCharacterId = currentCharacterId;
             cachedTarget =
                 BuildTarget(
                     runtime.Session.Plan,
                     actionIndex,
                     currentCharacterId);
+
+            retryTargetWhileUnavailable =
+                cachedTarget is null &&
+                IsPotentialHighlightTarget(
+                    runtime.Session.Plan,
+                    actionIndex,
+                    currentCharacterId);
+
+            nextTargetRetryAtMs =
+                Environment.TickCount64 +
+                TargetRetryIntervalMs;
+        }
+        else if (cachedTarget is null &&
+                 retryTargetWhileUnavailable &&
+                 Environment.TickCount64 >= nextTargetRetryAtMs)
+        {
+            nextTargetRetryAtMs =
+                Environment.TickCount64 +
+                TargetRetryIntervalMs;
+
+            if (IsRelevantSourceUiVisible(
+                    runtime.Session.Plan,
+                    actionIndex))
+            {
+                cachedTarget =
+                    BuildTarget(
+                        runtime.Session.Plan,
+                        actionIndex,
+                        currentCharacterId);
+
+                if (cachedTarget is not null)
+                    retryTargetWhileUnavailable = false;
+            }
         }
 
         var target =
@@ -212,6 +251,80 @@ public sealed unsafe class ExecutionInventoryHighlighter
 
         return null;
     }
+
+    private static bool IsPotentialHighlightTarget(
+        PlannerPlan plan,
+        int actionIndex,
+        ulong currentCharacterId)
+    {
+        if (actionIndex < 0 ||
+            actionIndex >= plan.Actions.Count ||
+            currentCharacterId == 0)
+        {
+            return false;
+        }
+
+        var action =
+            plan.Actions[actionIndex];
+
+        if (action.Type != PlannerActionType.Move ||
+            action.Source is null ||
+            action.Destination is null)
+        {
+            return false;
+        }
+
+        if (action.Source.Storage == StorageType.Retainer)
+        {
+            return action.Source.ParentCharacterId ==
+                currentCharacterId;
+        }
+
+        return action.Source.Storage ==
+                   StorageType.CharacterInventory &&
+               action.Source.OwnerId ==
+                   currentCharacterId &&
+               currentCharacterId !=
+                   plan.InitialState.MainCharacterId &&
+               action.Destination.Storage ==
+                   StorageType.FreeCompanyChest;
+    }
+
+    private bool IsRelevantSourceUiVisible(
+        PlannerPlan plan,
+        int actionIndex)
+    {
+        if (actionIndex < 0 ||
+            actionIndex >= plan.Actions.Count)
+        {
+            return false;
+        }
+
+        var source =
+            plan.Actions[actionIndex].Source;
+
+        if (source?.Storage == StorageType.Retainer)
+        {
+            return IsAddonVisible("RetainerList") ||
+                   IsAddonVisible("InventoryRetainer") ||
+                   IsAddonVisible("InventoryRetainerLarge");
+        }
+
+        if (source?.Storage == StorageType.CharacterInventory)
+        {
+            return IsAddonVisible("InventoryGrid") ||
+                   IsAddonVisible("InventoryLarge") ||
+                   IsAddonVisible("InventoryExpansion");
+        }
+
+        return false;
+    }
+
+    private bool IsAddonVisible(
+        string addonName) =>
+        TryGetAddon(
+            addonName,
+            out _);
 
     private void UpdateRetainer(
         HighlightTarget target)
@@ -638,7 +751,10 @@ public sealed unsafe class ExecutionInventoryHighlighter
     {
         cachedPlan = null;
         cachedActionIndex = -1;
+        cachedCharacterId = 0;
         cachedTarget = null;
+        retryTargetWhileUnavailable = false;
+        nextTargetRetryAtMs = 0;
     }
 
     private static int GetRetainerLargeTab(
