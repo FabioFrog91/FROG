@@ -108,16 +108,10 @@ public sealed class PlanExecutionCoordinator
             action,
             inventoryIndex);
 
-        if (!session.IsCurrentActionExecuted)
-        {
-            return Snapshot(
-                PlanExecutionCoordinatorStatus.Pending);
-        }
-
         if (baseline is null)
         {
             return Snapshot(
-                PlanExecutionCoordinatorStatus.Executed);
+                PlanExecutionCoordinatorStatus.Pending);
         }
 
         verification =
@@ -127,7 +121,62 @@ public sealed class PlanExecutionCoordinator
                 inventoryIndex,
                 currentCharacterId);
 
+        if (!session.IsCurrentActionExecuted)
+        {
+            if (action.Type == PlannerActionType.SwitchCharacter)
+            {
+                if (verification.Status !=
+                    PlanExecutionVerificationStatus.Verified)
+                {
+                    return Snapshot(
+                        PlanExecutionCoordinatorStatus.Pending);
+                }
+
+                session.TryMarkCurrentExecuted(
+                    out _);
+            }
+            else
+            {
+                if (verification.Status ==
+                    PlanExecutionVerificationStatus.WaitingForObservation)
+                {
+                    return Snapshot(
+                        PlanExecutionCoordinatorStatus.Pending);
+                }
+
+                var observation =
+                    verifier.Observe(
+                        action,
+                        inventoryIndex);
+
+                reconciliation =
+                    reconciler.Reconcile(
+                        action,
+                        baseline,
+                        observation);
+
+                if (reconciliation.SourceDecrease <= 0 &&
+                    reconciliation.DestinationIncrease <= 0)
+                {
+                    reconciliation = null;
+
+                    return Snapshot(
+                        PlanExecutionCoordinatorStatus.Pending);
+                }
+
+                session.TryMarkCurrentExecuted(
+                    out _);
+
+                if (reconciliation.HasVariance)
+                {
+                    return Snapshot(
+                        PlanExecutionCoordinatorStatus.ReplanRequired);
+                }
+            }
+        }
+
         if (action.Type == PlannerActionType.Move &&
+            reconciliation is null &&
             verification.Status !=
                 PlanExecutionVerificationStatus.WaitingForObservation)
         {
@@ -147,10 +196,6 @@ public sealed class PlanExecutionCoordinator
                 return Snapshot(
                     PlanExecutionCoordinatorStatus.ReplanRequired);
             }
-        }
-        else
-        {
-            reconciliation = null;
         }
 
         if (verification.Status ==
