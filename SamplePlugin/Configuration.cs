@@ -14,6 +14,8 @@ public class Configuration : IPluginConfiguration
 
     public bool EnableRetainerRowHighlight { get; set; } = true;
 
+    public bool EnableInventoryExecutionHighlight { get; set; } = true;
+
     public Vector4 RetainerRowHighlightColor { get; set; } =
         new(1.0f, 0.72f, 0.10f, 0.90f);
 
