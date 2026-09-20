@@ -1,0 +1,23 @@
+diff --git a/Services/InventoryMonitor.cs b/Services/InventoryMonitor.cs
+--- a/Services/InventoryMonitor.cs
++++ b/Services/InventoryMonitor.cs
+@@ -744,6 +744,8 @@ namespace CriticalCommonLib.Services
+         {
+             if(!_disposed && disposing)
+             {
++                _started = false;
++                _inventoryScanner.BagsChanged -= InventoryScannerOnBagsChanged;
+                 _characterMonitor.OnCharacterRemoved -= CharacterMonitorOnOnCharacterRemoved;
+             }
+             _disposed = true;
+diff --git a/Services/InventoryScanner.cs b/Services/InventoryScanner.cs
+--- a/Services/InventoryScanner.cs
++++ b/Services/InventoryScanner.cs
+@@ -2265,6 +2265,7 @@ namespace CriticalCommonLib.Services
+                 _characterMonitor.OnActiveHouseChanged -= CharacterMonitorOnOnActiveHouseChanged;
+                 _odrScanner.OnSortOrderChanged -= SortOrderChanged;
+                 _gameUiManager.UiVisibilityChanged -= GameUiManagerOnUiManagerVisibilityChanged;
++                _addonLifecycle.UnregisterListener(AddonEvent.PreFinalize, "MiragePrismPrismBox", PrismBoxFinalize);
+             }
+             _disposed = true;
+         }

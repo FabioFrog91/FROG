@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 
 namespace FROG.Core.Inventory;
 
@@ -15,15 +16,18 @@ internal sealed class GlobalAllocationPlanner
     private readonly PlannerActionValidator actionValidator;
     private readonly PlannerPlanEvaluator planEvaluator;
     private readonly GlobalTransferPlannerDiagnostics diagnostics;
+    private readonly CancellationToken cancellationToken;
 
     public GlobalAllocationPlanner(
         PlannerActionValidator actionValidator,
         PlannerPlanEvaluator planEvaluator,
-        GlobalTransferPlannerDiagnostics diagnostics)
+        GlobalTransferPlannerDiagnostics diagnostics,
+        CancellationToken cancellationToken)
     {
         this.actionValidator = actionValidator;
         this.planEvaluator = planEvaluator;
         this.diagnostics = diagnostics;
+        this.cancellationToken = cancellationToken;
     }
 
     public PlannerPlan Plan(
@@ -32,6 +36,8 @@ internal sealed class GlobalAllocationPlanner
         ResolutionPolicy resolutionPolicy,
         OptimizationSettings optimizationSettings)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         diagnostics.Reset();
         diagnostics.Start();
 
@@ -50,6 +56,8 @@ internal sealed class GlobalAllocationPlanner
         {
             foreach (var requirement in requirements.Requirements)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+
                 var analysis =
                     AnalyzeRequirement(
                         requirement,
@@ -164,6 +172,8 @@ internal sealed class GlobalAllocationPlanner
         ref PlannerPlan? bestPlan,
         ref PlannerPlanScore? bestScore)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         diagnostics.RecordSearch(
             index);
 
@@ -228,6 +238,8 @@ internal sealed class GlobalAllocationPlanner
 
         foreach (var option in choice.Options)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             selected.AddRange(
                 option);
 
@@ -256,6 +268,8 @@ internal sealed class GlobalAllocationPlanner
         PlannerState state,
         ResolutionPolicy resolutionPolicy)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         var relevantItems =
             state.Items
                 .Where(item =>
@@ -684,11 +698,13 @@ internal sealed class GlobalAllocationPlanner
         }
     }
 
-    private static IReadOnlyList<IReadOnlyList<AllocationPick>> BuildAllocationOptions(
+    private IReadOnlyList<IReadOnlyList<AllocationPick>> BuildAllocationOptions(
         IReadOnlyList<InventoryItemSnapshot> candidates,
         int quantity,
         ResolutionPolicy resolutionPolicy)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         if (quantity <= 0)
         {
             return new[]
@@ -771,6 +787,8 @@ internal sealed class GlobalAllocationPlanner
              i >= 0;
              i--)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             suffix[i] =
                 suffix[i + 1] +
                 units[i].Quantity;
@@ -791,7 +809,7 @@ internal sealed class GlobalAllocationPlanner
             results);
     }
 
-    private static void EnumerateAllocationOptions(
+    private void EnumerateAllocationOptions(
         IReadOnlyList<AllocationUnit> units,
         IReadOnlyList<int> suffix,
         int index,
@@ -799,6 +817,8 @@ internal sealed class GlobalAllocationPlanner
         List<AllocationPick> current,
         List<IReadOnlyList<AllocationPick>> results)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         if (remaining == 0)
         {
             results.Add(
@@ -847,7 +867,7 @@ internal sealed class GlobalAllocationPlanner
             current.Count - 1);
     }
 
-    private static IReadOnlyList<IReadOnlyList<AllocationPick>> DeduplicateOptions(
+    private IReadOnlyList<IReadOnlyList<AllocationPick>> DeduplicateOptions(
         IEnumerable<IReadOnlyList<AllocationPick>> options)
     {
         var seen =
@@ -859,6 +879,8 @@ internal sealed class GlobalAllocationPlanner
 
         foreach (var option in options)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             var key =
                 string.Join(
                     ";",
@@ -882,9 +904,11 @@ internal sealed class GlobalAllocationPlanner
         return result;
     }
 
-    private static IReadOnlyList<IReadOnlyList<AllocationPick>> CombineOptions(
+    private IReadOnlyList<IReadOnlyList<AllocationPick>> CombineOptions(
         IReadOnlyList<IReadOnlyList<IReadOnlyList<AllocationPick>>> optionSets)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         if (optionSets.Count == 0)
         {
             return new[]
@@ -906,12 +930,14 @@ internal sealed class GlobalAllocationPlanner
             combined);
     }
 
-    private static void CombineOptionsRecursive(
+    private void CombineOptionsRecursive(
         IReadOnlyList<IReadOnlyList<IReadOnlyList<AllocationPick>>> optionSets,
         int index,
         List<AllocationPick> current,
         List<IReadOnlyList<AllocationPick>> result)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         if (index >= optionSets.Count)
         {
             result.Add(
@@ -922,6 +948,8 @@ internal sealed class GlobalAllocationPlanner
 
         foreach (var option in optionSets[index])
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             current.AddRange(
                 option);
 
@@ -945,6 +973,8 @@ internal sealed class GlobalAllocationPlanner
         IReadOnlyList<AllocationPick> reservedFreeCompany,
         int expectedMissing)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         var actions =
             new List<PlannerAction>();
 
@@ -1010,6 +1040,8 @@ internal sealed class GlobalAllocationPlanner
 
         foreach (var characterId in alternateCharacterIds)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             if (currentCharacterId != characterId &&
                 !AppendSwitch(
                     ref state,
@@ -1222,6 +1254,8 @@ internal sealed class GlobalAllocationPlanner
 
         foreach (var action in actions)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             diagnostics.RecordGeneratedAction(
                 action);
 
@@ -1244,6 +1278,8 @@ internal sealed class GlobalAllocationPlanner
         IReadOnlyList<AllocationPick> picks,
         Func<InventorySource, InventorySource?> destinationSelector)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         var moves =
             picks
                 .GroupBy(pick =>
@@ -1305,6 +1341,8 @@ internal sealed class GlobalAllocationPlanner
                      .ThenBy(move =>
                          move.IsHq))
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             if (move.Destination is null)
                 return false;
 
@@ -1334,6 +1372,8 @@ internal sealed class GlobalAllocationPlanner
         ulong fromCharacterId,
         ulong toCharacterId)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         var action =
             PlannerAction.SwitchCharacter(
                 fromCharacterId,

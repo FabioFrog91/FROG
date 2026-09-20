@@ -68,7 +68,9 @@ public sealed class Plugin : HostedPlugin
     private const int LoginRetryIntervalMilliseconds = 500;
     private const int LoginRetryMaxAttempts = 10;
 
+    private readonly object loginSyncLock = new();
     private CancellationTokenSource? loginSyncCancellation;
+    private bool disposed;
 
     private bool isFreeCompanyChestOpen;
     private readonly Dictionary<(ulong OwnerId, uint Container), PendingFreeCompanyObservation>
@@ -347,77 +349,177 @@ public sealed class Plugin : HostedPlugin
 
     public override void Dispose()
     {
-        loginSyncCancellation?.Cancel();
-        loginSyncCancellation?.Dispose();
-        loginSyncCancellation = null;
+        if (disposed)
+            return;
 
-        ClientState.Login -= OnLogin;
-        ClientState.Logout -= OnLogout;
-
-        if (Host != null)
-        {
-            var characterMonitor =
-                Host.Services.GetService<ICharacterMonitor>();
-
-            if (characterMonitor != null)
-            {
-                characterMonitor.OnCharacterUpdated -=
-                    OnCharacterUpdated;
-            }
-        }
-
-        characterCatalogSync?.SyncAll();
-
-        AddonLifecycle.UnregisterListener(
-            AddonEvent.PostSetup,
-            "RetainerList",
-            OnRetainerListOpened);
-
-        AddonLifecycle.UnregisterListener(
-            AddonEvent.PreFinalize,
-            "RetainerList",
-            OnRetainerListClosed);
-
-        AddonLifecycle.UnregisterListener(
-            AddonEvent.PostSetup,
-            "FreeCompanyChest",
-            OnFreeCompanyChestOpened);
-
-        AddonLifecycle.UnregisterListener(
-            AddonEvent.PreFinalize,
-            "FreeCompanyChest",
-            OnFreeCompanyChestClosed);
+        disposed = true;
 
         try
         {
-            SaveInventoryIndex();
+            RunDisposeStep(
+                "cancellazione sincronizzazione login",
+                CancelLoginSyncRetry);
+
+            RunDisposeStep(
+                "cancellazione planner globale",
+                () =>
+                {
+                    if (Host != null)
+                    {
+                        Host.Services
+                            .GetService<GlobalPlannerCoordinator>()?
+                            .Dispose();
+                    }
+                });
+
+            RunDisposeStep(
+                "evento login",
+                () => ClientState.Login -= OnLogin);
+
+            RunDisposeStep(
+                "evento logout",
+                () => ClientState.Logout -= OnLogout);
+
+            RunDisposeStep(
+                "evento monitor personaggio",
+                () =>
+                {
+                    var characterMonitor =
+                        Host != null
+                            ? Host.Services.GetService<ICharacterMonitor>()
+                            : null;
+
+                    if (characterMonitor != null)
+                    {
+                        characterMonitor.OnCharacterUpdated -=
+                            OnCharacterUpdated;
+                    }
+                });
+
+            RunDisposeStep(
+                "sincronizzazione catalogo personaggi",
+                () => characterCatalogSync?.SyncAll());
+
+            RunDisposeStep(
+                "apertura RetainerList",
+                () => AddonLifecycle.UnregisterListener(
+                    AddonEvent.PostSetup,
+                    "RetainerList",
+                    OnRetainerListOpened));
+
+            RunDisposeStep(
+                "chiusura RetainerList",
+                () => AddonLifecycle.UnregisterListener(
+                    AddonEvent.PreFinalize,
+                    "RetainerList",
+                    OnRetainerListClosed));
+
+            RunDisposeStep(
+                "apertura FreeCompanyChest",
+                () => AddonLifecycle.UnregisterListener(
+                    AddonEvent.PostSetup,
+                    "FreeCompanyChest",
+                    OnFreeCompanyChestOpened));
+
+            RunDisposeStep(
+                "chiusura FreeCompanyChest",
+                () => AddonLifecycle.UnregisterListener(
+                    AddonEvent.PreFinalize,
+                    "FreeCompanyChest",
+                    OnFreeCompanyChestClosed));
+
+            RunDisposeStep(
+                "salvataggio stato persistente",
+                SaveInventoryIndex);
+
+            RunDisposeStep(
+                "overlay quantità",
+                () =>
+                {
+                    if (ExecutionQuantityOverlay != null)
+                    {
+                        PluginInterface.UiBuilder.Draw -=
+                            ExecutionQuantityOverlay.Draw;
+                    }
+                });
+
+            RunDisposeStep(
+                "disegno finestre",
+                () => PluginInterface.UiBuilder.Draw -= WindowSystem.Draw);
+
+            RunDisposeStep(
+                "apertura configurazione",
+                () => PluginInterface.UiBuilder.OpenConfigUi -= ToggleConfigUi);
+
+            RunDisposeStep(
+                "apertura finestra principale",
+                () => PluginInterface.UiBuilder.OpenMainUi -= ToggleMainUi);
+
+            RunDisposeStep(
+                "rimozione finestre",
+                WindowSystem.RemoveAllWindows);
+
+            RunDisposeStep(
+                "finestra configurazione",
+                ConfigWindow.Dispose);
+
+            RunDisposeStep(
+                "finestra principale",
+                () => MainWindow?.Dispose());
+
+            RunDisposeStep(
+                "finestra esecuzione",
+                () => ExecutionWindow?.Dispose());
+
+            RunDisposeStep(
+                "comando plugin",
+                () => CommandManager.RemoveHandler(CommandName));
+        }
+        finally
+        {
+            try
+            {
+                base.Dispose();
+            }
+            catch (Exception ex)
+            {
+                TryLogError(
+                    ex,
+                    "Errore durante il cleanup del plugin: host del plugin.");
+            }
+        }
+    }
+
+    private static void RunDisposeStep(
+        string step,
+        Action action)
+    {
+        try
+        {
+            action();
         }
         catch (Exception ex)
         {
-            Log.Error(
+            TryLogError(
                 ex,
-                $"Errore durante il salvataggio dello stato persistente.");
+                $"Errore durante il cleanup del plugin: {step}.");
         }
+    }
 
-        if (ExecutionQuantityOverlay != null)
+    private static void TryLogError(
+        Exception exception,
+        string message)
+    {
+        try
         {
-            PluginInterface.UiBuilder.Draw -=
-                ExecutionQuantityOverlay.Draw;
+            Log.Error(
+                exception,
+                message);
         }
-
-        PluginInterface.UiBuilder.Draw -= WindowSystem.Draw;
-        PluginInterface.UiBuilder.OpenConfigUi -= ToggleConfigUi;
-        PluginInterface.UiBuilder.OpenMainUi -= ToggleMainUi;
-
-        WindowSystem.RemoveAllWindows();
-
-        ConfigWindow.Dispose();
-        MainWindow?.Dispose();
-        ExecutionWindow?.Dispose();
-
-        CommandManager.RemoveHandler(CommandName);
-
-        base.Dispose();
+        catch
+        {
+            // Logging may already be unavailable while the plugin unloads.
+        }
     }
 
     private void OnCommand(
@@ -446,7 +548,7 @@ public sealed class Plugin : HostedPlugin
         int type,
         int code)
     {
-        loginSyncCancellation?.Cancel();
+        CancelLoginSyncRetry();
 
         characterCatalogSync?.SyncAll();
 
@@ -469,54 +571,127 @@ public sealed class Plugin : HostedPlugin
 
     private void StartLoginSyncRetry()
     {
-        loginSyncCancellation?.Cancel();
-        loginSyncCancellation?.Dispose();
+        CancellationTokenSource? previousCancellation;
 
-        loginSyncCancellation = new CancellationTokenSource();
+        lock (loginSyncLock)
+        {
+            if (disposed)
+                return;
 
-        var cancellationToken = loginSyncCancellation.Token;
+            previousCancellation =
+                loginSyncCancellation;
 
-        _ = RunLoginSyncRetryAsync(cancellationToken);
+            var cancellation =
+                new CancellationTokenSource();
+
+            loginSyncCancellation =
+                cancellation;
+
+            _ = RunLoginSyncRetryAsync(
+                cancellation);
+        }
+
+        CancelSafely(
+            previousCancellation);
     }
 
     private async Task RunLoginSyncRetryAsync(
-        CancellationToken cancellationToken)
+        CancellationTokenSource cancellation)
     {
-        for (var attempt = 1;
-             attempt <= LoginRetryMaxAttempts;
-             attempt++)
+        var cancellationToken =
+            cancellation.Token;
+
+        try
         {
-            if (cancellationToken.IsCancellationRequested)
-                return;
-
-            await Task.Delay(
-                LoginRetryIntervalMilliseconds,
-                cancellationToken);
-
-            if (cancellationToken.IsCancellationRequested)
-                return;
-
-            if (!playerInventory.TryGetCurrentCharacter(
-                    out var characterId))
+            for (var attempt = 1;
+                 attempt <= LoginRetryMaxAttempts;
+                 attempt++)
             {
-                continue;
+                cancellationToken.ThrowIfCancellationRequested();
+
+                await Task.Delay(
+                    LoginRetryIntervalMilliseconds,
+                    cancellationToken);
+
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (!playerInventory.TryGetCurrentCharacter(
+                        out var characterId))
+                {
+                    continue;
+                }
+
+                SyncPlayerInventory();
+
+                if (LastSyncCharacterId != characterId)
+                    continue;
+
+                SaveInventoryIndex();
+
+                Log.Information(
+                    $"Sincronizzazione login completata per il personaggio {characterId} al tentativo {attempt}.");
+
+                return;
             }
 
-            SyncPlayerInventory();
+            Log.Warning(
+                $"Sincronizzazione inventario dopo login non completata entro {LoginRetryMaxAttempts * LoginRetryIntervalMilliseconds} ms.");
+        }
+        catch (OperationCanceledException)
+            when (cancellationToken.IsCancellationRequested)
+        {
+            // Expected when a new login starts, on logout or during unload.
+        }
+        catch (Exception ex)
+        {
+            TryLogError(
+                ex,
+                "Errore durante la sincronizzazione inventario dopo il login.");
+        }
+        finally
+        {
+            lock (loginSyncLock)
+            {
+                if (ReferenceEquals(
+                        loginSyncCancellation,
+                        cancellation))
+                {
+                    loginSyncCancellation = null;
+                }
+            }
 
-            if (LastSyncCharacterId != characterId)
-                continue;
+            cancellation.Dispose();
+        }
+    }
 
-            SaveInventoryIndex();
+    private void CancelLoginSyncRetry()
+    {
+        CancellationTokenSource? cancellation;
 
-            Log.Information(
-                $"Sincronizzazione login completata per il personaggio {characterId} al tentativo {attempt}.");
-
-            return;
+        lock (loginSyncLock)
+        {
+            cancellation =
+                loginSyncCancellation;
         }
 
-        Log.Warning(
-            $"Sincronizzazione inventario dopo login non completata entro {LoginRetryMaxAttempts * LoginRetryIntervalMilliseconds} ms.");
+        CancelSafely(
+            cancellation);
+    }
+
+    private static void CancelSafely(
+        CancellationTokenSource? cancellation)
+    {
+        if (cancellation is null)
+            return;
+
+        try
+        {
+            cancellation.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // The retry completed between capture and cancellation.
+        }
     }
 
     internal void SyncPlayerInventory()

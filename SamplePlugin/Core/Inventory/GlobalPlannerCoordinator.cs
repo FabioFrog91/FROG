@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace FROG.Core.Inventory;
@@ -24,7 +25,7 @@ public sealed record GlobalPlannerCompletion(
 /// Input state is snapshotted before work starts so the planner never reads
 /// live UI state or a mutating InventoryIndex while searching.
 /// </summary>
-public sealed class GlobalPlannerCoordinator
+public sealed class GlobalPlannerCoordinator : IDisposable
 {
     private readonly object syncLock = new();
     private readonly ExecutionOrderCompiler executionOrderCompiler;
@@ -36,7 +37,9 @@ public sealed class GlobalPlannerCoordinator
     }
 
     private Task<PlannerPlan>? runningTask;
+    private CancellationTokenSource? runningCancellation;
     private long generation;
+    private bool disposed;
     private PlannerPlan? plan;
     private GlobalTransferPlannerDiagnostics? diagnostics;
     private string? error;
@@ -75,6 +78,15 @@ public sealed class GlobalPlannerCoordinator
         string? replanMessage,
         bool autoStartExecution)
     {
+        lock (syncLock)
+        {
+            if (disposed ||
+                runningTask != null)
+            {
+                return false;
+            }
+        }
+
         if (mainCharacterId == 0 ||
             currentCharacterId == 0)
         {
@@ -122,8 +134,11 @@ public sealed class GlobalPlannerCoordinator
 
         lock (syncLock)
         {
-            if (runningTask != null)
+            if (disposed ||
+                runningTask != null)
+            {
                 return false;
+            }
 
             plan = null;
             error = null;
@@ -142,6 +157,12 @@ public sealed class GlobalPlannerCoordinator
             var runGeneration =
                 ++generation;
 
+            var plannerCancellation =
+                new CancellationTokenSource();
+
+            var cancellationToken =
+                plannerCancellation.Token;
+
             var plannerTask =
                 Task.Run(
                     () =>
@@ -151,17 +172,25 @@ public sealed class GlobalPlannerCoordinator
                                 requirementSetSnapshot,
                                 stateSnapshot,
                                 resolutionPolicySnapshot,
-                                optimizationSettingsSnapshot);
+                                optimizationSettingsSnapshot,
+                                cancellationToken);
+
+                        cancellationToken.ThrowIfCancellationRequested();
 
                         return executionOrderSnapshot.Compile(
                             planned);
-                    });
+                    },
+                    cancellationToken);
 
             runningTask =
                 plannerTask;
 
+            runningCancellation =
+                plannerCancellation;
+
             _ = CompletePlannerAsync(
                 plannerTask,
+                plannerCancellation,
                 runGeneration,
                 autoStartExecution);
         }
@@ -192,6 +221,8 @@ public sealed class GlobalPlannerCoordinator
         {
             generation++;
 
+            runningCancellation?.Cancel();
+
             plan = null;
             error = null;
             replanMessage = null;
@@ -206,16 +237,23 @@ public sealed class GlobalPlannerCoordinator
 
     private async Task CompletePlannerAsync(
         Task<PlannerPlan> plannerTask,
+        CancellationTokenSource plannerCancellation,
         long runGeneration,
         bool autoStartExecution)
     {
         PlannerPlan? completedPlan = null;
         string? completedError = null;
+        var cancelled = false;
 
         try
         {
             completedPlan =
                 await plannerTask;
+        }
+        catch (OperationCanceledException)
+            when (plannerCancellation.IsCancellationRequested)
+        {
+            cancelled = true;
         }
         catch (Exception ex)
         {
@@ -229,13 +267,27 @@ public sealed class GlobalPlannerCoordinator
                     runningTask,
                     plannerTask))
             {
+                plannerCancellation.Dispose();
                 return;
             }
 
             runningTask = null;
 
-            if (runGeneration != generation)
+            if (ReferenceEquals(
+                    runningCancellation,
+                    plannerCancellation))
+            {
+                runningCancellation = null;
+            }
+
+            plannerCancellation.Dispose();
+
+            if (cancelled ||
+                runGeneration != generation)
+            {
+                diagnostics = null;
                 return;
+            }
 
             plan = completedPlan;
             error = completedError;
@@ -244,6 +296,33 @@ public sealed class GlobalPlannerCoordinator
                     completedPlan,
                     completedError,
                     autoStartExecution);
+        }
+    }
+
+    public void Dispose()
+    {
+        lock (syncLock)
+        {
+            if (disposed)
+                return;
+
+            disposed = true;
+            generation++;
+            runningCancellation?.Cancel();
+
+            plan = null;
+            error = null;
+            replanMessage = null;
+            resolverMissingSnapshot = null;
+            resolverSyncSnapshot = null;
+            pendingCompletion = null;
+
+            if (runningTask == null)
+            {
+                runningCancellation?.Dispose();
+                runningCancellation = null;
+                diagnostics = null;
+            }
         }
     }
 

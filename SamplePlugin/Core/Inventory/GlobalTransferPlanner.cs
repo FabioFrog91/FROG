@@ -25,13 +25,15 @@ public sealed class GlobalTransferPlanner
         RequirementSet requirements,
         PlannerState initialState,
         ResolutionPolicy resolutionPolicy,
-        OptimizationSettings optimizationSettings)
+        OptimizationSettings optimizationSettings,
+        CancellationToken cancellationToken = default)
     {
         var planner =
             new GlobalAllocationPlanner(
                 actionValidator,
                 planEvaluator,
-                Diagnostics);
+                Diagnostics,
+                cancellationToken);
 
         return planner.Plan(
             requirements,
