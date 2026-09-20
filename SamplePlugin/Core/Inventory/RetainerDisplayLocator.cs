@@ -103,6 +103,11 @@ public sealed class RetainerDisplayLocator
                 .Sum(previous =>
                     previous.Quantity);
 
+        var physicalContainerIndex =
+            checked(
+                (int)(source.Container -
+                      RetainerContainerFirst));
+
         var matchingStacks =
             plan.InitialState.Items
                 .Where(item =>
@@ -113,7 +118,20 @@ public sealed class RetainerDisplayLocator
                     item.IsHq == action.IsHq &&
                     item.Quantity > 0)
                 .OrderBy(item =>
-                    item.Slot);
+                {
+                    var displayIndex =
+                        FindDisplayIndex(
+                            coordinates,
+                            physicalContainerIndex,
+                            item.Slot);
+
+                    return displayIndex >= 0
+                        ? displayIndex
+                        : int.MaxValue;
+                })
+                .ThenBy(item =>
+                    item.Slot)
+                .ToList();
 
         var remaining =
             action.Quantity;
@@ -123,11 +141,6 @@ public sealed class RetainerDisplayLocator
 
         var positions =
             new List<RetainerDisplayPosition>();
-
-        var physicalContainerIndex =
-            checked(
-                (int)(source.Container -
-                      RetainerContainerFirst));
 
         foreach (var stack in matchingStacks)
         {
