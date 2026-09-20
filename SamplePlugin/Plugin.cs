@@ -89,6 +89,7 @@ public sealed class Plugin : HostedPlugin
     private ConfigWindow ConfigWindow { get; }
     private MainWindow? MainWindow { get; set; }
     private ExecutionWindow? ExecutionWindow { get; set; }
+    private ExecutionQuantityOverlay? ExecutionQuantityOverlay { get; set; }
 
     private string InventoryIndexFilePath =>
         Path.Combine(
@@ -238,6 +239,11 @@ public sealed class Plugin : HostedPlugin
             .SingleInstance();
 
         containerBuilder
+            .RegisterType<PlanExecutionPlanGuard>()
+            .AsSelf()
+            .SingleInstance();
+
+        containerBuilder
             .RegisterType<PlanExecutionRuntime>()
             .AsSelf()
             .SingleInstance();
@@ -249,6 +255,11 @@ public sealed class Plugin : HostedPlugin
 
         containerBuilder
             .RegisterType<ExecutionInventoryHighlighter>()
+            .AsSelf()
+            .SingleInstance();
+
+        containerBuilder
+            .RegisterType<ExecutionQuantityOverlay>()
             .AsSelf()
             .SingleInstance();
 
@@ -293,6 +304,12 @@ public sealed class Plugin : HostedPlugin
 
         var executionRuntime =
             Host.Services.GetRequiredService<PlanExecutionRuntime>();
+
+        ExecutionQuantityOverlay =
+            Host.Services.GetRequiredService<ExecutionQuantityOverlay>();
+
+        PluginInterface.UiBuilder.Draw +=
+            ExecutionQuantityOverlay.Draw;
 
         characterCatalogSync =
             new CharacterCatalogSync(
@@ -380,6 +397,12 @@ public sealed class Plugin : HostedPlugin
             Log.Error(
                 ex,
                 $"Errore durante il salvataggio dello stato persistente.");
+        }
+
+        if (ExecutionQuantityOverlay != null)
+        {
+            PluginInterface.UiBuilder.Draw -=
+                ExecutionQuantityOverlay.Draw;
         }
 
         PluginInterface.UiBuilder.Draw -= WindowSystem.Draw;
