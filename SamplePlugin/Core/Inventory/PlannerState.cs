@@ -11,8 +11,8 @@ public sealed class PlannerState
 
     public ulong MainCharacterId { get; }
     public ulong CurrentCharacterId { get; }
-    public IReadOnlyList<InventoryItemSnapshot> Items => items.ToList();
-    public IReadOnlyCollection<ulong> VisitedCharacters => visitedCharacters.ToList();
+    public IReadOnlyList<InventoryItemSnapshot> Items => items;
+    public IReadOnlyCollection<ulong> VisitedCharacters => visitedCharacters;
 
     public PlannerState(
         ulong mainCharacterId,
@@ -37,13 +37,13 @@ public sealed class PlannerState
     private PlannerState(
         ulong mainCharacterId,
         ulong currentCharacterId,
-        IEnumerable<InventoryItemSnapshot> items,
-        IEnumerable<ulong> visitedCharacters)
+        List<InventoryItemSnapshot> items,
+        HashSet<ulong> visitedCharacters)
     {
         MainCharacterId = mainCharacterId;
         CurrentCharacterId = currentCharacterId;
-        this.items = items.ToList();
-        this.visitedCharacters = visitedCharacters.ToHashSet();
+        this.items = items;
+        this.visitedCharacters = visitedCharacters;
     }
 
     public bool HasVisitedCharacter(ulong characterId) =>
@@ -71,7 +71,7 @@ public sealed class PlannerState
         new PlannerState(
             MainCharacterId,
             CurrentCharacterId,
-            newItems,
+            newItems.ToList(),
             visitedCharacters);
 
     public IReadOnlyList<InventoryItemSnapshot> Find(InventorySource source) =>
