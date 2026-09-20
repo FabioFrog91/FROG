@@ -27,6 +27,13 @@ public sealed record GlobalPlannerCompletion(
 public sealed class GlobalPlannerCoordinator
 {
     private readonly object syncLock = new();
+    private readonly ExecutionOrderCompiler executionOrderCompiler;
+
+    public GlobalPlannerCoordinator(
+        ExecutionOrderCompiler executionOrderCompiler)
+    {
+        this.executionOrderCompiler = executionOrderCompiler;
+    }
 
     private Task<PlannerPlan>? runningTask;
     private long generation;
@@ -97,6 +104,10 @@ public sealed class GlobalPlannerCoordinator
                 currentCharacterId,
                 plannerItems);
 
+        var executionOrderSnapshot =
+            executionOrderCompiler.Capture(
+                plannerItems);
+
         var resolutionPolicySnapshot =
             new ResolutionPolicy(
                 resolutionPolicy.Sources.ToList(),
@@ -134,11 +145,17 @@ public sealed class GlobalPlannerCoordinator
             var plannerTask =
                 Task.Run(
                     () =>
-                        planner.Plan(
-                            requirementSetSnapshot,
-                            stateSnapshot,
-                            resolutionPolicySnapshot,
-                            optimizationSettingsSnapshot));
+                    {
+                        var planned =
+                            planner.Plan(
+                                requirementSetSnapshot,
+                                stateSnapshot,
+                                resolutionPolicySnapshot,
+                                optimizationSettingsSnapshot);
+
+                        return executionOrderSnapshot.Compile(
+                            planned);
+                    });
 
             runningTask =
                 plannerTask;
