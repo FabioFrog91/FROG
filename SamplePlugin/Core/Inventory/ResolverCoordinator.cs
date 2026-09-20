@@ -97,14 +97,7 @@ public sealed class ResolverCoordinator
 
         if (sources.Count == 0)
         {
-            stopwatch.Stop();
-
             ClearCachedResult();
-
-            RecordDiagnostics(
-                stopwatch,
-                allocatedBefore);
-
             return Snapshot;
         }
 
