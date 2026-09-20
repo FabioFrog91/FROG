@@ -34,7 +34,14 @@ public sealed class TeamcraftListImporter
         if (string.IsNullOrWhiteSpace(text))
             return requirements;
 
-        var inPrecraftSection = false;
+        var crystalEntries =
+            CollectCrystalEntries(text);
+
+        var currentSection =
+            string.Empty;
+
+        var inPrecraftSection =
+            false;
 
         foreach (var rawLine in text.Split('\n'))
         {
@@ -43,15 +50,14 @@ public sealed class TeamcraftListImporter
             if (line.Length == 0)
                 continue;
 
-            if (IsPrecraftHeader(line))
-            {
-                inPrecraftSection = true;
-                continue;
-            }
-
             if (IsSectionHeader(line))
             {
-                inPrecraftSection = false;
+                currentSection =
+                    NormalizeHeader(line);
+
+                inPrecraftSection =
+                    IsPrecraftSection(currentSection);
+
                 continue;
             }
 
@@ -60,19 +66,38 @@ public sealed class TeamcraftListImporter
             if (!match.Success)
                 continue;
 
-            if (!int.TryParse(match.Groups[1].Value, out var quantity))
+            if (!int.TryParse(
+                    match.Groups[1].Value,
+                    out var quantity))
+            {
                 continue;
+            }
 
             if (quantity <= 0)
                 continue;
 
-            var itemName = CleanName(match.Groups[2].Value);
+            var itemName =
+                CleanName(
+                    match.Groups[2].Value);
 
             if (itemName.Length == 0)
                 continue;
 
-            if (!TryResolveItemId(itemName, out var itemId))
+            if (IsOtherSection(currentSection) &&
+                crystalEntries.Contains(
+                    BuildCrystalEntryKey(
+                        itemName,
+                        quantity)))
+            {
                 continue;
+            }
+
+            if (!TryResolveItemId(
+                    itemName,
+                    out var itemId))
+            {
+                continue;
+            }
 
             requirements.Add(
                 new Requirement(
@@ -87,13 +112,75 @@ public sealed class TeamcraftListImporter
         return requirements;
     }
 
+    private static HashSet<string> CollectCrystalEntries(
+        string text)
+    {
+        var entries =
+            new HashSet<string>(
+                StringComparer.OrdinalIgnoreCase);
+
+        var currentSection =
+            string.Empty;
+
+        foreach (var rawLine in text.Split('\n'))
+        {
+            var line = rawLine.Trim();
+
+            if (line.Length == 0)
+                continue;
+
+            if (IsSectionHeader(line))
+            {
+                currentSection =
+                    NormalizeHeader(line);
+
+                continue;
+            }
+
+            if (!IsCrystalSection(currentSection))
+                continue;
+
+            var match =
+                ItemLine.Match(line);
+
+            if (!match.Success)
+                continue;
+
+            if (!int.TryParse(
+                    match.Groups[1].Value,
+                    out var quantity))
+            {
+                continue;
+            }
+
+            if (quantity <= 0)
+                continue;
+
+            var itemName =
+                CleanName(
+                    match.Groups[2].Value);
+
+            if (itemName.Length == 0)
+                continue;
+
+            entries.Add(
+                BuildCrystalEntryKey(
+                    itemName,
+                    quantity));
+        }
+
+        return entries;
+    }
+
     private bool TryResolveItemId(
         string itemName,
         out uint itemId)
     {
         foreach (var language in LanguageOrder())
         {
-            var sheet = dataManager.GetExcelSheet<Item>(language);
+            var sheet =
+                dataManager.GetExcelSheet<Item>(
+                    language);
 
             if (sheet == null)
                 continue;
@@ -117,7 +204,8 @@ public sealed class TeamcraftListImporter
 
     private IEnumerable<ClientLanguage> LanguageOrder()
     {
-        var currentLanguage = dataManager.Language;
+        var currentLanguage =
+            dataManager.Language;
 
         yield return currentLanguage;
 
@@ -128,22 +216,44 @@ public sealed class TeamcraftListImporter
         }
     }
 
-    private static bool IsPrecraftHeader(string line)
+    private static bool IsCrystalSection(
+        string section)
     {
         return string.Equals(
-            NormalizeHeader(line),
+            section,
+            "crystals",
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsOtherSection(
+        string section)
+    {
+        return string.Equals(
+            section,
+            "other",
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsPrecraftSection(
+        string section)
+    {
+        return string.Equals(
+            section,
             "pre crafts",
             StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool IsSectionHeader(string line)
+    private static bool IsSectionHeader(
+        string line)
     {
         return line.EndsWith(':');
     }
 
-    private static string NormalizeHeader(string line)
+    private static string NormalizeHeader(
+        string line)
     {
-        var header = line.Trim();
+        var header =
+            line.Trim();
 
         if (header.EndsWith(':'))
             header = header[..^1];
@@ -151,8 +261,16 @@ public sealed class TeamcraftListImporter
         return header.Trim();
     }
 
-    private static string CleanName(string name)
+    private static string CleanName(
+        string name)
     {
         return name.Trim();
+    }
+
+    private static string BuildCrystalEntryKey(
+        string itemName,
+        int quantity)
+    {
+        return $"{quantity}|{itemName}";
     }
 }
