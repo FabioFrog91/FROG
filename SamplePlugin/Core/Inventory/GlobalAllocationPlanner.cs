@@ -1663,6 +1663,6 @@ internal sealed class GlobalAllocationPlanner
         uint BaseItemId,
         bool IsHq,
         int Quantity,
-        int ContainerOrder,
+        uint ContainerOrder,
         int SlotOrder);
 }
