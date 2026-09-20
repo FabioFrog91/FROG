@@ -12,7 +12,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Numerics;
-using System.Threading;
 using System.Threading.Tasks;
 
 namespace FROG.Windows;
@@ -26,6 +25,7 @@ public class MainWindow : Window, IDisposable
     private RequirementSet? importedRequirementSet;
     private PlannerPlan? globalPlannerPlan;
     private Task<PlannerPlan>? globalPlannerTask;
+    private GlobalTransferPlannerDiagnostics? globalPlannerDiagnostics;
     private string? globalPlannerError;
     private readonly OptimizationSettings optimizationSettings = new();
 
@@ -149,6 +149,7 @@ public class MainWindow : Window, IDisposable
                 importer.Import(text);
 
             globalPlannerPlan = null;
+            globalPlannerDiagnostics = null;
             globalPlannerError = null;
         }
 
@@ -435,6 +436,25 @@ public class MainWindow : Window, IDisposable
         else
         {
             ImGui.Text("Calcolo...");
+
+            if (globalPlannerDiagnostics != null)
+            {
+                var diagnostics =
+                    globalPlannerDiagnostics.Snapshot();
+
+                DrawGlobalPlannerSearchDiagnostics(
+                    diagnostics);
+
+                if (ImGui.Button("COPIA DIAGNOSTICA LIVE"))
+                {
+                    ImGui.SetClipboardText(
+                        BuildGlobalPlannerDiagnosticsClipboardText(
+                            requirementSet,
+                            diagnostics));
+                }
+
+                ImGui.Spacing();
+            }
         }
 
         if (!string.IsNullOrWhiteSpace(globalPlannerError))
@@ -473,6 +493,14 @@ public class MainWindow : Window, IDisposable
 
         ImGui.Text(
             $"Azioni: {globalPlannerPlan.Actions.Count}");
+
+        if (globalPlannerDiagnostics != null)
+        {
+            ImGui.Spacing();
+
+            DrawGlobalPlannerSearchDiagnostics(
+                globalPlannerDiagnostics.Snapshot());
+        }
 
         ImGui.Spacing();
 
@@ -557,40 +585,20 @@ public class MainWindow : Window, IDisposable
         globalPlannerPlan = null;
         globalPlannerError = null;
 
-        var completionSource =
-            new TaskCompletionSource<PlannerPlan>(
-                TaskCreationOptions.RunContinuationsAsynchronously);
+        var planner =
+            new GlobalTransferPlanner();
 
-        var plannerThread =
-            new Thread(
-                () =>
-                {
-                    try
-                    {
-                        var plan =
-                            new GlobalTransferPlanner().Plan(
-                                requirementSetSnapshot,
-                                stateSnapshot,
-                                resolutionPolicySnapshot,
-                                optimizationSettingsSnapshot);
-
-                        completionSource.SetResult(plan);
-                    }
-                    catch (Exception ex)
-                    {
-                        completionSource.SetException(ex);
-                    }
-                })
-            {
-                IsBackground = true,
-                Name = "FROG Global Planner",
-                Priority = ThreadPriority.BelowNormal
-            };
+        globalPlannerDiagnostics =
+            planner.Diagnostics;
 
         globalPlannerTask =
-            completionSource.Task;
-
-        plannerThread.Start();
+            Task.Run(
+                () =>
+                    planner.Plan(
+                        requirementSetSnapshot,
+                        stateSnapshot,
+                        resolutionPolicySnapshot,
+                        optimizationSettingsSnapshot));
     }
 
     private void TryCompleteGlobalPlannerTask()
@@ -621,6 +629,86 @@ public class MainWindow : Window, IDisposable
         }
     }
 
+    private static void DrawGlobalPlannerSearchDiagnostics(
+        GlobalTransferPlannerDiagnosticsSnapshot diagnostics)
+    {
+        ImGui.Text("DIAGNOSTICA RICERCA");
+        ImGui.Separator();
+
+        ImGui.Text(
+            $"Search calls: {diagnostics.SearchCalls:N0}");
+
+        ImGui.Text(
+            $"Stati unici: {diagnostics.UniqueStates:N0}");
+
+        ImGui.Text(
+            $"Stati dominati: {diagnostics.DominatedStates:N0}");
+
+        ImGui.Text(
+            $"Memo states: {diagnostics.MemoStates:N0}");
+
+        ImGui.Text(
+            $"Memo entries: {diagnostics.MemoEntries:N0}");
+
+        ImGui.Text(
+            $"Azioni generate: {diagnostics.GeneratedActions:N0}");
+
+        ImGui.Text(
+            $"Azioni applicate: {diagnostics.AppliedActions:N0}");
+
+        ImGui.Text(
+            $"Profondità massima: {diagnostics.MaxDepth:N0}");
+
+        ImGui.Text(
+            $"Tempo: {diagnostics.ElapsedMilliseconds:N0} ms");
+
+        ImGui.Text(
+            $"Managed memory: {FormatMegabytes(diagnostics.ManagedMemoryBytes):N1} MB");
+
+        ImGui.Text(
+            $"Picco managed memory: {FormatMegabytes(diagnostics.PeakManagedMemoryBytes):N1} MB");
+
+        ImGui.Text(
+            $"Allocato dal thread planner: {FormatMegabytes(diagnostics.AllocatedBytes):N1} MB");
+    }
+
+    private string BuildGlobalPlannerDiagnosticsClipboardText(
+        RequirementSet requirementSet,
+        GlobalTransferPlannerDiagnosticsSnapshot diagnostics)
+    {
+        var lines =
+            new List<string>
+            {
+                "FROG DEBUG | GLOBAL TRANSFER PLANNER | SEARCH DIAGNOSTICS",
+                $"GeneratedUtc={DateTime.UtcNow:O}",
+                $"MainCharacterId={(Plugin.PlayerState.IsLoaded ? Plugin.PlayerState.ContentId : 0)}",
+                $"Requirements={requirementSet.Requirements.Count}",
+                $"SearchCalls={diagnostics.SearchCalls}",
+                $"UniqueStates={diagnostics.UniqueStates}",
+                $"DominatedStates={diagnostics.DominatedStates}",
+                $"MemoStates={diagnostics.MemoStates}",
+                $"MemoEntries={diagnostics.MemoEntries}",
+                $"GeneratedActions={diagnostics.GeneratedActions}",
+                $"AppliedActions={diagnostics.AppliedActions}",
+                $"MaxDepth={diagnostics.MaxDepth}",
+                $"ElapsedMs={diagnostics.ElapsedMilliseconds}",
+                $"ManagedMemoryBytes={diagnostics.ManagedMemoryBytes}",
+                $"PeakManagedMemoryBytes={diagnostics.PeakManagedMemoryBytes}",
+                $"PlannerThreadAllocatedBytes={diagnostics.AllocatedBytes}"
+            };
+
+        return string.Join(
+            Environment.NewLine,
+            lines);
+    }
+
+    private static double FormatMegabytes(
+        long bytes)
+    {
+        return bytes /
+               (1024d * 1024d);
+    }
+
     private string BuildGlobalPlannerClipboardText(
         RequirementSet requirementSet,
         PlannerPlan plan)
@@ -637,10 +725,32 @@ public class MainWindow : Window, IDisposable
                 $"CharacterSwitches={plan.CharacterSwitches}",
                 $"RetainerAccesses={plan.RetainerAccesses}",
                 $"TransferHops={plan.TransferHops}",
-                $"Actions={plan.Actions.Count}",
-                string.Empty,
-                "===== ACTIONS ====="
+                $"Actions={plan.Actions.Count}"
             };
+
+        if (globalPlannerDiagnostics != null)
+        {
+            var diagnostics =
+                globalPlannerDiagnostics.Snapshot();
+
+            lines.Add(string.Empty);
+            lines.Add("===== SEARCH DIAGNOSTICS =====");
+            lines.Add($"SearchCalls={diagnostics.SearchCalls}");
+            lines.Add($"UniqueStates={diagnostics.UniqueStates}");
+            lines.Add($"DominatedStates={diagnostics.DominatedStates}");
+            lines.Add($"MemoStates={diagnostics.MemoStates}");
+            lines.Add($"MemoEntries={diagnostics.MemoEntries}");
+            lines.Add($"GeneratedActions={diagnostics.GeneratedActions}");
+            lines.Add($"AppliedActions={diagnostics.AppliedActions}");
+            lines.Add($"MaxDepth={diagnostics.MaxDepth}");
+            lines.Add($"ElapsedMs={diagnostics.ElapsedMilliseconds}");
+            lines.Add($"ManagedMemoryBytes={diagnostics.ManagedMemoryBytes}");
+            lines.Add($"PeakManagedMemoryBytes={diagnostics.PeakManagedMemoryBytes}");
+            lines.Add($"PlannerThreadAllocatedBytes={diagnostics.AllocatedBytes}");
+        }
+
+        lines.Add(string.Empty);
+        lines.Add("===== ACTIONS =====");
 
         var actionIndex = 1;
 
