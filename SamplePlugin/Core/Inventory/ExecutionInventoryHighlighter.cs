@@ -51,7 +51,7 @@ public sealed unsafe class ExecutionInventoryHighlighter
         var runtime =
             executionRuntime.Snapshot;
 
-        if (!plugin.Configuration.EnableRetainerRowHighlight ||
+        if (!plugin.Configuration.EnableInventoryExecutionHighlight ||
             runtime.IsReplanning ||
             runtime.Status == PlanExecutionCoordinatorStatus.Complete ||
             runtime.Session is null ||
