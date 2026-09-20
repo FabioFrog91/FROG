@@ -33,7 +33,7 @@ public class MainWindow : Window, IDisposable
     private InventorySourceCatalog? resolverCachedSourceCatalog;
     private ResolutionPolicy? resolverCachedResolutionPolicy;
     private TransferPlan? resolverCachedPlan;
-    private long resolverCachedInventoryRevision = -1;
+    private DateTime? resolverCachedSyncAtUtc;
     private ulong resolverCachedCharacterId;
 
     private long resolverComputeCalls;
@@ -448,8 +448,8 @@ public class MainWindow : Window, IDisposable
         RequirementSet requirementSet,
         ulong currentCharacterId)
     {
-        var currentInventoryRevision =
-            plugin.InventoryIndex.Revision;
+        var currentSyncAtUtc =
+            plugin.LastSyncAtUtc;
 
         var cacheIsValid =
             resolverCachedPlan != null &&
@@ -459,7 +459,7 @@ public class MainWindow : Window, IDisposable
             ReferenceEquals(
                 resolverCachedRequirementSet,
                 requirementSet) &&
-            resolverCachedInventoryRevision == currentInventoryRevision &&
+            resolverCachedSyncAtUtc == currentSyncAtUtc &&
             resolverCachedCharacterId == currentCharacterId;
 
         if (cacheIsValid)
@@ -532,8 +532,8 @@ public class MainWindow : Window, IDisposable
         resolverCachedPlan =
             plan;
 
-        resolverCachedInventoryRevision =
-            currentInventoryRevision;
+        resolverCachedSyncAtUtc =
+            currentSyncAtUtc;
 
         resolverCachedCharacterId =
             currentCharacterId;
@@ -566,7 +566,7 @@ public class MainWindow : Window, IDisposable
         resolverCachedSourceCatalog = null;
         resolverCachedResolutionPolicy = null;
         resolverCachedPlan = null;
-        resolverCachedInventoryRevision = -1;
+        resolverCachedSyncAtUtc = null;
         resolverCachedCharacterId = 0;
 
         if (!resetDiagnostics)
