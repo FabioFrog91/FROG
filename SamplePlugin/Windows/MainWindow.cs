@@ -1339,6 +1339,15 @@ public class MainWindow : Window, IDisposable
                 BuildFreeCompanySyncDiagnosticsClipboardText(
                     fcSync));
         }
+
+        ImGui.SameLine();
+
+        if (ImGui.Button("COPIA STORICO FC SYNC"))
+        {
+            ImGui.SetClipboardText(
+                BuildFreeCompanySyncDiagnosticsHistoryClipboardText(
+                    plugin.GetFreeCompanySyncDiagnosticsHistory()));
+        }
     }
 
     private static string BuildFreeCompanySyncDiagnosticsClipboardText(
@@ -1374,6 +1383,66 @@ public class MainWindow : Window, IDisposable
                     $"ReadQty={page.ReadQuantity}",
                     $"AfterSnapshots={page.AfterSnapshotCount}",
                     $"AfterQty={page.AfterQuantity}"));
+        }
+
+        return string.Join(
+            Environment.NewLine,
+            lines);
+    }
+
+    private string BuildFreeCompanySyncDiagnosticsHistoryClipboardText(
+        IReadOnlyList<FreeCompanySyncDiagnosticsSnapshot> history)
+    {
+        var lines =
+            new List<string>
+            {
+                "FROG DEBUG | FREE COMPANY SYNC HISTORY",
+                $"GeneratedUtc={DateTime.UtcNow:O}",
+                $"Entries={history.Count}"
+            };
+
+        foreach (var diagnostics in history)
+        {
+            lines.Add(string.Empty);
+            lines.Add(
+                $"===== SYNC {(diagnostics.ObservedAtUtc.HasValue ? diagnostics.ObservedAtUtc.Value.ToString("O") : "n/a")} =====");
+
+            lines.Add(
+                $"ChestOpen={diagnostics.ChestOpen} ReadSucceeded={diagnostics.ReadSucceeded} " +
+                $"SourceCount={diagnostics.SourceCount} SnapshotCount={diagnostics.SnapshotCount} " +
+                $"TotalQuantity={diagnostics.TotalQuantity}");
+
+            foreach (var page in diagnostics.Pages
+                         .OrderBy(page =>
+                             page.Container))
+            {
+                lines.Add(
+                    string.Join(
+                        "\t",
+                        "PAGE",
+                        page.FreeCompanyId,
+                        page.Container,
+                        $"BeforeSnapshots={page.BeforeSnapshotCount}",
+                        $"BeforeQty={page.BeforeQuantity}",
+                        $"ReadSnapshots={page.ReadSnapshotCount}",
+                        $"ReadQty={page.ReadQuantity}",
+                        $"AfterSnapshots={page.AfterSnapshotCount}",
+                        $"AfterQty={page.AfterQuantity}"));
+
+                foreach (var item in page.ChangedItems)
+                {
+                    lines.Add(
+                        string.Join(
+                            "\t",
+                            "ITEM",
+                            page.Container,
+                            GetItemName(item.BaseItemId),
+                            item.BaseItemId,
+                            item.IsHq ? "HQ" : "NQ",
+                            $"BeforeQty={item.BeforeQuantity}",
+                            $"ReadQty={item.ReadQuantity}"));
+                }
+            }
         }
 
         return string.Join(
