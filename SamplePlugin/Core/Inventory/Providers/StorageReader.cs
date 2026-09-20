@@ -104,13 +104,23 @@ public sealed class StorageReader
         return true;
     }
 
-    public bool TryReadActiveFreeCompany(
+    public unsafe bool TryReadActiveFreeCompanyPage(
         DateTime observedAtUtc,
-        out IReadOnlyList<InventorySource> sources,
+        uint container,
+        out InventorySource source,
         out IReadOnlyList<InventoryItemSnapshot> snapshots)
     {
-        sources = Array.Empty<InventorySource>();
+        source = default!;
         snapshots = Array.Empty<InventoryItemSnapshot>();
+
+        var containerType =
+            (InventoryType)container;
+
+        if (containerType < InventoryType.FreeCompanyPage1 ||
+            containerType > InventoryType.FreeCompanyPage5)
+        {
+            return false;
+        }
 
         var freeCompanyId =
             characterMonitor.ActiveFreeCompanyId;
@@ -118,71 +128,66 @@ public sealed class StorageReader
         if (freeCompanyId == 0)
             return false;
 
-        var sourceList = new List<InventorySource>();
-        var snapshotList = new List<InventoryItemSnapshot>();
+        var inventoryManager =
+            InventoryManager.Instance();
 
-        var freeCompanyPages = new[]
+        if (inventoryManager == null)
+            return false;
+
+        var inventoryContainer =
+            inventoryManager->GetInventoryContainer(containerType);
+
+        if (inventoryContainer == null ||
+            !inventoryContainer->IsLoaded)
         {
-            InventoryType.FreeCompanyPage1,
-            InventoryType.FreeCompanyPage2,
-            InventoryType.FreeCompanyPage3,
-            InventoryType.FreeCompanyPage4,
-            InventoryType.FreeCompanyPage5
-        };
-
-        unsafe
-        {
-            var inventoryManager = InventoryManager.Instance();
-
-            if (inventoryManager == null)
-                return false;
-
-            foreach (var containerType in freeCompanyPages)
-            {
-                var container =
-                    inventoryManager->GetInventoryContainer(containerType);
-
-                if (container == null || !container->IsLoaded)
-                    continue;
-
-                var source = new InventorySource(
-                    StorageType.FreeCompanyChest,
-                    freeCompanyId,
-                    (uint)containerType,
-                    characterMonitor.ActiveCharacterId);
-
-                sourceList.Add(source);
-
-                for (var slot = 0; slot < container->Size; slot++)
-                {
-                    var item = container->Items[slot];
-
-                    if (item.ItemId == 0)
-                        continue;
-
-                    var baseItem = ItemUtil.GetBaseId(item.ItemId);
-                    var isHq = item.Flags.HasFlag(InventoryItem.ItemFlags.HighQuality);
-
-                    snapshotList.Add(
-                        new InventoryItemSnapshot(
-                            baseItem.ItemId,
-                            item.ItemId,
-                            item.Quantity,
-                            isHq,
-                            StorageType.FreeCompanyChest,
-                            freeCompanyId,
-                            (uint)containerType,
-                            slot,
-                            observedAtUtc,
-                            true,
-                            characterMonitor.ActiveCharacterId));
-                }
-            }
+            return false;
         }
 
-        sources = sourceList;
+        source =
+            new InventorySource(
+                StorageType.FreeCompanyChest,
+                freeCompanyId,
+                container,
+                characterMonitor.ActiveCharacterId);
+
+        var snapshotList =
+            new List<InventoryItemSnapshot>();
+
+        for (var slot = 0;
+             slot < inventoryContainer->Size;
+             slot++)
+        {
+            var item =
+                inventoryContainer->Items[slot];
+
+            if (item.ItemId == 0)
+                continue;
+
+            var baseItem =
+                ItemUtil.GetBaseId(item.ItemId);
+
+            var isHq =
+                item.Flags.HasFlag(
+                    InventoryItem.ItemFlags.HighQuality);
+
+            snapshotList.Add(
+                new InventoryItemSnapshot(
+                    baseItem.ItemId,
+                    item.ItemId,
+                    item.Quantity,
+                    isHq,
+                    StorageType.FreeCompanyChest,
+                    freeCompanyId,
+                    container,
+                    slot,
+                    observedAtUtc,
+                    true,
+                    characterMonitor.ActiveCharacterId));
+        }
+
         snapshots = snapshotList;
 
-        return sourceList.Count > 0;
+        return true;
     }
+
 }
