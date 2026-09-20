@@ -55,6 +55,7 @@ public sealed class Plugin : HostedPlugin
 
     private const string CommandName = "/frog";
     private const string InventoryIndexFileName = "inventory-index.json";
+    private const string CharacterCatalogFileName = "character-catalog.json";
 
     private const int LoginRetryIntervalMilliseconds = 500;
     private const int LoginRetryMaxAttempts = 10;
@@ -63,9 +64,13 @@ public sealed class Plugin : HostedPlugin
 
     private readonly PlayerInventoryAPI playerInventory;
 
+    private CharacterCatalogSync? characterCatalogSync;
+
     public Configuration Configuration { get; private set; } = null!;
 
     public InventoryIndex InventoryIndex { get; } = new();
+
+    public CharacterCatalog CharacterCatalog { get; } = new();
 
     public WindowSystem WindowSystem { get; } = new("FROG");
 
@@ -76,6 +81,11 @@ public sealed class Plugin : HostedPlugin
         Path.Combine(
             PluginInterface.ConfigDirectory.FullName,
             InventoryIndexFileName);
+
+    private string CharacterCatalogFilePath =>
+        Path.Combine(
+            PluginInterface.ConfigDirectory.FullName,
+            CharacterCatalogFileName);
 
     internal IReadOnlyList<InventoryItemSnapshot> LastSyncSnapshots { get; private set; }
         = Array.Empty<InventoryItemSnapshot>();
@@ -114,6 +124,24 @@ public sealed class Plugin : HostedPlugin
             Log.Error(
                 ex,
                 $"Errore durante il caricamento dell'indice inventario: {InventoryIndexFilePath}");
+        }
+
+        try
+        {
+            CharacterCatalog.LoadFromDisk(
+                CharacterCatalogFilePath);
+
+            Log.Information(
+                $"Catalogo personaggi caricato da disco: {CharacterCatalogFilePath}");
+
+            Log.Information(
+                $"Identità caricate: {CharacterCatalog.Entries.Count}");
+        }
+        catch (Exception ex)
+        {
+            Log.Error(
+                ex,
+                $"Errore durante il caricamento del catalogo personaggi: {CharacterCatalogFilePath}");
         }
 
         ConfigWindow = new ConfigWindow(this);
@@ -203,10 +231,21 @@ public sealed class Plugin : HostedPlugin
         var characterMonitor =
             Host.Services.GetRequiredService<ICharacterMonitor>();
 
+        characterCatalogSync =
+            new CharacterCatalogSync(
+                characterMonitor,
+                CharacterCatalog);
+
+        characterCatalogSync.SyncAll();
+
+        characterMonitor.OnCharacterUpdated +=
+            OnCharacterUpdated;
+
         MainWindow =
             new MainWindow(
                 this,
-                characterMonitor);
+                characterMonitor,
+                CharacterCatalog);
 
         WindowSystem.AddWindow(MainWindow);
 
@@ -221,6 +260,20 @@ public sealed class Plugin : HostedPlugin
 
         ClientState.Login -= OnLogin;
         ClientState.Logout -= OnLogout;
+
+        if (Host != null)
+        {
+            var characterMonitor =
+                Host.Services.GetService<ICharacterMonitor>();
+
+            if (characterMonitor != null)
+            {
+                characterMonitor.OnCharacterUpdated -=
+                    OnCharacterUpdated;
+            }
+        }
+
+        characterCatalogSync?.SyncAll();
 
         AddonLifecycle.UnregisterListener(
             AddonEvent.PostSetup,
@@ -250,7 +303,7 @@ public sealed class Plugin : HostedPlugin
         {
             Log.Error(
                 ex,
-                $"Errore durante il salvataggio dell'indice inventario: {InventoryIndexFilePath}");
+                $"Errore durante il salvataggio dello stato persistente.");
         }
 
         PluginInterface.UiBuilder.Draw -= WindowSystem.Draw;
@@ -295,12 +348,23 @@ public sealed class Plugin : HostedPlugin
     {
         loginSyncCancellation?.Cancel();
 
+        characterCatalogSync?.SyncAll();
+
         SaveInventoryIndex();
 
         LastSyncCharacterId = 0;
         LastSyncAtUtc = null;
         LastSyncSnapshots = Array.Empty<InventoryItemSnapshot>();
         LastSyncIndexSnapshots = Array.Empty<InventoryItemSnapshot>();
+    }
+
+    private void OnCharacterUpdated(
+        Character? character)
+    {
+        if (character is null)
+            return;
+
+        characterCatalogSync?.Sync(character);
     }
 
     private void StartLoginSyncRetry()
@@ -470,13 +534,23 @@ public sealed class Plugin : HostedPlugin
 
     internal void SaveInventoryIndex()
     {
-        if (!InventoryIndex.IsDirty)
-            return;
+        if (InventoryIndex.IsDirty)
+        {
+            InventoryIndex.SaveToDisk(
+                InventoryIndexFilePath);
 
-        InventoryIndex.SaveToDisk(InventoryIndexFilePath);
+            Log.Information(
+                $"Indice inventario salvato: {InventoryIndexFilePath} ({InventoryIndex.Items.Count} snapshot)");
+        }
 
-        Log.Information(
-            $"Indice inventario salvato: {InventoryIndexFilePath} ({InventoryIndex.Items.Count} snapshot)");
+        if (CharacterCatalog.IsDirty)
+        {
+            CharacterCatalog.SaveToDisk(
+                CharacterCatalogFilePath);
+
+            Log.Information(
+                $"Catalogo personaggi salvato: {CharacterCatalogFilePath} ({CharacterCatalog.Entries.Count} identità)");
+        }
     }
 }
 
