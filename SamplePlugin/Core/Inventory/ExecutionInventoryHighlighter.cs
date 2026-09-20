@@ -205,9 +205,13 @@ public sealed unsafe class ExecutionInventoryHighlighter
     private void UpdateRetainer(
         HighlightTarget target)
     {
+        var retainerManager =
+            RetainerManager.Instance();
+
         var activeRetainer =
-            RetainerManager.Instance()
-                ?->GetActiveRetainer();
+            retainerManager == null
+                ? null
+                : retainerManager->GetActiveRetainer();
 
         if (activeRetainer == null ||
             activeRetainer->RetainerId != target.SourceOwnerId)
