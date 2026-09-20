@@ -88,6 +88,7 @@ public sealed class Plugin : HostedPlugin
 
     private ConfigWindow ConfigWindow { get; }
     private MainWindow? MainWindow { get; set; }
+    private ExecutionWindow? ExecutionWindow { get; set; }
 
     private string InventoryIndexFilePath =>
         Path.Combine(
@@ -217,6 +218,26 @@ public sealed class Plugin : HostedPlugin
             .SingleInstance();
 
         containerBuilder
+            .RegisterInstance(CharacterCatalog)
+            .AsSelf()
+            .SingleInstance();
+
+        containerBuilder
+            .RegisterType<PlannerSourceBuilder>()
+            .AsSelf()
+            .SingleInstance();
+
+        containerBuilder
+            .RegisterType<GlobalPlannerCoordinator>()
+            .AsSelf()
+            .SingleInstance();
+
+        containerBuilder
+            .RegisterType<PlanExecutionRuntime>()
+            .AsSelf()
+            .SingleInstance();
+
+        containerBuilder
             .RegisterType<StorageReader>()
             .As<StorageReaderAPI>()
             .SingleInstance();
@@ -249,6 +270,12 @@ public sealed class Plugin : HostedPlugin
         var retainerDisplayLocator =
             Host.Services.GetRequiredService<RetainerDisplayLocator>();
 
+        var globalPlannerCoordinator =
+            Host.Services.GetRequiredService<GlobalPlannerCoordinator>();
+
+        var executionRuntime =
+            Host.Services.GetRequiredService<PlanExecutionRuntime>();
+
         characterCatalogSync =
             new CharacterCatalogSync(
                 characterMonitor,
@@ -259,14 +286,25 @@ public sealed class Plugin : HostedPlugin
         characterMonitor.OnCharacterUpdated +=
             OnCharacterUpdated;
 
+        ExecutionWindow =
+            new ExecutionWindow(
+                executionRuntime,
+                retainerDisplayLocator,
+                characterMonitor,
+                CharacterCatalog);
+
         MainWindow =
             new MainWindow(
                 this,
                 characterMonitor,
                 CharacterCatalog,
-                retainerDisplayLocator);
+                retainerDisplayLocator,
+                globalPlannerCoordinator,
+                executionRuntime,
+                ExecutionWindow);
 
         WindowSystem.AddWindow(MainWindow);
+        WindowSystem.AddWindow(ExecutionWindow);
 
         return Task.CompletedTask;
     }
@@ -333,6 +371,7 @@ public sealed class Plugin : HostedPlugin
 
         ConfigWindow.Dispose();
         MainWindow?.Dispose();
+        ExecutionWindow?.Dispose();
 
         CommandManager.RemoveHandler(CommandName);
 
@@ -807,18 +846,21 @@ internal sealed class FrogInventoryStartup : IHostedService
     private readonly IInventoryScanner inventoryScanner;
     private readonly StorageReaderAPI storageReader;
     private readonly Plugin plugin;
+    private readonly PlanExecutionRuntime executionRuntime;
     private long lastFreeCompanyPollAtMs;
 
     public FrogInventoryStartup(
         IInventoryMonitor inventoryMonitor,
         IInventoryScanner inventoryScanner,
         StorageReaderAPI storageReader,
-        Plugin plugin)
+        Plugin plugin,
+        PlanExecutionRuntime executionRuntime)
     {
         this.inventoryMonitor = inventoryMonitor;
         this.inventoryScanner = inventoryScanner;
         this.storageReader = storageReader;
         this.plugin = plugin;
+        this.executionRuntime = executionRuntime;
     }
 
     public Task StartAsync(
@@ -848,6 +890,14 @@ internal sealed class FrogInventoryStartup : IHostedService
     private void OnFrameworkUpdate(
         IFramework framework)
     {
+        var currentCharacterId =
+            Plugin.PlayerState.IsLoaded
+                ? Plugin.PlayerState.ContentId
+                : 0;
+
+        executionRuntime.Update(
+            currentCharacterId);
+
         if (!plugin.IsFreeCompanyChestOpen)
             return;
 
