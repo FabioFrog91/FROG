@@ -115,6 +115,16 @@ public sealed class InventoryIndex
 
         lock (syncLock)
         {
+            var observedContainers =
+                items
+                    .Where(item =>
+                        item.Storage == StorageType.CharacterInventory &&
+                        item.OwnerId == characterId)
+                    .Select(item => item.Container)
+                    .Union(newSnapshots.Select(item => item.Container))
+                    .Distinct()
+                    .ToArray();
+
             // Deliberately replace the complete current-character inventory
             // on every synchronization.
             //
@@ -132,9 +142,7 @@ public sealed class InventoryIndex
             var characterObservedAtUtc =
                 observedAtUtc ?? DateTime.UtcNow;
 
-            foreach (var container in newSnapshots
-                         .Select(item => item.Container)
-                         .Distinct())
+            foreach (var container in observedContainers)
             {
                 sourceObservedAtUtc[
                     (StorageType.CharacterInventory, characterId, container)] =
@@ -153,6 +161,7 @@ public sealed class InventoryIndex
         {
             items.Clear();
             items.AddRange(snapshots);
+            sourceObservedAtUtc.Clear();
             isDirty = true;
         }
     }
@@ -210,6 +219,7 @@ public sealed class InventoryIndex
 
             items.Clear();
             items.AddRange(snapshots);
+            sourceObservedAtUtc.Clear();
             isDirty = false;
 
             AddAuditEntry(
