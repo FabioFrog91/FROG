@@ -797,7 +797,7 @@ public class MainWindow : Window, IDisposable
         }
     }
 
-    private static void DrawGlobalPlannerSearchDiagnostics(
+    private void DrawGlobalPlannerSearchDiagnostics(
         GlobalTransferPlannerDiagnosticsSnapshot diagnostics)
     {
         ImGui.Text("DIAGNOSTICA RICERCA");
@@ -823,6 +823,48 @@ public class MainWindow : Window, IDisposable
 
         ImGui.Text(
             $"Azioni applicate: {diagnostics.AppliedActions:N0}");
+
+        ImGui.Text(
+            $"MOVE generati: {diagnostics.MoveActionsGenerated:N0}");
+
+        ImGui.Text(
+            $"SWITCH generati: {diagnostics.SwitchActionsGenerated:N0}");
+
+        ImGui.Text(
+            $"Stati espansi: {diagnostics.ExpandedStates:N0}");
+
+        ImGui.Text(
+            $"Cicli di path scartati: {diagnostics.PathCyclePrunes:N0}");
+
+        ImGui.Text(
+            $"Dead end: {diagnostics.DeadEnds:N0}");
+
+        var averageBranching =
+            diagnostics.ExpandedStates == 0
+                ? 0
+                : diagnostics.BranchingTotal /
+                  (double)diagnostics.ExpandedStates;
+
+        ImGui.Text(
+            $"Branching medio: {averageBranching:N2}");
+
+        ImGui.Text(
+            $"Branching massimo: {diagnostics.MaxBranching:N0}");
+
+        ImGui.Text(
+            $"Stati con 1 azione: {diagnostics.StatesWithOneAction:N0}");
+
+        ImGui.Text(
+            $"Stati con 2 azioni: {diagnostics.StatesWithTwoActions:N0}");
+
+        ImGui.Text(
+            $"Stati con 3-5 azioni: {diagnostics.StatesWithThreeToFiveActions:N0}");
+
+        ImGui.Text(
+            $"Stati con 6-10 azioni: {diagnostics.StatesWithSixToTenActions:N0}");
+
+        ImGui.Text(
+            $"Stati con >10 azioni: {diagnostics.StatesWithMoreThanTenActions:N0}");
 
         ImGui.Text(
             $"Profondità massima: {diagnostics.MaxDepth:N0}");
@@ -856,6 +898,39 @@ public class MainWindow : Window, IDisposable
 
         ImGui.Text(
             $"Allocato cumulativo dal thread planner: {FormatMegabytes(diagnostics.AllocatedBytes):N1} MB");
+
+        if (diagnostics.TopItems.Count > 0)
+        {
+            ImGui.Spacing();
+            ImGui.Text("TOP ITEM PER AZIONI GENERATE");
+
+            foreach (var item in diagnostics.TopItems)
+            {
+                ImGui.Text(
+                    $"{GetItemName(item.BaseItemId)} ({item.BaseItemId}) | {item.GeneratedActions:N0}");
+            }
+        }
+
+        if (diagnostics.TopSources.Count > 0)
+        {
+            ImGui.Spacing();
+            ImGui.Text("TOP SOURCE PER AZIONI GENERATE");
+
+            foreach (var source in diagnostics.TopSources)
+            {
+                var inventorySource =
+                    new InventorySource(
+                        source.Storage,
+                        source.OwnerId,
+                        source.Container,
+                        source.ParentCharacterId);
+
+                ImGui.Text(
+                    $"{GetSourceName(inventorySource)} | " +
+                    $"{GetContainerName(inventorySource)} | " +
+                    $"{source.GeneratedActions:N0}");
+            }
+        }
     }
 
     private string BuildGlobalPlannerDiagnosticsClipboardText(
@@ -876,6 +951,19 @@ public class MainWindow : Window, IDisposable
                 $"MemoEntries={diagnostics.MemoEntries}",
                 $"GeneratedActions={diagnostics.GeneratedActions}",
                 $"AppliedActions={diagnostics.AppliedActions}",
+                $"MoveActionsGenerated={diagnostics.MoveActionsGenerated}",
+                $"SwitchActionsGenerated={diagnostics.SwitchActionsGenerated}",
+                $"ExpandedStates={diagnostics.ExpandedStates}",
+                $"PathCyclePrunes={diagnostics.PathCyclePrunes}",
+                $"DeadEnds={diagnostics.DeadEnds}",
+                $"BranchingTotal={diagnostics.BranchingTotal}",
+                $"AverageBranching={(diagnostics.ExpandedStates == 0 ? 0 : diagnostics.BranchingTotal / (double)diagnostics.ExpandedStates):F6}",
+                $"MaxBranching={diagnostics.MaxBranching}",
+                $"StatesWithOneAction={diagnostics.StatesWithOneAction}",
+                $"StatesWithTwoActions={diagnostics.StatesWithTwoActions}",
+                $"StatesWithThreeToFiveActions={diagnostics.StatesWithThreeToFiveActions}",
+                $"StatesWithSixToTenActions={diagnostics.StatesWithSixToTenActions}",
+                $"StatesWithMoreThanTenActions={diagnostics.StatesWithMoreThanTenActions}",
                 $"MaxDepth={diagnostics.MaxDepth}",
                 $"ElapsedMs={diagnostics.ElapsedMilliseconds}",
                 $"ManagedMemoryStartBytes={diagnostics.ManagedMemoryStartBytes}",
@@ -887,6 +975,48 @@ public class MainWindow : Window, IDisposable
                 $"ManagedMemoryEndDeltaBytes={(diagnostics.ManagedMemoryEndBytes > 0 ? diagnostics.ManagedMemoryEndBytes - diagnostics.ManagedMemoryStartBytes : 0)}",
                 $"PlannerThreadAllocatedBytes={diagnostics.AllocatedBytes}"
             };
+
+        if (diagnostics.TopItems.Count > 0)
+        {
+            lines.Add(string.Empty);
+            lines.Add("===== TOP ITEMS BY GENERATED ACTIONS =====");
+
+            foreach (var item in diagnostics.TopItems)
+            {
+                lines.Add(
+                    string.Join(
+                        "\t",
+                        GetItemName(item.BaseItemId),
+                        item.BaseItemId,
+                        item.GeneratedActions));
+            }
+        }
+
+        if (diagnostics.TopSources.Count > 0)
+        {
+            lines.Add(string.Empty);
+            lines.Add("===== TOP SOURCES BY GENERATED ACTIONS =====");
+
+            foreach (var source in diagnostics.TopSources)
+            {
+                var inventorySource =
+                    new InventorySource(
+                        source.Storage,
+                        source.OwnerId,
+                        source.Container,
+                        source.ParentCharacterId);
+
+                lines.Add(
+                    string.Join(
+                        "\t",
+                        source.Storage,
+                        GetSourceName(inventorySource),
+                        source.OwnerId,
+                        source.Container,
+                        source.ParentCharacterId,
+                        source.GeneratedActions));
+            }
+        }
 
         return string.Join(
             Environment.NewLine,
@@ -965,6 +1095,19 @@ public class MainWindow : Window, IDisposable
             lines.Add($"MemoEntries={diagnostics.MemoEntries}");
             lines.Add($"GeneratedActions={diagnostics.GeneratedActions}");
             lines.Add($"AppliedActions={diagnostics.AppliedActions}");
+            lines.Add($"MoveActionsGenerated={diagnostics.MoveActionsGenerated}");
+            lines.Add($"SwitchActionsGenerated={diagnostics.SwitchActionsGenerated}");
+            lines.Add($"ExpandedStates={diagnostics.ExpandedStates}");
+            lines.Add($"PathCyclePrunes={diagnostics.PathCyclePrunes}");
+            lines.Add($"DeadEnds={diagnostics.DeadEnds}");
+            lines.Add($"BranchingTotal={diagnostics.BranchingTotal}");
+            lines.Add($"AverageBranching={(diagnostics.ExpandedStates == 0 ? 0 : diagnostics.BranchingTotal / (double)diagnostics.ExpandedStates):F6}");
+            lines.Add($"MaxBranching={diagnostics.MaxBranching}");
+            lines.Add($"StatesWithOneAction={diagnostics.StatesWithOneAction}");
+            lines.Add($"StatesWithTwoActions={diagnostics.StatesWithTwoActions}");
+            lines.Add($"StatesWithThreeToFiveActions={diagnostics.StatesWithThreeToFiveActions}");
+            lines.Add($"StatesWithSixToTenActions={diagnostics.StatesWithSixToTenActions}");
+            lines.Add($"StatesWithMoreThanTenActions={diagnostics.StatesWithMoreThanTenActions}");
             lines.Add($"MaxDepth={diagnostics.MaxDepth}");
             lines.Add($"ElapsedMs={diagnostics.ElapsedMilliseconds}");
             lines.Add($"ManagedMemoryStartBytes={diagnostics.ManagedMemoryStartBytes}");
