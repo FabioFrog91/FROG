@@ -30,21 +30,25 @@ public sealed class CharacterCatalogSync
         if (character.CharacterId == 0)
             return;
 
-        var type =
-            character.CharacterType switch
-            {
-                CharacterType.Character =>
-                    CharacterIdentityType.Character,
+        CharacterIdentityType type;
 
-                CharacterType.Retainer =>
-                    CharacterIdentityType.Retainer,
+        switch (character.CharacterType)
+        {
+            case CharacterType.Character:
+                type = CharacterIdentityType.Character;
+                break;
 
-                CharacterType.FreeCompanyChest =>
-                    CharacterIdentityType.FreeCompany,
+            case CharacterType.Retainer:
+                type = CharacterIdentityType.Retainer;
+                break;
 
-                _ =>
-                    return
-            };
+            case CharacterType.FreeCompanyChest:
+                type = CharacterIdentityType.FreeCompany;
+                break;
+
+            default:
+                return;
+        }
 
         var ownerCharacterId =
             type == CharacterIdentityType.Retainer
