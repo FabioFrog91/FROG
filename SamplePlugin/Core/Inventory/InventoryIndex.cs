@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -12,6 +13,8 @@ public sealed class InventoryIndex
     private readonly object syncLock = new();
     private readonly List<InventoryItemSnapshot> items = new();
     private readonly List<InventoryIndexAuditEntry> auditHistory = new();
+    private readonly Dictionary<(StorageType Storage, ulong OwnerId, uint Container), DateTime>
+        sourceObservedAtUtc = new();
 
     public IReadOnlyList<InventoryItemSnapshot> Items
     {
@@ -56,7 +59,8 @@ public sealed class InventoryIndex
 
     public bool ReplaceSource(
         InventorySource source,
-        IEnumerable<InventoryItemSnapshot> snapshots)
+        IEnumerable<InventoryItemSnapshot> snapshots,
+        DateTime? observedAtUtc = null)
     {
         var newSnapshots = snapshots
             .Where(x =>
@@ -84,6 +88,10 @@ public sealed class InventoryIndex
 
             items.AddRange(newSnapshots);
 
+            sourceObservedAtUtc[
+                (source.Storage, source.OwnerId, source.Container)] =
+                observedAtUtc ?? DateTime.UtcNow;
+
             isDirty = true;
 
             AddAuditEntry(
@@ -96,7 +104,8 @@ public sealed class InventoryIndex
 
     public bool ReplaceCharacterInventory(
         ulong characterId,
-        IEnumerable<InventoryItemSnapshot> snapshots)
+        IEnumerable<InventoryItemSnapshot> snapshots,
+        DateTime? observedAtUtc = null)
     {
         var newSnapshots = snapshots
             .Where(x =>
@@ -119,6 +128,18 @@ public sealed class InventoryIndex
                 x.OwnerId == characterId);
 
             items.AddRange(newSnapshots);
+
+            var characterObservedAtUtc =
+                observedAtUtc ?? DateTime.UtcNow;
+
+            foreach (var container in newSnapshots
+                         .Select(item => item.Container)
+                         .Distinct())
+            {
+                sourceObservedAtUtc[
+                    (StorageType.CharacterInventory, characterId, container)] =
+                    characterObservedAtUtc;
+            }
 
             isDirty = true;
 
@@ -238,6 +259,37 @@ public sealed class InventoryIndex
             auditHistory.RemoveRange(
                 0,
                 auditHistory.Count - AuditHistoryLimit);
+        }
+    }
+
+    public DateTime? GetSourceObservedAtUtc(
+        InventorySource source)
+    {
+        lock (syncLock)
+        {
+            return sourceObservedAtUtc.TryGetValue(
+                (source.Storage, source.OwnerId, source.Container),
+                out var observedAtUtc)
+                ? observedAtUtc
+                : null;
+        }
+    }
+
+    public int GetQuantity(
+        uint baseItemId,
+        bool isHq,
+        InventorySource source)
+    {
+        lock (syncLock)
+        {
+            return items
+                .Where(item =>
+                    item.BaseItemId == baseItemId &&
+                    item.IsHq == isHq &&
+                    item.Storage == source.Storage &&
+                    item.OwnerId == source.OwnerId &&
+                    item.Container == source.Container)
+                .Sum(item => item.Quantity);
         }
     }
 
