@@ -1032,8 +1032,11 @@ public class MainWindow : Window, IDisposable
 
         var replanMessage =
             $"REPLAN ESECUZIONE: previsto {reconciliation.PlannedQuantity}, " +
-            $"osservato {reconciliation.ObservedTransferredQuantity} " +
-            $"(varianza {varianceText}). Piano residuo ricalcolato dallo stato reale.";
+            $"trasferimento confermato {reconciliation.ObservedTransferredQuantity} " +
+            $"(varianza {varianceText}), " +
+            $"delta source -{reconciliation.SourceDecrease}, " +
+            $"delta destination +{reconciliation.DestinationIncrease}. " +
+            $"Piano residuo ricalcolato dallo stato reale.";
 
         StartGlobalPlannerTask(
             requirementSet,
