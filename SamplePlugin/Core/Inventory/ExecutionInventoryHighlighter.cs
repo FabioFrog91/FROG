@@ -235,8 +235,15 @@ public sealed unsafe class ExecutionInventoryHighlighter
             var visualKey =
                 $"retainer-large:{target.SourceOwnerId}:{targetTab}:{currentTab}:{BuildPositionKey(target.Positions)}";
 
+            var expectedBindings =
+                1 +
+                target.Positions.Count(position =>
+                    GetRetainerLargeTab(position.Page) ==
+                    currentTab);
+
             EnsureVisualState(
                 visualKey,
+                expectedBindings,
                 () =>
                 {
                     AddBinding(
@@ -276,8 +283,15 @@ public sealed unsafe class ExecutionInventoryHighlighter
             var visualKey =
                 $"retainer-standard:{target.SourceOwnerId}:{targetTab}:{currentTab}:{BuildPositionKey(target.Positions)}";
 
+            var expectedBindings =
+                1 +
+                target.Positions.Count(position =>
+                    position.Page - 1 ==
+                    currentTab);
+
             EnsureVisualState(
                 visualKey,
+                expectedBindings,
                 () =>
                 {
                     AddBinding(
@@ -318,6 +332,7 @@ public sealed unsafe class ExecutionInventoryHighlighter
 
             EnsureVisualState(
                 visualKey,
+                target.Positions.Count,
                 () =>
                 {
                     foreach (var position in target.Positions)
@@ -348,8 +363,15 @@ public sealed unsafe class ExecutionInventoryHighlighter
             var visualKey =
                 $"character-large:{target.SourceOwnerId}:{targetTab}:{currentTab}:{BuildPositionKey(target.Positions)}";
 
+            var expectedBindings =
+                1 +
+                target.Positions.Count(position =>
+                    GetCharacterLargeTab(position.Page) ==
+                    currentTab);
+
             EnsureVisualState(
                 visualKey,
+                expectedBindings,
                 () =>
                 {
                     AddBinding(
@@ -394,8 +416,15 @@ public sealed unsafe class ExecutionInventoryHighlighter
             var visualKey =
                 $"character-standard:{target.SourceOwnerId}:{targetTab}:{currentTab}:{BuildPositionKey(target.Positions)}";
 
+            var expectedBindings =
+                1 +
+                target.Positions.Count(position =>
+                    position.Page - 1 ==
+                    currentTab);
+
             EnsureVisualState(
                 visualKey,
+                expectedBindings,
                 () =>
                 {
                     AddBinding(
@@ -426,12 +455,20 @@ public sealed unsafe class ExecutionInventoryHighlighter
 
     private void EnsureVisualState(
         string visualKey,
+        int expectedBindings,
         Action rebuild)
     {
-        if (string.Equals(
+        var sameVisualState =
+            string.Equals(
                 activeVisualKey,
                 visualKey,
-                StringComparison.Ordinal))
+                StringComparison.Ordinal);
+
+        if (sameVisualState &&
+            activeBindings.Count == expectedBindings &&
+            activeBindings.All(binding =>
+                binding.IsAlive(
+                    gameGui)))
         {
             return;
         }
@@ -685,6 +722,12 @@ public sealed unsafe class ExecutionInventoryHighlighter
 
             return node != null;
         }
+
+        public bool IsAlive(
+            IGameGui gameGui) =>
+            TryResolveSameAddon(
+                gameGui,
+                out _);
 
         public void Restore(
             IGameGui gameGui)
