@@ -215,12 +215,19 @@ public sealed class PlannerState
                 "The planner state could not consume the requested quantity.");
         }
 
-        var destinationItemIndex = updatedItems.FindIndex(item =>
-            item.BaseItemId == baseItemId &&
-            item.IsHq == isHq &&
-            item.Storage == destination.Storage &&
-            item.OwnerId == destination.OwnerId &&
-            item.Container == destination.Container);
+        var destinationItemIndex =
+            destination.Storage == StorageType.CharacterInventory
+                ? updatedItems.FindIndex(item =>
+                    item.BaseItemId == baseItemId &&
+                    item.IsHq == isHq &&
+                    item.Storage == StorageType.CharacterInventory &&
+                    item.OwnerId == destination.OwnerId)
+                : updatedItems.FindIndex(item =>
+                    item.BaseItemId == baseItemId &&
+                    item.IsHq == isHq &&
+                    item.Storage == destination.Storage &&
+                    item.OwnerId == destination.OwnerId &&
+                    item.Container == destination.Container);
 
         if (destinationItemIndex >= 0)
         {
@@ -234,6 +241,10 @@ public sealed class PlannerState
         }
         else
         {
+            // CharacterInventory is a logical destination: the game may place
+            // or merge the item in any character bag. If no compatible stack
+            // exists yet, keep the planner's canonical destination container
+            // only as a deterministic simulation placeholder.
             var nextSlot = updatedItems
                 .Where(item =>
                     item.Storage == destination.Storage &&
