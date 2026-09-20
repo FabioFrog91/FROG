@@ -62,6 +62,25 @@ public sealed class ExecutionWindow : Window, IDisposable
 
         if (session is null)
         {
+            if (runtime.IsReplanning)
+            {
+                ImGui.TextWrapped(
+                    "Il piano precedente non è più valido. FROG sta ricalcolando automaticamente il percorso dallo stato reale.");
+
+                DrawControls();
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(
+                    runtime.Error))
+            {
+                ImGui.TextWrapped(
+                    $"Errore esecuzione: {runtime.Error}");
+
+                DrawControls();
+                return;
+            }
+
             ImGui.TextWrapped(
                 "Nessuna esecuzione attiva.");
 
