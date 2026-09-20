@@ -53,6 +53,9 @@ public sealed class Plugin : HostedPlugin
     internal static IGameGui GameGui { get; private set; } = null!;
 
     [PluginService]
+    internal static IFramework Framework { get; private set; } = null!;
+
+    [PluginService]
     internal static IAddonLifecycle AddonLifecycle { get; private set; } = null!;
 
     [PluginService]
@@ -109,6 +112,9 @@ public sealed class Plugin : HostedPlugin
 
     internal IReadOnlyList<InventoryItemSnapshot> LastSyncIndexSnapshots { get; private set; }
         = Array.Empty<InventoryItemSnapshot>();
+
+    internal bool IsFreeCompanyChestOpen =>
+        isFreeCompanyChestOpen;
 
     internal FreeCompanySyncDiagnosticsSnapshot GetFreeCompanySyncDiagnostics()
     {
@@ -528,6 +534,16 @@ public sealed class Plugin : HostedPlugin
             }
         }
 
+        SyncObservedFreeCompanyPage(
+            storageReader);
+    }
+
+    internal void SyncObservedFreeCompanyPage(
+        StorageReaderAPI storageReader)
+    {
+        var observedAtUtc =
+            DateTime.UtcNow;
+
         var chestOpen =
             isFreeCompanyChestOpen;
 
@@ -581,6 +597,7 @@ public sealed class Plugin : HostedPlugin
             var shouldApplyObservation =
                 ShouldPromoteFreeCompanyObservation(
                     freeCompanySource,
+                    beforeSnapshots,
                     freeCompanySnapshots);
 
             if (shouldApplyObservation)
@@ -689,10 +706,12 @@ public sealed class Plugin : HostedPlugin
                     freeCompanySyncHistory.Count - maxFreeCompanySyncHistory);
             }
         }
+
     }
 
     private bool ShouldPromoteFreeCompanyObservation(
         InventorySource source,
+        IReadOnlyList<InventoryItemSnapshot> knownSnapshots,
         IReadOnlyList<InventoryItemSnapshot> observedSnapshots)
     {
         var key =
@@ -701,6 +720,19 @@ public sealed class Plugin : HostedPlugin
         var fingerprint =
             BuildFreeCompanyObservationFingerprint(
                 observedSnapshots);
+
+        var knownFingerprint =
+            BuildFreeCompanyObservationFingerprint(
+                knownSnapshots);
+
+        if (string.Equals(
+                knownFingerprint,
+                fingerprint,
+                StringComparison.Ordinal))
+        {
+            pendingFreeCompanyObservations.Remove(key);
+            return false;
+        }
 
         if (!pendingFreeCompanyObservations.TryGetValue(
                 key,
@@ -977,6 +1009,7 @@ internal sealed class FrogInventoryStartup : IHostedService
         CancellationToken cancellationToken)
     {
         inventoryMonitor.OnInventoryChanged += OnInventoryChanged;
+        Plugin.Framework.Update += OnFrameworkUpdate;
 
         inventoryMonitor.Start();
 
@@ -991,8 +1024,19 @@ internal sealed class FrogInventoryStartup : IHostedService
         CancellationToken cancellationToken)
     {
         inventoryMonitor.OnInventoryChanged -= OnInventoryChanged;
+        Plugin.Framework.Update -= OnFrameworkUpdate;
 
         return Task.CompletedTask;
+    }
+
+    private void OnFrameworkUpdate(
+        IFramework framework)
+    {
+        if (!plugin.IsFreeCompanyChestOpen)
+            return;
+
+        plugin.SyncObservedFreeCompanyPage(
+            storageReader);
     }
 
     private void OnInventoryChanged(
