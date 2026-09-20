@@ -209,7 +209,7 @@ public sealed class PlannerSourceBuilder
             new InventorySource(
                 StorageType.FreeCompanyChest,
                 freeCompanyId,
-                (uint)GameInventoryType.FreeCompanyPage1,
+                InventorySource.AnyFreeCompanyPageContainer,
                 ParentCharacterId: 0,
                 OwnerName:
                     GetOwnerName(

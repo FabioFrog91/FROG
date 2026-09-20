@@ -6,4 +6,7 @@ public sealed record InventorySource(
     uint Container,
     ulong ParentCharacterId = 0,
     string OwnerName = ""
-);
+)
+{
+    public const uint AnyFreeCompanyPageContainer = 0;
+}

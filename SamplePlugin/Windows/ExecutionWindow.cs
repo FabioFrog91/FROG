@@ -445,6 +445,8 @@ public sealed class ExecutionWindow : Window, IDisposable
             StorageType.FreeCompanyChest =>
                 source.Container switch
                 {
+                    InventorySource.AnyFreeCompanyPageContainer =>
+                        "FC Chest - qualsiasi pagina",
                     20000 => "FC Chest Page 1",
                     20001 => "FC Chest Page 2",
                     20002 => "FC Chest Page 3",
