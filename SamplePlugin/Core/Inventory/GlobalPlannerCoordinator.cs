@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 
 namespace FROG.Core.Inventory;
 
-public sealed record GlobalPlannerCoordinatorSnapshot(
+public readonly record struct GlobalPlannerCoordinatorSnapshot(
     bool IsRunning,
     PlannerPlan? Plan,
     GlobalTransferPlannerDiagnostics? Diagnostics,
