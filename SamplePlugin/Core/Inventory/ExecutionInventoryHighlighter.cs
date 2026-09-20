@@ -1,4 +1,5 @@
 using CriticalCommonLib.Addons;
+using CriticalCommonLib.Services;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Component.GUI;
@@ -23,12 +24,16 @@ public readonly record struct ExecutionQuantityBadgeAnchor(
 public sealed unsafe class ExecutionInventoryHighlighter
 {
     private const uint SlotNodeOffset = 3;
+    private const uint FreeCompanySlotNodeOffset = 23;
+    private const uint FreeCompanyTabNodeOffset = 10;
     private const int TargetRetryIntervalMs = 100;
 
     private readonly IGameGui gameGui;
+    private readonly ICharacterMonitor characterMonitor;
     private readonly PlanExecutionRuntime executionRuntime;
     private readonly RetainerDisplayLocator retainerDisplayLocator;
     private readonly CharacterDisplayLocator characterDisplayLocator;
+    private readonly FreeCompanyDisplayLocator freeCompanyDisplayLocator;
     private readonly Plugin plugin;
 
     private PlannerPlan? cachedPlan;
@@ -47,15 +52,19 @@ public sealed unsafe class ExecutionInventoryHighlighter
 
     public ExecutionInventoryHighlighter(
         IGameGui gameGui,
+        ICharacterMonitor characterMonitor,
         PlanExecutionRuntime executionRuntime,
         RetainerDisplayLocator retainerDisplayLocator,
         CharacterDisplayLocator characterDisplayLocator,
+        FreeCompanyDisplayLocator freeCompanyDisplayLocator,
         Plugin plugin)
     {
         this.gameGui = gameGui;
+        this.characterMonitor = characterMonitor;
         this.executionRuntime = executionRuntime;
         this.retainerDisplayLocator = retainerDisplayLocator;
         this.characterDisplayLocator = characterDisplayLocator;
+        this.freeCompanyDisplayLocator = freeCompanyDisplayLocator;
         this.plugin = plugin;
     }
 
@@ -149,6 +158,13 @@ public sealed unsafe class ExecutionInventoryHighlighter
         if (target.Storage == StorageType.CharacterInventory)
         {
             UpdateCharacterInventory(
+                target);
+            return;
+        }
+
+        if (target.Storage == StorageType.FreeCompanyChest)
+        {
+            UpdateFreeCompanyChest(
                 target);
             return;
         }
@@ -249,6 +265,34 @@ public sealed unsafe class ExecutionInventoryHighlighter
                     .ToArray());
         }
 
+        if (action.Source.Storage == StorageType.FreeCompanyChest &&
+            action.Source.Container !=
+                InventorySource.AnyFreeCompanyPageContainer &&
+            action.Destination.Storage ==
+                StorageType.CharacterInventory &&
+            action.Destination.OwnerId == currentCharacterId)
+        {
+            var location =
+                freeCompanyDisplayLocator.LocateSource(
+                    plan,
+                    actionIndex);
+
+            if (!location.IsAvailable)
+                return null;
+
+            return new HighlightTarget(
+                StorageType.FreeCompanyChest,
+                action.Source.OwnerId,
+                action.Destination.OwnerId,
+                location.Positions
+                    .Select(position =>
+                        new HighlightPosition(
+                            position.Page,
+                            position.Slot,
+                            position.Quantity))
+                    .ToArray());
+        }
+
         return null;
     }
 
@@ -278,6 +322,16 @@ public sealed unsafe class ExecutionInventoryHighlighter
         {
             return action.Source.ParentCharacterId ==
                 currentCharacterId;
+        }
+
+        if (action.Source.Storage == StorageType.FreeCompanyChest)
+        {
+            return action.Source.Container !=
+                       InventorySource.AnyFreeCompanyPageContainer &&
+                   action.Destination.Storage ==
+                       StorageType.CharacterInventory &&
+                   action.Destination.OwnerId ==
+                       currentCharacterId;
         }
 
         return action.Source.Storage ==
@@ -315,6 +369,11 @@ public sealed unsafe class ExecutionInventoryHighlighter
             return IsAddonVisible("InventoryGrid") ||
                    IsAddonVisible("InventoryLarge") ||
                    IsAddonVisible("InventoryExpansion");
+        }
+
+        if (source?.Storage == StorageType.FreeCompanyChest)
+        {
+            return IsAddonVisible("FreeCompanyChest");
         }
 
         return false;
@@ -582,6 +641,61 @@ public sealed unsafe class ExecutionInventoryHighlighter
         Clear();
     }
 
+    private void UpdateFreeCompanyChest(
+        HighlightTarget target)
+    {
+        if (characterMonitor.ActiveFreeCompanyId == 0 ||
+            characterMonitor.ActiveFreeCompanyId != target.SourceOwnerId ||
+            !TryGetAddon(
+                "FreeCompanyChest",
+                out var addon))
+        {
+            Clear();
+            return;
+        }
+
+        var currentTab =
+            GetFreeCompanyTabIndex(
+                ((InventoryFreeCompanyChestAddon*)addon)
+                    ->CurrentTab);
+
+        var targetTab =
+            target.Positions[0].Page - 1;
+
+        var visualKey =
+            $"free-company:{target.SourceOwnerId}:{targetTab}:{currentTab}:{BuildPositionKey(target.Positions)}";
+
+        var expectedBindings =
+            1 +
+            target.Positions.Count(position =>
+                position.Page - 1 == currentTab);
+
+        EnsureVisualState(
+            visualKey,
+            expectedBindings,
+            () =>
+            {
+                AddBinding(
+                    "FreeCompanyChest",
+                    FreeCompanyTabNodeOffset +
+                    checked((uint)targetTab));
+
+                foreach (var position in target.Positions)
+                {
+                    if (position.Page - 1 != currentTab)
+                        continue;
+
+                    AddSlotBinding(
+                        "FreeCompanyChest",
+                        FreeCompanySlotNodeOffset +
+                        checked((uint)(position.Slot - 1)),
+                        position.Quantity);
+                }
+            });
+
+        ApplyConfiguredColour();
+    }
+
     private void EnsureVisualState(
         string visualKey,
         int expectedBindings,
@@ -773,6 +887,18 @@ public sealed unsafe class ExecutionInventoryHighlighter
         {
             1 or 2 => 0,
             3 or 4 => 1,
+            _ => -1
+        };
+
+    private static int GetFreeCompanyTabIndex(
+        FreeCompanyTab tab) =>
+        tab switch
+        {
+            FreeCompanyTab.One => 0,
+            FreeCompanyTab.Two => 1,
+            FreeCompanyTab.Three => 2,
+            FreeCompanyTab.Four => 3,
+            FreeCompanyTab.Five => 4,
             _ => -1
         };
 

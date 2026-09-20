@@ -44,6 +44,10 @@ public static class CclInventoryBootstrap
             .AsSelf()
             .SingleInstance();
 
+        builder.RegisterType<FreeCompanyDisplayLocator>()
+            .AsSelf()
+            .SingleInstance();
+
         builder.RegisterType<ExecutionOrderCompiler>()
             .AsSelf()
             .SingleInstance();
