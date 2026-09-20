@@ -13,7 +13,6 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Numerics;
-using System.Threading.Tasks;
 
 namespace FROG.Windows;
 
@@ -930,7 +929,7 @@ public class MainWindow : Window, IDisposable
         PlannerPlan previousPlan,
         PlanExecutionReconciliationResult reconciliation)
     {
-        if (globalPlannerTask != null)
+        if (globalPlannerCoordinator.Snapshot.IsRunning)
             return;
 
         var currentCharacterId =
@@ -1017,127 +1016,42 @@ public class MainWindow : Window, IDisposable
         string? replanMessage,
         bool autoStartExecution)
     {
-        if (globalPlannerTask != null ||
-            mainCharacterId == 0 ||
-            currentCharacterId == 0)
-        {
-            return;
-        }
-
-        var requirementSetSnapshot =
-            new RequirementSet(
-                requirementSet.Name);
-
-        foreach (var requirement in requirementSet.Requirements)
-        {
-            requirementSetSnapshot.Add(
-                requirement);
-        }
-
-        var requiredItemIds =
-            requirementSetSnapshot.Requirements
-                .Select(requirement =>
-                    requirement.BaseItemId)
-                .ToHashSet();
-
-        var plannerItems =
-            plugin.InventoryIndex.Items
-                .Where(item =>
-                    requiredItemIds.Contains(
-                        item.BaseItemId))
-                .ToList();
-
-        var stateSnapshot =
-            new PlannerState(
+        var started =
+            globalPlannerCoordinator.TryStart(
+                requirementSet,
+                resolutionPolicy,
                 mainCharacterId,
                 currentCharacterId,
-                plannerItems);
+                plugin.InventoryIndex.Items,
+                optimizationSettings,
+                plugin.LastSyncAtUtc,
+                replanMessage == null
+                    ? resolverCachedPlan?.Missing
+                    : null,
+                replanMessage,
+                autoStartExecution);
 
-        var resolutionPolicySnapshot =
-            new ResolutionPolicy(
-                resolutionPolicy.Sources.ToList(),
-                mainCharacterId);
+        if (!started)
+            return;
 
-        var optimizationSettingsSnapshot =
-            new OptimizationSettings(
-                optimizationSettings.Criteria.ToList());
-
-        globalPlannerPlan = null;
-        globalPlannerError = null;
         ResetPlanExecutionSession();
-
-        globalPlannerReplanMessage =
-            replanMessage;
-
-        autoStartExecutionAfterPlannerCompletion =
-            autoStartExecution;
-
-        if (replanMessage == null)
-        {
-            globalPlannerResolverMissingSnapshot =
-                resolverCachedPlan?.Missing;
-
-            globalPlannerResolverSyncSnapshot =
-                plugin.LastSyncAtUtc;
-        }
-        else
-        {
-            globalPlannerResolverMissingSnapshot = null;
-            globalPlannerResolverSyncSnapshot =
-                plugin.LastSyncAtUtc;
-        }
-
-        var planner =
-            new GlobalTransferPlanner();
-
-        globalPlannerDiagnostics =
-            planner.Diagnostics;
-
-        globalPlannerTask =
-            Task.Run(
-                () =>
-                    planner.Plan(
-                        requirementSetSnapshot,
-                        stateSnapshot,
-                        resolutionPolicySnapshot,
-                        optimizationSettingsSnapshot));
     }
 
-    private void TryCompleteGlobalPlannerTask()
+    private void ApplyGlobalPlannerCompletion()
     {
-        if (globalPlannerTask == null ||
-            !globalPlannerTask.IsCompleted)
+        if (!globalPlannerCoordinator.TryConsumeCompletion(
+                out var completion))
         {
             return;
         }
 
-        try
-        {
-            globalPlannerPlan =
-                globalPlannerTask
-                    .GetAwaiter()
-                    .GetResult();
+        ResetPlanExecutionSession();
 
-            globalPlannerError = null;
-            ResetPlanExecutionSession();
-
-            if (autoStartExecutionAfterPlannerCompletion &&
-                globalPlannerPlan != null)
-            {
-                planExecutionCoordinator.Start(
-                    globalPlannerPlan);
-            }
-        }
-        catch (Exception ex)
+        if (completion.AutoStartExecution &&
+            completion.Plan != null)
         {
-            globalPlannerPlan = null;
-            globalPlannerError = ex.Message;
-            ResetPlanExecutionSession();
-        }
-        finally
-        {
-            autoStartExecutionAfterPlannerCompletion = false;
-            globalPlannerTask = null;
+            planExecutionCoordinator.Start(
+                completion.Plan);
         }
     }
 
@@ -1363,6 +1277,9 @@ public class MainWindow : Window, IDisposable
         RequirementSet requirementSet,
         PlannerPlan plan)
     {
+        var plannerState =
+            globalPlannerCoordinator.Snapshot;
+
         var lines =
             new List<string>
             {
@@ -1372,19 +1289,19 @@ public class MainWindow : Window, IDisposable
                 $"Requirements={requirementSet.Requirements.Count}",
                 $"Result={plan.Result}",
                 $"Missing={plan.Missing}",
-                $"ResolverMissingSnapshot={(globalPlannerResolverMissingSnapshot.HasValue ? globalPlannerResolverMissingSnapshot.Value : -1)}",
-                $"MissingDeltaVsResolver={(globalPlannerResolverMissingSnapshot.HasValue ? plan.Missing - globalPlannerResolverMissingSnapshot.Value : 0)}",
-                $"ResolverSyncSnapshotUtc={(globalPlannerResolverSyncSnapshot.HasValue ? globalPlannerResolverSyncSnapshot.Value.ToString("O") : "n/a")}",
+                $"ResolverMissingSnapshot={(plannerState.ResolverMissingSnapshot.HasValue ? plannerState.ResolverMissingSnapshot.Value : -1)}",
+                $"MissingDeltaVsResolver={(plannerState.ResolverMissingSnapshot.HasValue ? plan.Missing - plannerState.ResolverMissingSnapshot.Value : 0)}",
+                $"ResolverSyncSnapshotUtc={(plannerState.ResolverSyncSnapshot.HasValue ? plannerState.ResolverSyncSnapshot.Value.ToString("O") : "n/a")}",
                 $"CharacterSwitches={plan.CharacterSwitches}",
                 $"RetainerAccesses={plan.RetainerAccesses}",
                 $"TransferHops={plan.TransferHops}",
                 $"Actions={plan.Actions.Count}"
             };
 
-        if (globalPlannerDiagnostics != null)
+        if (plannerState.Diagnostics != null)
         {
             var diagnostics =
-                globalPlannerDiagnostics.Snapshot();
+                plannerState.Diagnostics.Snapshot();
 
             lines.Add(string.Empty);
             lines.Add("===== SEARCH DIAGNOSTICS =====");
