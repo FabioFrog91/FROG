@@ -992,6 +992,7 @@ internal sealed class FrogInventoryStartup : IHostedService
     private readonly IInventoryScanner inventoryScanner;
     private readonly StorageReaderAPI storageReader;
     private readonly Plugin plugin;
+    private long lastFreeCompanyPollAtMs;
 
     public FrogInventoryStartup(
         IInventoryMonitor inventoryMonitor,
@@ -1034,6 +1035,20 @@ internal sealed class FrogInventoryStartup : IHostedService
     {
         if (!plugin.IsFreeCompanyChestOpen)
             return;
+
+        var nowMs =
+            Environment.TickCount64;
+
+        const int freeCompanyPollIntervalMs = 25;
+
+        if (nowMs - lastFreeCompanyPollAtMs <
+            freeCompanyPollIntervalMs)
+        {
+            return;
+        }
+
+        lastFreeCompanyPollAtMs =
+            nowMs;
 
         plugin.SyncObservedFreeCompanyPage(
             storageReader);
