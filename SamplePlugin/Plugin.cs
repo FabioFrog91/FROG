@@ -554,6 +554,16 @@ public sealed class Plugin : HostedPlugin
                 out freeCompanySnapshots))
         {
             freeCompanyReadSucceeded = true;
+
+            foreach (var pendingKey in pendingFreeCompanyObservations.Keys
+                         .Where(key =>
+                             key.Container != observedFreeCompanyContainer)
+                         .ToList())
+            {
+                pendingFreeCompanyObservations.Remove(
+                    pendingKey);
+            }
+
             freeCompanySources =
                 new[]
                 {
@@ -569,11 +579,9 @@ public sealed class Plugin : HostedPlugin
                     .ToList();
 
             var shouldApplyObservation =
-                ShouldApplyFreeCompanyObservation(
+                ShouldPromoteFreeCompanyObservation(
                     freeCompanySource,
-                    beforeSnapshots,
-                    freeCompanySnapshots,
-                    observedAtUtc);
+                    freeCompanySnapshots);
 
             if (shouldApplyObservation)
             {
@@ -683,32 +691,12 @@ public sealed class Plugin : HostedPlugin
         }
     }
 
-    private bool ShouldApplyFreeCompanyObservation(
+    private bool ShouldPromoteFreeCompanyObservation(
         InventorySource source,
-        IReadOnlyList<InventoryItemSnapshot> beforeSnapshots,
-        IReadOnlyList<InventoryItemSnapshot> observedSnapshots,
-        DateTime observedAtUtc)
+        IReadOnlyList<InventoryItemSnapshot> observedSnapshots)
     {
         var key =
             (source.OwnerId, source.Container);
-
-        var beforeQuantity =
-            beforeSnapshots.Sum(item =>
-                item.Quantity);
-
-        var observedQuantity =
-            observedSnapshots.Sum(item =>
-                item.Quantity);
-
-        var isDestructiveObservation =
-            observedSnapshots.Count < beforeSnapshots.Count ||
-            observedQuantity < beforeQuantity;
-
-        if (!isDestructiveObservation)
-        {
-            pendingFreeCompanyObservations.Remove(key);
-            return true;
-        }
 
         var fingerprint =
             BuildFreeCompanyObservationFingerprint(
@@ -725,17 +713,22 @@ public sealed class Plugin : HostedPlugin
             pendingFreeCompanyObservations[key] =
                 new PendingFreeCompanyObservation(
                     fingerprint,
-                    observedAtUtc);
+                    1);
 
             return false;
         }
 
-        // Require the same destructive snapshot to survive long enough to
-        // distinguish a real removal from the transient empty/partial state
-        // seen while the FC client is switching tabs.
-        if (observedAtUtc - pending.FirstObservedAtUtc <
-            TimeSpan.FromMilliseconds(400))
+        var confirmationCount =
+            pending.ConfirmationCount + 1;
+
+        if (confirmationCount < 2)
         {
+            pendingFreeCompanyObservations[key] =
+                pending with
+                {
+                    ConfirmationCount = confirmationCount
+                };
+
             return false;
         }
 
@@ -922,7 +915,7 @@ public sealed class Plugin : HostedPlugin
 
 internal sealed record PendingFreeCompanyObservation(
     string Fingerprint,
-    DateTime FirstObservedAtUtc);
+    int ConfirmationCount);
 
 internal sealed record FreeCompanyItemSyncDiagnostic(
     uint BaseItemId,
