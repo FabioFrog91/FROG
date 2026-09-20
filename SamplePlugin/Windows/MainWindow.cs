@@ -586,7 +586,10 @@ public class MainWindow : Window, IDisposable
         RequirementSet requirementSet,
         ResolutionPolicy resolutionPolicy)
     {
-        TryCompleteGlobalPlannerTask();
+        ApplyGlobalPlannerCompletion();
+
+        var plannerState =
+            globalPlannerCoordinator.Snapshot;
 
         ImGui.Text("GLOBAL TRANSFER PLANNER");
         ImGui.Separator();
@@ -594,23 +597,26 @@ public class MainWindow : Window, IDisposable
         ImGui.TextWrapped(
             "Planner globale: risolve l'intera lista considerando inventario principale, retainer, FC e cambi personaggio.");
 
-        if (globalPlannerTask == null)
+        if (!plannerState.IsRunning)
         {
             if (ImGui.Button("CALCOLA PIANO GLOBALE"))
             {
                 StartGlobalPlannerTask(
                     requirementSet,
                     resolutionPolicy);
+
+                plannerState =
+                    globalPlannerCoordinator.Snapshot;
             }
         }
         else
         {
             ImGui.Text("Calcolo...");
 
-            if (globalPlannerDiagnostics != null)
+            if (plannerState.Diagnostics != null)
             {
                 var diagnostics =
-                    globalPlannerDiagnostics.Snapshot();
+                    plannerState.Diagnostics.Snapshot();
 
                 DrawGlobalPlannerSearchDiagnostics(
                     diagnostics);
@@ -627,17 +633,21 @@ public class MainWindow : Window, IDisposable
             }
         }
 
-        if (!string.IsNullOrWhiteSpace(globalPlannerError))
+        if (!string.IsNullOrWhiteSpace(
+                plannerState.Error))
         {
             ImGui.TextWrapped(
-                $"Errore planner: {globalPlannerError}");
+                $"Errore planner: {plannerState.Error}");
 
             return;
         }
 
-        if (globalPlannerPlan == null)
+        var plan =
+            plannerState.Plan;
+
+        if (plan == null)
         {
-            if (globalPlannerTask == null)
+            if (!plannerState.IsRunning)
             {
                 ImGui.Text(
                     "Nessun piano globale calcolato.");
@@ -647,49 +657,49 @@ public class MainWindow : Window, IDisposable
         }
 
         ImGui.Text(
-            $"Risultato: {globalPlannerPlan.Result}");
+            $"Risultato: {plan.Result}");
 
         ImGui.Text(
-            $"Mancante: {globalPlannerPlan.Missing}");
+            $"Mancante: {plan.Missing}");
 
-        if (globalPlannerResolverMissingSnapshot.HasValue)
+        if (plannerState.ResolverMissingSnapshot.HasValue)
         {
             var delta =
-                globalPlannerPlan.Missing -
-                globalPlannerResolverMissingSnapshot.Value;
+                plan.Missing -
+                plannerState.ResolverMissingSnapshot.Value;
 
             ImGui.Text(
-                $"Resolver stesso snapshot: {globalPlannerResolverMissingSnapshot.Value}");
+                $"Resolver stesso snapshot: {plannerState.ResolverMissingSnapshot.Value}");
 
             ImGui.Text(
                 $"Delta planner-resolver: {delta:+#;-#;0}");
         }
 
         ImGui.Text(
-            $"Cambi personaggio: {globalPlannerPlan.CharacterSwitches}");
+            $"Cambi personaggio: {plan.CharacterSwitches}");
 
         ImGui.Text(
-            $"Accessi retainer: {globalPlannerPlan.RetainerAccesses}");
+            $"Accessi retainer: {plan.RetainerAccesses}");
 
         ImGui.Text(
-            $"Hop logici: {globalPlannerPlan.TransferHops}");
+            $"Hop logici: {plan.TransferHops}");
 
         ImGui.Text(
-            $"Azioni: {globalPlannerPlan.Actions.Count}");
+            $"Azioni: {plan.Actions.Count}");
 
         if (!string.IsNullOrWhiteSpace(
-                globalPlannerReplanMessage))
+                plannerState.ReplanMessage))
         {
             ImGui.TextWrapped(
-                globalPlannerReplanMessage);
+                plannerState.ReplanMessage);
         }
 
-        if (globalPlannerDiagnostics != null)
+        if (plannerState.Diagnostics != null)
         {
             ImGui.Spacing();
 
             DrawGlobalPlannerSearchDiagnostics(
-                globalPlannerDiagnostics.Snapshot());
+                plannerState.Diagnostics.Snapshot());
         }
 
         ImGui.Spacing();
@@ -699,21 +709,27 @@ public class MainWindow : Window, IDisposable
             ImGui.SetClipboardText(
                 BuildGlobalPlannerClipboardText(
                     requirementSet,
-                    globalPlannerPlan));
+                    plan));
         }
 
         ImGui.Spacing();
 
         DrawPlanExecutionSession(
-            globalPlannerPlan,
+            plan,
             requirementSet);
 
-        if (globalPlannerPlan == null)
+        plannerState =
+            globalPlannerCoordinator.Snapshot;
+
+        plan =
+            plannerState.Plan;
+
+        if (plan == null)
             return;
 
         ImGui.Spacing();
 
-        foreach (var action in globalPlannerPlan.Actions)
+        foreach (var action in plan.Actions)
         {
             if (action.Type == PlannerActionType.SwitchCharacter)
             {
