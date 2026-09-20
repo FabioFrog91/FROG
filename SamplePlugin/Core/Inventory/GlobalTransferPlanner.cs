@@ -41,10 +41,10 @@ public sealed class GlobalTransferPlanner
             initialPlan;
 
         var pathStates =
-            new HashSet<string>();
+            new HashSet<StateKey>();
 
         var memo =
-            new Dictionary<string, List<MemoEntry>>();
+            new Dictionary<StateKey, List<MemoEntry>>();
 
         try
         {
@@ -85,8 +85,8 @@ public sealed class GlobalTransferPlanner
         OptimizationSettings optimizationSettings,
         PlannerState state,
         PlannerPlan plan,
-        HashSet<string> pathStates,
-        Dictionary<string, List<MemoEntry>> memo,
+        HashSet<StateKey> pathStates,
+        Dictionary<StateKey, List<MemoEntry>> memo,
         int depth,
         ref PlannerPlan bestPlan)
     {
@@ -263,9 +263,9 @@ public sealed class GlobalTransferPlanner
     }
 
     private static bool IsDominated(
-        string stateKey,
+        StateKey stateKey,
         MemoEntry candidate,
-        Dictionary<string, List<MemoEntry>> memo)
+        Dictionary<StateKey, List<MemoEntry>> memo)
     {
         if (!memo.TryGetValue(
                 stateKey,
@@ -281,9 +281,9 @@ public sealed class GlobalTransferPlanner
     }
 
     private static void RegisterMemoEntry(
-        string stateKey,
+        StateKey stateKey,
         MemoEntry candidate,
-        Dictionary<string, List<MemoEntry>> memo,
+        Dictionary<StateKey, List<MemoEntry>> memo,
         out bool newMemoState,
         out int memoEntryDelta)
     {
@@ -900,40 +900,200 @@ public sealed class GlobalTransferPlanner
         };
     }
 
-    private static string BuildStateKey(
+    private static StateKey BuildStateKey(
         PlannerState state)
     {
-        var itemKey =
-            string.Join(
-                ";",
-                state.Items
-                    .OrderBy(item =>
-                        item.Storage)
-                    .ThenBy(item =>
-                        item.OwnerId)
-                    .ThenBy(item =>
-                        item.Container)
-                    .ThenBy(item =>
-                        item.Slot)
-                    .ThenBy(item =>
-                        item.BaseItemId)
-                    .ThenBy(item =>
-                        item.IsHq)
-                    .Select(item =>
-                        $"{item.Storage}:{item.OwnerId}:{item.Container}:{item.Slot}:" +
-                        $"{item.BaseItemId}:{item.IsHq}:{item.Quantity}"));
+        var items =
+            state.Items
+                .Select(item =>
+                    new StateItemKey(
+                        item.Storage,
+                        item.OwnerId,
+                        item.Container,
+                        item.Slot,
+                        item.BaseItemId,
+                        item.IsHq,
+                        item.Quantity))
+                .ToArray();
 
-        var visitedKey =
-            string.Join(
-                ",",
-                state.VisitedCharacters
-                    .OrderBy(id => id));
+        Array.Sort(items);
 
-        return
-            $"{state.MainCharacterId}|" +
-            $"{state.CurrentCharacterId}|" +
-            $"{visitedKey}|" +
-            $"{itemKey}";
+        var visitedCharacters =
+            state.VisitedCharacters
+                .ToArray();
+
+        Array.Sort(visitedCharacters);
+
+        return new StateKey(
+            state.MainCharacterId,
+            state.CurrentCharacterId,
+            visitedCharacters,
+            items);
+    }
+
+    private readonly record struct StateItemKey(
+        StorageType Storage,
+        ulong OwnerId,
+        uint Container,
+        int Slot,
+        uint BaseItemId,
+        bool IsHq,
+        int Quantity)
+        : IComparable<StateItemKey>
+    {
+        public int CompareTo(
+            StateItemKey other)
+        {
+            var comparison =
+                Storage.CompareTo(
+                    other.Storage);
+
+            if (comparison != 0)
+                return comparison;
+
+            comparison =
+                OwnerId.CompareTo(
+                    other.OwnerId);
+
+            if (comparison != 0)
+                return comparison;
+
+            comparison =
+                Container.CompareTo(
+                    other.Container);
+
+            if (comparison != 0)
+                return comparison;
+
+            comparison =
+                Slot.CompareTo(
+                    other.Slot);
+
+            if (comparison != 0)
+                return comparison;
+
+            comparison =
+                BaseItemId.CompareTo(
+                    other.BaseItemId);
+
+            if (comparison != 0)
+                return comparison;
+
+            comparison =
+                IsHq.CompareTo(
+                    other.IsHq);
+
+            if (comparison != 0)
+                return comparison;
+
+            return Quantity.CompareTo(
+                other.Quantity);
+        }
+    }
+
+    private sealed class StateKey : IEquatable<StateKey>
+    {
+        private readonly ulong[] visitedCharacters;
+        private readonly StateItemKey[] items;
+        private readonly int hashCode;
+
+        public ulong MainCharacterId { get; }
+        public ulong CurrentCharacterId { get; }
+
+        public StateKey(
+            ulong mainCharacterId,
+            ulong currentCharacterId,
+            ulong[] visitedCharacters,
+            StateItemKey[] items)
+        {
+            MainCharacterId =
+                mainCharacterId;
+
+            CurrentCharacterId =
+                currentCharacterId;
+
+            this.visitedCharacters =
+                visitedCharacters;
+
+            this.items =
+                items;
+
+            var hash =
+                new HashCode();
+
+            hash.Add(
+                MainCharacterId);
+
+            hash.Add(
+                CurrentCharacterId);
+
+            foreach (var characterId in visitedCharacters)
+            {
+                hash.Add(
+                    characterId);
+            }
+
+            foreach (var item in items)
+            {
+                hash.Add(
+                    item);
+            }
+
+            hashCode =
+                hash.ToHashCode();
+        }
+
+        public bool Equals(
+            StateKey? other)
+        {
+            if (ReferenceEquals(
+                    this,
+                    other))
+            {
+                return true;
+            }
+
+            if (other is null ||
+                MainCharacterId != other.MainCharacterId ||
+                CurrentCharacterId != other.CurrentCharacterId ||
+                visitedCharacters.Length != other.visitedCharacters.Length ||
+                items.Length != other.items.Length)
+            {
+                return false;
+            }
+
+            for (var i = 0;
+                 i < visitedCharacters.Length;
+                 i++)
+            {
+                if (visitedCharacters[i] !=
+                    other.visitedCharacters[i])
+                {
+                    return false;
+                }
+            }
+
+            for (var i = 0;
+                 i < items.Length;
+                 i++)
+            {
+                if (items[i] !=
+                    other.items[i])
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        public override bool Equals(
+            object? obj) =>
+            obj is StateKey other &&
+            Equals(other);
+
+        public override int GetHashCode() =>
+            hashCode;
     }
 
     private sealed class MemoEntry
