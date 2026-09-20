@@ -262,7 +262,7 @@ public sealed class PlanExecutionRuntime
                 optimizationSettings,
                 plugin.LastSyncAtUtc,
                 resolverMissing: null,
-                replanMessage,
+                replanMessage: replanMessage,
                 autoStartExecution: true);
 
         if (!started)
