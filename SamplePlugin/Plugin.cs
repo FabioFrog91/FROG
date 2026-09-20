@@ -72,6 +72,8 @@ public sealed class Plugin : HostedPlugin
     private FreeCompanySyncDiagnosticsSnapshot freeCompanySyncDiagnostics =
         FreeCompanySyncDiagnosticsSnapshot.Empty;
     private readonly List<FreeCompanySyncDiagnosticsSnapshot> freeCompanySyncHistory = new();
+    private readonly Dictionary<(ulong OwnerId, uint Container), PendingFreeCompanyObservation>
+        pendingFreeCompanyObservations = new();
 
     private readonly PlayerInventoryAPI playerInventory;
 
@@ -566,9 +568,19 @@ public sealed class Plugin : HostedPlugin
                         x.Container == freeCompanySource.Container)
                     .ToList();
 
-            InventoryIndex.ReplaceSource(
-                freeCompanySource,
-                freeCompanySnapshots);
+            var shouldApplyObservation =
+                ShouldApplyFreeCompanyObservation(
+                    freeCompanySource,
+                    beforeSnapshots,
+                    freeCompanySnapshots,
+                    observedAtUtc);
+
+            if (shouldApplyObservation)
+            {
+                InventoryIndex.ReplaceSource(
+                    freeCompanySource,
+                    freeCompanySnapshots);
+            }
 
             var afterSnapshots =
                 InventoryIndex.Items
@@ -670,6 +682,82 @@ public sealed class Plugin : HostedPlugin
             }
         }
     }
+
+    private bool ShouldApplyFreeCompanyObservation(
+        InventorySource source,
+        IReadOnlyList<InventoryItemSnapshot> beforeSnapshots,
+        IReadOnlyList<InventoryItemSnapshot> observedSnapshots,
+        DateTime observedAtUtc)
+    {
+        var key =
+            (source.OwnerId, source.Container);
+
+        var beforeQuantity =
+            beforeSnapshots.Sum(item =>
+                item.Quantity);
+
+        var observedQuantity =
+            observedSnapshots.Sum(item =>
+                item.Quantity);
+
+        var isDestructiveObservation =
+            observedSnapshots.Count < beforeSnapshots.Count ||
+            observedQuantity < beforeQuantity;
+
+        if (!isDestructiveObservation)
+        {
+            pendingFreeCompanyObservations.Remove(key);
+            return true;
+        }
+
+        var fingerprint =
+            BuildFreeCompanyObservationFingerprint(
+                observedSnapshots);
+
+        if (!pendingFreeCompanyObservations.TryGetValue(
+                key,
+                out var pending) ||
+            !string.Equals(
+                pending.Fingerprint,
+                fingerprint,
+                StringComparison.Ordinal))
+        {
+            pendingFreeCompanyObservations[key] =
+                new PendingFreeCompanyObservation(
+                    fingerprint,
+                    observedAtUtc);
+
+            return false;
+        }
+
+        // Require the same destructive snapshot to survive long enough to
+        // distinguish a real removal from the transient empty/partial state
+        // seen while the FC client is switching tabs.
+        if (observedAtUtc - pending.FirstObservedAtUtc <
+            TimeSpan.FromMilliseconds(400))
+        {
+            return false;
+        }
+
+        pendingFreeCompanyObservations.Remove(key);
+        return true;
+    }
+
+    private static string BuildFreeCompanyObservationFingerprint(
+        IReadOnlyList<InventoryItemSnapshot> snapshots) =>
+        string.Join(
+            "|",
+            snapshots
+                .OrderBy(item =>
+                    item.Container)
+                .ThenBy(item =>
+                    item.Slot)
+                .ThenBy(item =>
+                    item.BaseItemId)
+                .ThenBy(item =>
+                    item.IsHq)
+                .Select(item =>
+                    $"{item.Container}:{item.Slot}:{item.BaseItemId}:{item.IsHq}:{item.Quantity}"));
 
     private static unsafe bool TryGetObservedFreeCompanyPage(
         out uint container)
@@ -795,6 +883,7 @@ public sealed class Plugin : HostedPlugin
         AddonArgs args)
     {
         isFreeCompanyChestOpen = true;
+        pendingFreeCompanyObservations.Clear();
 
         SaveInventoryIndex();
     }
@@ -804,6 +893,7 @@ public sealed class Plugin : HostedPlugin
         AddonArgs args)
     {
         isFreeCompanyChestOpen = false;
+        pendingFreeCompanyObservations.Clear();
 
         SaveInventoryIndex();
     }
@@ -829,6 +919,10 @@ public sealed class Plugin : HostedPlugin
         }
     }
 }
+
+internal sealed record PendingFreeCompanyObservation(
+    string Fingerprint,
+    DateTime FirstObservedAtUtc);
 
 internal sealed record FreeCompanyItemSyncDiagnostic(
     uint BaseItemId,
