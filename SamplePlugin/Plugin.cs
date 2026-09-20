@@ -70,11 +70,7 @@ public sealed class Plugin : HostedPlugin
 
     private CancellationTokenSource? loginSyncCancellation;
 
-    private readonly object freeCompanySyncDiagnosticsLock = new();
     private bool isFreeCompanyChestOpen;
-    private FreeCompanySyncDiagnosticsSnapshot freeCompanySyncDiagnostics =
-        FreeCompanySyncDiagnosticsSnapshot.Empty;
-    private readonly List<FreeCompanySyncDiagnosticsSnapshot> freeCompanySyncHistory = new();
     private readonly Dictionary<(ulong OwnerId, uint Container), PendingFreeCompanyObservation>
         pendingFreeCompanyObservations = new();
 
@@ -115,38 +111,6 @@ public sealed class Plugin : HostedPlugin
 
     internal bool IsFreeCompanyChestOpen =>
         isFreeCompanyChestOpen;
-
-    internal FreeCompanySyncDiagnosticsSnapshot GetFreeCompanySyncDiagnostics()
-    {
-        lock (freeCompanySyncDiagnosticsLock)
-        {
-            return CloneFreeCompanySyncDiagnostics(
-                freeCompanySyncDiagnostics);
-        }
-    }
-
-    internal IReadOnlyList<FreeCompanySyncDiagnosticsSnapshot> GetFreeCompanySyncDiagnosticsHistory()
-    {
-        lock (freeCompanySyncDiagnosticsLock)
-        {
-            return freeCompanySyncHistory
-                .Select(CloneFreeCompanySyncDiagnostics)
-                .ToList();
-        }
-    }
-
-    private static FreeCompanySyncDiagnosticsSnapshot CloneFreeCompanySyncDiagnostics(
-        FreeCompanySyncDiagnosticsSnapshot snapshot) =>
-        snapshot with
-        {
-            Pages = snapshot.Pages
-                .Select(page =>
-                    page with
-                    {
-                        ChangedItems = page.ChangedItems.ToArray()
-                    })
-                .ToArray()
-        };
 
     public Plugin(IDalamudPluginInterface pluginInterface)
         : base(pluginInterface)
@@ -541,172 +505,53 @@ public sealed class Plugin : HostedPlugin
     internal void SyncObservedFreeCompanyPage(
         StorageReaderAPI storageReader)
     {
+        if (!isFreeCompanyChestOpen ||
+            !TryGetObservedFreeCompanyPage(
+                out var observedFreeCompanyContainer))
+        {
+            return;
+        }
+
         var observedAtUtc =
             DateTime.UtcNow;
 
-        var chestOpen =
-            isFreeCompanyChestOpen;
-
-        var freeCompanyReadSucceeded = false;
-        IReadOnlyList<InventorySource> freeCompanySources =
-            Array.Empty<InventorySource>();
-        IReadOnlyList<InventoryItemSnapshot> freeCompanySnapshots =
-            Array.Empty<InventoryItemSnapshot>();
-
-        var pageDiagnostics =
-            new List<FreeCompanyPageSyncDiagnostic>();
-
-        // A Free Company container can report IsLoaded while still holding
-        // stale or transitional data from a different tab. Treat only the
-        // tab that is actually selected in the chest UI as Observed.
-        // Every other page remains Known at its last verified snapshot.
-        if (chestOpen &&
-            TryGetObservedFreeCompanyPage(
-                out var observedFreeCompanyContainer) &&
-            storageReader.TryReadActiveFreeCompanyPage(
+        if (!storageReader.TryReadActiveFreeCompanyPage(
                 observedAtUtc,
                 observedFreeCompanyContainer,
                 out var freeCompanySource,
-                out freeCompanySnapshots))
+                out var freeCompanySnapshots))
         {
-            freeCompanyReadSucceeded = true;
-
-            foreach (var pendingKey in pendingFreeCompanyObservations.Keys
-                         .Where(key =>
-                             key.Container != observedFreeCompanyContainer)
-                         .ToList())
-            {
-                pendingFreeCompanyObservations.Remove(
-                    pendingKey);
-            }
-
-            freeCompanySources =
-                new[]
-                {
-                    freeCompanySource
-                };
-
-            var beforeSnapshots =
-                InventoryIndex.Items
-                    .Where(x =>
-                        x.Storage == freeCompanySource.Storage &&
-                        x.OwnerId == freeCompanySource.OwnerId &&
-                        x.Container == freeCompanySource.Container)
-                    .ToList();
-
-            var shouldApplyObservation =
-                ShouldPromoteFreeCompanyObservation(
-                    freeCompanySource,
-                    beforeSnapshots,
-                    freeCompanySnapshots);
-
-            if (shouldApplyObservation)
-            {
-                InventoryIndex.ReplaceSource(
-                    freeCompanySource,
-                    freeCompanySnapshots);
-            }
-
-            var afterSnapshots =
-                InventoryIndex.Items
-                    .Where(x =>
-                        x.Storage == freeCompanySource.Storage &&
-                        x.OwnerId == freeCompanySource.OwnerId &&
-                        x.Container == freeCompanySource.Container)
-                    .ToList();
-
-            var beforeByItem =
-                beforeSnapshots
-                    .GroupBy(x =>
-                        new
-                        {
-                            x.BaseItemId,
-                            x.IsHq
-                        })
-                    .ToDictionary(
-                        group =>
-                            (group.Key.BaseItemId, group.Key.IsHq),
-                        group =>
-                            group.Sum(x => x.Quantity));
-
-            var readByItem =
-                freeCompanySnapshots
-                    .GroupBy(x =>
-                        new
-                        {
-                            x.BaseItemId,
-                            x.IsHq
-                        })
-                    .ToDictionary(
-                        group =>
-                            (group.Key.BaseItemId, group.Key.IsHq),
-                        group =>
-                            group.Sum(x => x.Quantity));
-
-            var changedItems =
-                beforeByItem.Keys
-                    .Union(readByItem.Keys)
-                    .Select(key =>
-                        new FreeCompanyItemSyncDiagnostic(
-                            key.BaseItemId,
-                            key.IsHq,
-                            beforeByItem.TryGetValue(
-                                key,
-                                out var beforeQuantity)
-                                ? beforeQuantity
-                                : 0,
-                            readByItem.TryGetValue(
-                                key,
-                                out var readQuantity)
-                                ? readQuantity
-                                : 0))
-                    .Where(item =>
-                        item.BeforeQuantity != item.ReadQuantity)
-                    .OrderBy(item =>
-                        item.BaseItemId)
-                    .ThenBy(item =>
-                        item.IsHq)
-                    .ToList();
-
-            pageDiagnostics.Add(
-                new FreeCompanyPageSyncDiagnostic(
-                    freeCompanySource.OwnerId,
-                    freeCompanySource.Container,
-                    beforeSnapshots.Count,
-                    beforeSnapshots.Sum(x => x.Quantity),
-                    freeCompanySnapshots.Count,
-                    freeCompanySnapshots.Sum(x => x.Quantity),
-                    afterSnapshots.Count,
-                    afterSnapshots.Sum(x => x.Quantity),
-                    changedItems));
+            return;
         }
 
-        lock (freeCompanySyncDiagnosticsLock)
+        foreach (var pendingKey in pendingFreeCompanyObservations.Keys
+                     .Where(key =>
+                         key.Container != observedFreeCompanyContainer)
+                     .ToList())
         {
-            freeCompanySyncDiagnostics =
-                new FreeCompanySyncDiagnosticsSnapshot(
-                    observedAtUtc,
-                    chestOpen,
-                    freeCompanyReadSucceeded,
-                    freeCompanySources.Count,
-                    freeCompanySnapshots.Count,
-                    freeCompanySnapshots.Sum(x => x.Quantity),
-                    pageDiagnostics);
-
-            freeCompanySyncHistory.Add(
-                CloneFreeCompanySyncDiagnostics(
-                    freeCompanySyncDiagnostics));
-
-            const int maxFreeCompanySyncHistory = 20;
-
-            if (freeCompanySyncHistory.Count > maxFreeCompanySyncHistory)
-            {
-                freeCompanySyncHistory.RemoveRange(
-                    0,
-                    freeCompanySyncHistory.Count - maxFreeCompanySyncHistory);
-            }
+            pendingFreeCompanyObservations.Remove(
+                pendingKey);
         }
 
+        var knownSnapshots =
+            InventoryIndex.Items
+                .Where(x =>
+                    x.Storage == freeCompanySource.Storage &&
+                    x.OwnerId == freeCompanySource.OwnerId &&
+                    x.Container == freeCompanySource.Container)
+                .ToList();
+
+        if (!ShouldPromoteFreeCompanyObservation(
+                freeCompanySource,
+                knownSnapshots,
+                freeCompanySnapshots))
+        {
+            return;
+        }
+
+        InventoryIndex.ReplaceSource(
+            freeCompanySource,
+            freeCompanySnapshots);
     }
 
     private bool ShouldPromoteFreeCompanyObservation(
@@ -948,43 +793,6 @@ public sealed class Plugin : HostedPlugin
 internal sealed record PendingFreeCompanyObservation(
     string Fingerprint,
     int ConfirmationCount);
-
-internal sealed record FreeCompanyItemSyncDiagnostic(
-    uint BaseItemId,
-    bool IsHq,
-    int BeforeQuantity,
-    int ReadQuantity);
-
-internal sealed record FreeCompanyPageSyncDiagnostic(
-    ulong FreeCompanyId,
-    uint Container,
-    int BeforeSnapshotCount,
-    int BeforeQuantity,
-    int ReadSnapshotCount,
-    int ReadQuantity,
-    int AfterSnapshotCount,
-    int AfterQuantity,
-    IReadOnlyList<FreeCompanyItemSyncDiagnostic> ChangedItems);
-
-internal sealed record FreeCompanySyncDiagnosticsSnapshot(
-    DateTime? ObservedAtUtc,
-    bool ChestOpen,
-    bool ReadSucceeded,
-    int SourceCount,
-    int SnapshotCount,
-    int TotalQuantity,
-    IReadOnlyList<FreeCompanyPageSyncDiagnostic> Pages)
-{
-    public static FreeCompanySyncDiagnosticsSnapshot Empty { get; } =
-        new(
-            null,
-            false,
-            false,
-            0,
-            0,
-            0,
-            Array.Empty<FreeCompanyPageSyncDiagnostic>());
-}
 
 internal sealed class FrogInventoryStartup : IHostedService
 {
