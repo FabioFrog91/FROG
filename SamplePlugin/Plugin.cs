@@ -66,6 +66,7 @@ public sealed class Plugin : HostedPlugin
     private bool isFreeCompanyChestOpen;
     private FreeCompanySyncDiagnosticsSnapshot freeCompanySyncDiagnostics =
         FreeCompanySyncDiagnosticsSnapshot.Empty;
+    private readonly List<FreeCompanySyncDiagnosticsSnapshot> freeCompanySyncHistory = new();
 
     private readonly PlayerInventoryAPI playerInventory;
 
@@ -106,12 +107,33 @@ public sealed class Plugin : HostedPlugin
     {
         lock (freeCompanySyncDiagnosticsLock)
         {
-            return freeCompanySyncDiagnostics with
-            {
-                Pages = freeCompanySyncDiagnostics.Pages.ToArray()
-            };
+            return CloneFreeCompanySyncDiagnostics(
+                freeCompanySyncDiagnostics);
         }
     }
+
+    internal IReadOnlyList<FreeCompanySyncDiagnosticsSnapshot> GetFreeCompanySyncDiagnosticsHistory()
+    {
+        lock (freeCompanySyncDiagnosticsLock)
+        {
+            return freeCompanySyncHistory
+                .Select(CloneFreeCompanySyncDiagnostics)
+                .ToList();
+        }
+    }
+
+    private static FreeCompanySyncDiagnosticsSnapshot CloneFreeCompanySyncDiagnostics(
+        FreeCompanySyncDiagnosticsSnapshot snapshot) =>
+        snapshot with
+        {
+            Pages = snapshot.Pages
+                .Select(page =>
+                    page with
+                    {
+                        ChangedItems = page.ChangedItems.ToArray()
+                    })
+                .ToArray()
+        };
 
     public Plugin(IDalamudPluginInterface pluginInterface)
         : base(pluginInterface)
@@ -542,6 +564,59 @@ public sealed class Plugin : HostedPlugin
                             x.Container == source.Container)
                         .ToList();
 
+                var beforeByItem =
+                    beforeSnapshots
+                        .GroupBy(x =>
+                            new
+                            {
+                                x.BaseItemId,
+                                x.IsHq
+                            })
+                        .ToDictionary(
+                            group =>
+                                (group.Key.BaseItemId, group.Key.IsHq),
+                            group =>
+                                group.Sum(x => x.Quantity));
+
+                var readByItem =
+                    sourceSnapshots
+                        .GroupBy(x =>
+                            new
+                            {
+                                x.BaseItemId,
+                                x.IsHq
+                            })
+                        .ToDictionary(
+                            group =>
+                                (group.Key.BaseItemId, group.Key.IsHq),
+                            group =>
+                                group.Sum(x => x.Quantity));
+
+                var changedItems =
+                    beforeByItem.Keys
+                        .Union(readByItem.Keys)
+                        .Select(key =>
+                            new FreeCompanyItemSyncDiagnostic(
+                                key.BaseItemId,
+                                key.IsHq,
+                                beforeByItem.TryGetValue(
+                                    key,
+                                    out var beforeQuantity)
+                                    ? beforeQuantity
+                                    : 0,
+                                readByItem.TryGetValue(
+                                    key,
+                                    out var readQuantity)
+                                    ? readQuantity
+                                    : 0))
+                        .Where(item =>
+                            item.BeforeQuantity != item.ReadQuantity)
+                        .OrderBy(item =>
+                            item.BaseItemId)
+                        .ThenBy(item =>
+                            item.IsHq)
+                        .ToList();
+
                 pageDiagnostics.Add(
                     new FreeCompanyPageSyncDiagnostic(
                         source.OwnerId,
@@ -551,7 +626,8 @@ public sealed class Plugin : HostedPlugin
                         sourceSnapshots.Count,
                         sourceSnapshots.Sum(x => x.Quantity),
                         afterSnapshots.Count,
-                        afterSnapshots.Sum(x => x.Quantity)));
+                        afterSnapshots.Sum(x => x.Quantity),
+                        changedItems));
             }
         }
 
@@ -566,6 +642,19 @@ public sealed class Plugin : HostedPlugin
                     freeCompanySnapshots.Count,
                     freeCompanySnapshots.Sum(x => x.Quantity),
                     pageDiagnostics);
+
+            freeCompanySyncHistory.Add(
+                CloneFreeCompanySyncDiagnostics(
+                    freeCompanySyncDiagnostics));
+
+            const int maxFreeCompanySyncHistory = 20;
+
+            if (freeCompanySyncHistory.Count > maxFreeCompanySyncHistory)
+            {
+                freeCompanySyncHistory.RemoveRange(
+                    0,
+                    freeCompanySyncHistory.Count - maxFreeCompanySyncHistory);
+            }
         }
     }
 
@@ -623,6 +712,12 @@ public sealed class Plugin : HostedPlugin
     }
 }
 
+internal sealed record FreeCompanyItemSyncDiagnostic(
+    uint BaseItemId,
+    bool IsHq,
+    int BeforeQuantity,
+    int ReadQuantity);
+
 internal sealed record FreeCompanyPageSyncDiagnostic(
     ulong FreeCompanyId,
     uint Container,
@@ -631,7 +726,8 @@ internal sealed record FreeCompanyPageSyncDiagnostic(
     int ReadSnapshotCount,
     int ReadQuantity,
     int AfterSnapshotCount,
-    int AfterQuantity);
+    int AfterQuantity,
+    IReadOnlyList<FreeCompanyItemSyncDiagnostic> ChangedItems);
 
 internal sealed record FreeCompanySyncDiagnosticsSnapshot(
     DateTime? ObservedAtUtc,
