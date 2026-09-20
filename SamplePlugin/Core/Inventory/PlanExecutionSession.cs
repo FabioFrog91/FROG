@@ -7,7 +7,8 @@ namespace FROG.Core.Inventory;
 public enum PlanExecutionStepStatus
 {
     Pending,
-    Executed
+    Executed,
+    Verified
 }
 
 public sealed record PlanExecutionStep(
@@ -19,33 +20,44 @@ public sealed record PlanExecutionStep(
 /// Tracks execution progress for an immutable planner result.
 ///
 /// Planned, Executed and Verified are deliberately separate concepts.
-/// This session only records that the caller says an action was executed.
-/// A future verifier/reconciler can compare observed inventory state against
-/// the plan without changing planner semantics.
+/// An action is not advanced until it has been verified.
 /// </summary>
 public sealed class PlanExecutionSession
 {
     private readonly PlannerPlan plan;
-    private int executedActionCount;
+    private int verifiedActionCount;
+    private bool currentActionExecuted;
 
     public PlannerPlan Plan => plan;
 
     public int TotalActionCount =>
         plan.Actions.Count;
 
+    public int VerifiedActionCount =>
+        verifiedActionCount;
+
     public int ExecutedActionCount =>
-        executedActionCount;
+        verifiedActionCount +
+        (currentActionExecuted ? 1 : 0);
 
     public int RemainingActionCount =>
-        TotalActionCount - ExecutedActionCount;
+        TotalActionCount - VerifiedActionCount;
 
     public bool IsComplete =>
-        executedActionCount >= TotalActionCount;
+        verifiedActionCount >= TotalActionCount;
+
+    public bool IsCurrentActionExecuted =>
+        currentActionExecuted;
 
     public PlannerAction? CurrentAction =>
         IsComplete
             ? null
-            : plan.Actions[executedActionCount];
+            : plan.Actions[verifiedActionCount];
+
+    public int CurrentActionIndex =>
+        IsComplete
+            ? TotalActionCount
+            : verifiedActionCount + 1;
 
     public IReadOnlyList<PlanExecutionStep> Steps =>
         plan.Actions
@@ -53,9 +65,12 @@ public sealed class PlanExecutionSession
                 new PlanExecutionStep(
                     index + 1,
                     action,
-                    index < executedActionCount
-                        ? PlanExecutionStepStatus.Executed
-                        : PlanExecutionStepStatus.Pending))
+                    index < verifiedActionCount
+                        ? PlanExecutionStepStatus.Verified
+                        : index == verifiedActionCount &&
+                          currentActionExecuted
+                            ? PlanExecutionStepStatus.Executed
+                            : PlanExecutionStepStatus.Pending))
             .ToArray();
 
     public PlanExecutionSession(
@@ -71,16 +86,33 @@ public sealed class PlanExecutionSession
     {
         executedAction = CurrentAction;
 
-        if (executedAction is null)
+        if (executedAction is null ||
+            currentActionExecuted)
+        {
             return false;
+        }
 
-        executedActionCount++;
+        currentActionExecuted = true;
+        return true;
+    }
+
+    public bool TryMarkCurrentVerified()
+    {
+        if (!currentActionExecuted ||
+            IsComplete)
+        {
+            return false;
+        }
+
+        verifiedActionCount++;
+        currentActionExecuted = false;
 
         return true;
     }
 
     public void Reset()
     {
-        executedActionCount = 0;
+        verifiedActionCount = 0;
+        currentActionExecuted = false;
     }
 }
