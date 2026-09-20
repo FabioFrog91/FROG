@@ -12,6 +12,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Numerics;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace FROG.Windows;
@@ -556,14 +557,40 @@ public class MainWindow : Window, IDisposable
         globalPlannerPlan = null;
         globalPlannerError = null;
 
-        globalPlannerTask =
-            Task.Run(
+        var completionSource =
+            new TaskCompletionSource<PlannerPlan>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var plannerThread =
+            new Thread(
                 () =>
-                    new GlobalTransferPlanner().Plan(
-                        requirementSetSnapshot,
-                        stateSnapshot,
-                        resolutionPolicySnapshot,
-                        optimizationSettingsSnapshot));
+                {
+                    try
+                    {
+                        var plan =
+                            new GlobalTransferPlanner().Plan(
+                                requirementSetSnapshot,
+                                stateSnapshot,
+                                resolutionPolicySnapshot,
+                                optimizationSettingsSnapshot);
+
+                        completionSource.SetResult(plan);
+                    }
+                    catch (Exception ex)
+                    {
+                        completionSource.SetException(ex);
+                    }
+                })
+            {
+                IsBackground = true,
+                Name = "FROG Global Planner",
+                Priority = ThreadPriority.BelowNormal
+            };
+
+        globalPlannerTask =
+            completionSource.Task;
+
+        plannerThread.Start();
     }
 
     private void TryCompleteGlobalPlannerTask()
