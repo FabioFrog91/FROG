@@ -397,6 +397,9 @@ public sealed class GlobalTransferPlanner
         PlannerState state,
         ResolutionPolicy resolutionPolicy)
     {
+        var moveCandidates =
+            new List<OrderedMoveCandidate>();
+
         foreach (var requirement in requirements.Requirements)
         {
             foreach (var source in resolutionPolicy.Sources)
@@ -446,14 +449,46 @@ public sealed class GlobalTransferPlanner
                             available,
                             needed);
 
-                    yield return PlannerAction.Move(
-                        source,
-                        destination,
-                        requirement.BaseItemId,
-                        isHq,
-                        quantity);
+                    var action =
+                        PlannerAction.Move(
+                            source,
+                            destination,
+                            requirement.BaseItemId,
+                            isHq,
+                            quantity);
+
+                    moveCandidates.Add(
+                        new OrderedMoveCandidate(
+                            action,
+                            GetSourcePriorityIndex(
+                                resolutionPolicy,
+                                source),
+                            GetFirstMatchingSlot(
+                                state,
+                                source,
+                                requirement.BaseItemId,
+                                isHq)));
                 }
             }
+        }
+
+        foreach (var candidate in moveCandidates
+                     .OrderBy(candidate =>
+                         candidate.SourcePriorityIndex)
+                     .ThenBy(candidate =>
+                         candidate.Action.Source!.Storage)
+                     .ThenBy(candidate =>
+                         candidate.Action.Source!.OwnerId)
+                     .ThenBy(candidate =>
+                         candidate.Action.Source!.Container)
+                     .ThenBy(candidate =>
+                         candidate.SourceSlot)
+                     .ThenBy(candidate =>
+                         candidate.Action.BaseItemId)
+                     .ThenBy(candidate =>
+                         candidate.Action.IsHq))
+        {
+            yield return candidate.Action;
         }
 
         foreach (var targetCharacter in GetSwitchTargets(
@@ -465,6 +500,51 @@ public sealed class GlobalTransferPlanner
                 state.CurrentCharacterId,
                 targetCharacter);
         }
+    }
+
+    private static int GetSourcePriorityIndex(
+        ResolutionPolicy resolutionPolicy,
+        InventorySource source)
+    {
+        for (var i = 0;
+             i < resolutionPolicy.Sources.Count;
+             i++)
+        {
+            if (resolutionPolicy.Sources[i] == source)
+                return i;
+        }
+
+        return int.MaxValue;
+    }
+
+    private static int GetFirstMatchingSlot(
+        PlannerState state,
+        InventorySource source,
+        uint baseItemId,
+        bool isHq)
+    {
+        var firstSlot =
+            int.MaxValue;
+
+        foreach (var item in state.Items)
+        {
+            if (item.BaseItemId != baseItemId ||
+                item.IsHq != isHq ||
+                item.Storage != source.Storage ||
+                item.OwnerId != source.OwnerId ||
+                item.Container != source.Container)
+            {
+                continue;
+            }
+
+            if (item.Slot < firstSlot)
+            {
+                firstSlot =
+                    item.Slot;
+            }
+        }
+
+        return firstSlot;
     }
 
     private static IEnumerable<bool> GetCandidateQualities(
@@ -916,13 +996,13 @@ public sealed class GlobalTransferPlanner
     private static string BuildStateKey(
         PlannerState state)
     {
-        var itemKey =
+        var retainerItemKey =
             string.Join(
                 ";",
                 state.Items
+                    .Where(item =>
+                        item.Storage == StorageType.Retainer)
                     .OrderBy(item =>
-                        item.Storage)
-                    .ThenBy(item =>
                         item.OwnerId)
                     .ThenBy(item =>
                         item.Container)
@@ -933,7 +1013,48 @@ public sealed class GlobalTransferPlanner
                     .ThenBy(item =>
                         item.IsHq)
                     .Select(item =>
-                        $"{item.Storage}:{item.OwnerId}:{item.Container}:{item.Slot}:" +
+                        $"R:{item.OwnerId}:{item.Container}:{item.Slot}:" +
+                        $"{item.BaseItemId}:{item.IsHq}:{item.Quantity}"));
+
+        var nonRetainerItemKey =
+            string.Join(
+                ";",
+                state.Items
+                    .Where(item =>
+                        item.Storage != StorageType.Retainer)
+                    .GroupBy(item =>
+                        new
+                        {
+                            item.Storage,
+                            item.OwnerId,
+                            item.Container,
+                            item.BaseItemId,
+                            item.IsHq
+                        })
+                    .Select(group =>
+                        new
+                        {
+                            group.Key.Storage,
+                            group.Key.OwnerId,
+                            group.Key.Container,
+                            group.Key.BaseItemId,
+                            group.Key.IsHq,
+                            Quantity =
+                                group.Sum(item =>
+                                    item.Quantity)
+                        })
+                    .OrderBy(item =>
+                        item.Storage)
+                    .ThenBy(item =>
+                        item.OwnerId)
+                    .ThenBy(item =>
+                        item.Container)
+                    .ThenBy(item =>
+                        item.BaseItemId)
+                    .ThenBy(item =>
+                        item.IsHq)
+                    .Select(item =>
+                        $"N:{item.Storage}:{item.OwnerId}:{item.Container}:" +
                         $"{item.BaseItemId}:{item.IsHq}:{item.Quantity}"));
 
         var visitedKey =
@@ -946,8 +1067,14 @@ public sealed class GlobalTransferPlanner
             $"{state.MainCharacterId}|" +
             $"{state.CurrentCharacterId}|" +
             $"{visitedKey}|" +
-            $"{itemKey}";
+            $"{retainerItemKey}|" +
+            $"{nonRetainerItemKey}";
     }
+
+    private sealed record OrderedMoveCandidate(
+        PlannerAction Action,
+        int SourcePriorityIndex,
+        int SourceSlot);
 
     private sealed class MemoEntry
     {
