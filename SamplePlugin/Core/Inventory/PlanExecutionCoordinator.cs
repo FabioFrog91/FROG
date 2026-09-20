@@ -182,6 +182,16 @@ public sealed class PlanExecutionCoordinator
                         PlanExecutionCoordinatorStatus.Pending);
                 }
 
+                // A source-only decrease can be a transient inventory
+                // observation (notably while FC pages are being scanned).
+                // Never advance or replan until at least one unit is
+                // confirmed on both sides of the requested transfer.
+                if (reconciliation.ObservedTransferredQuantity <= 0)
+                {
+                    return Snapshot(
+                        PlanExecutionCoordinatorStatus.WaitingForObservation);
+                }
+
                 session.TryMarkCurrentExecuted(
                     out _);
 
