@@ -11,7 +11,7 @@ public enum PlanExecutionCoordinatorStatus
     Complete
 }
 
-public sealed record PlanExecutionCoordinatorSnapshot(
+public readonly record struct PlanExecutionCoordinatorSnapshot(
     PlanExecutionCoordinatorStatus Status,
     PlanExecutionSession? Session,
     PlannerAction? CurrentAction,
