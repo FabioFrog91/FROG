@@ -977,7 +977,7 @@ public sealed class GlobalTransferPlanner
 
 public sealed class GlobalTransferPlannerDiagnostics
 {
-    private const long MemorySampleInterval = 4096;
+    private const long MemorySampleInterval = 256;
 
     private readonly Stopwatch stopwatch = new();
 
@@ -990,8 +990,10 @@ public sealed class GlobalTransferPlannerDiagnostics
     private long appliedActions;
     private long maxDepth;
     private long elapsedMilliseconds;
+    private long managedMemoryStartBytes;
     private long managedMemoryBytes;
     private long peakManagedMemoryBytes;
+    private long managedMemoryEndBytes;
     private long allocatedBytes;
     private long startAllocatedBytes;
 
@@ -1036,11 +1038,19 @@ public sealed class GlobalTransferPlannerDiagnostics
             0);
 
         Interlocked.Exchange(
+            ref managedMemoryStartBytes,
+            0);
+
+        Interlocked.Exchange(
             ref managedMemoryBytes,
             0);
 
         Interlocked.Exchange(
             ref peakManagedMemoryBytes,
+            0);
+
+        Interlocked.Exchange(
+            ref managedMemoryEndBytes,
             0);
 
         Interlocked.Exchange(
@@ -1057,6 +1067,22 @@ public sealed class GlobalTransferPlannerDiagnostics
         Interlocked.Exchange(
             ref startAllocatedBytes,
             GC.GetAllocatedBytesForCurrentThread());
+
+        var startManagedMemory =
+            GC.GetTotalMemory(
+                forceFullCollection: false);
+
+        Interlocked.Exchange(
+            ref managedMemoryStartBytes,
+            startManagedMemory);
+
+        Interlocked.Exchange(
+            ref managedMemoryBytes,
+            startManagedMemory);
+
+        Interlocked.Exchange(
+            ref peakManagedMemoryBytes,
+            startManagedMemory);
 
         stopwatch.Restart();
 
@@ -1122,6 +1148,11 @@ public sealed class GlobalTransferPlannerDiagnostics
     {
         ObserveRuntime();
 
+        Interlocked.Exchange(
+            ref managedMemoryEndBytes,
+            Interlocked.Read(
+                ref managedMemoryBytes));
+
         stopwatch.Stop();
 
         Interlocked.Exchange(
@@ -1171,12 +1202,18 @@ public sealed class GlobalTransferPlannerDiagnostics
             ElapsedMilliseconds:
                 Interlocked.Read(
                     ref elapsedMilliseconds),
+            ManagedMemoryStartBytes:
+                Interlocked.Read(
+                    ref managedMemoryStartBytes),
             ManagedMemoryBytes:
                 Interlocked.Read(
                     ref managedMemoryBytes),
             PeakManagedMemoryBytes:
                 Interlocked.Read(
                     ref peakManagedMemoryBytes),
+            ManagedMemoryEndBytes:
+                Interlocked.Read(
+                    ref managedMemoryEndBytes),
             AllocatedBytes:
                 Interlocked.Read(
                     ref allocatedBytes));
@@ -1248,6 +1285,8 @@ public sealed record GlobalTransferPlannerDiagnosticsSnapshot(
     long AppliedActions,
     long MaxDepth,
     long ElapsedMilliseconds,
+    long ManagedMemoryStartBytes,
     long ManagedMemoryBytes,
     long PeakManagedMemoryBytes,
+    long ManagedMemoryEndBytes,
     long AllocatedBytes);
