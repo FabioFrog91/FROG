@@ -28,12 +28,7 @@ public class MainWindow : Window, IDisposable
     private Task<PlannerPlan>? globalPlannerTask;
     private GlobalTransferPlannerDiagnostics? globalPlannerDiagnostics;
     private string? globalPlannerError;
-    private PlanExecutionSession? planExecutionSession;
-    private readonly PlanExecutionVerifier planExecutionVerifier = new();
-    private readonly PlanExecutionReconciler planExecutionReconciler = new();
-    private PlanExecutionBaseline? planExecutionBaseline;
-    private PlanExecutionVerificationResult? planExecutionVerificationResult;
-    private PlanExecutionReconciliationResult? planExecutionReconciliationResult;
+    private readonly PlanExecutionCoordinator planExecutionCoordinator = new();
     private string? globalPlannerReplanMessage;
     private bool autoStartExecutionAfterPlannerCompletion;
     private int? globalPlannerResolverMissingSnapshot;
@@ -757,9 +752,12 @@ public class MainWindow : Window, IDisposable
         ImGui.Text("ESECUZIONE MANUALE");
         ImGui.Separator();
 
-        if (planExecutionSession == null ||
+        var session =
+            planExecutionCoordinator.Session;
+
+        if (session == null ||
             !ReferenceEquals(
-                planExecutionSession.Plan,
+                session.Plan,
                 plan))
         {
             ImGui.TextWrapped(
@@ -767,126 +765,84 @@ public class MainWindow : Window, IDisposable
 
             if (ImGui.Button("AVVIA ESECUZIONE"))
             {
-                planExecutionSession =
-                    new PlanExecutionSession(
-                        plan);
-
-                planExecutionBaseline = null;
-                planExecutionVerificationResult = null;
-                planExecutionReconciliationResult = null;
+                planExecutionCoordinator.Start(
+                    plan);
             }
 
             return;
         }
 
-        ImGui.Text(
-            $"Eseguite: {planExecutionSession.ExecutedActionCount}/{planExecutionSession.TotalActionCount}");
+        var currentCharacterId =
+            Plugin.PlayerState.IsLoaded
+                ? Plugin.PlayerState.ContentId
+                : 0;
+
+        var execution =
+            planExecutionCoordinator.Update(
+                plugin.InventoryIndex,
+                currentCharacterId);
+
+        session =
+            execution.Session;
+
+        if (session == null)
+            return;
 
         ImGui.Text(
-            $"Verificate: {planExecutionSession.VerifiedActionCount}/{planExecutionSession.TotalActionCount}");
+            $"Eseguite: {session.ExecutedActionCount}/{session.TotalActionCount}");
 
         ImGui.Text(
-            $"Rimanenti: {planExecutionSession.RemainingActionCount}");
+            $"Verificate: {session.VerifiedActionCount}/{session.TotalActionCount}");
 
-        if (planExecutionSession.IsComplete)
+        ImGui.Text(
+            $"Rimanenti: {session.RemainingActionCount}");
+
+        if (execution.Status ==
+            PlanExecutionCoordinatorStatus.ReplanRequired)
+        {
+            if (execution.Reconciliation != null)
+            {
+                StartExecutionReplanTask(
+                    requirementSet,
+                    plan,
+                    execution.Reconciliation);
+            }
+
+            return;
+        }
+
+        if (execution.Status ==
+            PlanExecutionCoordinatorStatus.Verified)
+        {
+            ImGui.Text(
+                "Azione verificata. Passaggio alla successiva.");
+
+            return;
+        }
+
+        if (session.IsComplete)
         {
             ImGui.Text(
                 "Tutte le azioni pianificate sono state eseguite e verificate.");
 
             if (ImGui.Button("RESET PROGRESSO"))
             {
-                planExecutionSession.Reset();
-                planExecutionBaseline = null;
-                planExecutionVerificationResult = null;
-                planExecutionReconciliationResult = null;
+                planExecutionCoordinator.Reset();
             }
 
             return;
         }
 
         var action =
-            planExecutionSession.CurrentAction;
+            session.CurrentAction;
 
         if (action == null)
             return;
 
-        if (planExecutionBaseline == null ||
-            planExecutionBaseline.ActionIndex !=
-                planExecutionSession.CurrentActionIndex)
-        {
-            planExecutionBaseline =
-                planExecutionVerifier.CaptureBaseline(
-                    planExecutionSession.CurrentActionIndex,
-                    action,
-                    plugin.InventoryIndex);
-
-            planExecutionVerificationResult = null;
-            planExecutionReconciliationResult = null;
-        }
-
-        if (planExecutionSession.IsCurrentActionExecuted &&
-            planExecutionBaseline != null)
-        {
-            var currentCharacterId =
-                Plugin.PlayerState.IsLoaded
-                    ? Plugin.PlayerState.ContentId
-                    : 0;
-
-            planExecutionVerificationResult =
-                planExecutionVerifier.Verify(
-                    action,
-                    planExecutionBaseline,
-                    plugin.InventoryIndex,
-                    currentCharacterId);
-
-            if (action.Type == PlannerActionType.Move &&
-                planExecutionVerificationResult.Status !=
-                    PlanExecutionVerificationStatus.WaitingForObservation)
-            {
-                var observation =
-                    planExecutionVerifier.Observe(
-                        action,
-                        plugin.InventoryIndex);
-
-                planExecutionReconciliationResult =
-                    planExecutionReconciler.Reconcile(
-                        action,
-                        planExecutionBaseline,
-                        observation);
-
-                if (planExecutionReconciliationResult.HasVariance)
-                {
-                    StartExecutionReplanTask(
-                        requirementSet,
-                        plan,
-                        planExecutionReconciliationResult);
-
-                    return;
-                }
-            }
-            else
-            {
-                planExecutionReconciliationResult = null;
-            }
-
-            if (planExecutionVerificationResult.Status ==
-                PlanExecutionVerificationStatus.Verified)
-            {
-                planExecutionSession.TryMarkCurrentVerified();
-                planExecutionBaseline = null;
-                planExecutionReconciliationResult = null;
-
-                ImGui.Text(
-                    "Azione verificata. Passaggio alla successiva.");
-
-                return;
-            }
-        }
-
         ImGui.Spacing();
 
         ImGui.Text(
-            $"AZIONE CORRENTE #{planExecutionSession.CurrentActionIndex}");
+            $"AZIONE CORRENTE #{session.CurrentActionIndex}");
 
         if (action.Type == PlannerActionType.SwitchCharacter)
         {
@@ -908,11 +864,11 @@ public class MainWindow : Window, IDisposable
                 $"A: {GetSourceName(action.Destination)} | {GetContainerName(action.Destination)}");
         }
 
-        if (!planExecutionSession.IsCurrentActionExecuted)
+        if (!session.IsCurrentActionExecuted)
         {
             if (ImGui.Button("SEGNA AZIONE ESEGUITA"))
             {
-                planExecutionSession.TryMarkCurrentExecuted(
+                planExecutionCoordinator.TryMarkCurrentExecuted(
                     out _);
             }
         }
@@ -921,26 +877,26 @@ public class MainWindow : Window, IDisposable
             ImGui.Text(
                 "Stato: EXECUTED, in attesa di verifica.");
 
-            if (planExecutionVerificationResult != null)
+            if (execution.Verification != null)
             {
                 ImGui.TextWrapped(
-                    $"Verifica: {planExecutionVerificationResult.Status} | " +
-                    planExecutionVerificationResult.Message);
+                    $"Verifica: {execution.Verification.Status} | " +
+                    execution.Verification.Message);
             }
 
-            if (planExecutionReconciliationResult != null)
+            if (execution.Reconciliation != null)
             {
                 ImGui.TextWrapped(
-                    $"Riconciliazione: {planExecutionReconciliationResult.Status} | " +
-                    $"Confermate {planExecutionReconciliationResult.ReconciledQuantity}/{planExecutionReconciliationResult.PlannedQuantity} | " +
-                    $"Rimanenti {planExecutionReconciliationResult.RemainingQuantity}");
+                    $"Riconciliazione: {execution.Reconciliation.Status} | " +
+                    $"Confermate {execution.Reconciliation.ReconciledQuantity}/{execution.Reconciliation.PlannedQuantity} | " +
+                    $"Rimanenti {execution.Reconciliation.RemainingQuantity}");
 
                 ImGui.TextWrapped(
-                    $"Delta osservati: source -{planExecutionReconciliationResult.SourceDecrease}, " +
-                    $"destination +{planExecutionReconciliationResult.DestinationIncrease}");
+                    $"Delta osservati: source -{execution.Reconciliation.SourceDecrease}, " +
+                    $"destination +{execution.Reconciliation.DestinationIncrease}");
 
                 ImGui.TextWrapped(
-                    planExecutionReconciliationResult.Message);
+                    execution.Reconciliation.Message);
             }
         }
 
@@ -948,40 +904,13 @@ public class MainWindow : Window, IDisposable
 
         if (ImGui.Button("RESET PROGRESSO"))
         {
-            planExecutionSession.Reset();
-            planExecutionBaseline = null;
-            planExecutionVerificationResult = null;
-            planExecutionReconciliationResult = null;
+            planExecutionCoordinator.Reset();
         }
     }
 
     private void ResetPlanExecutionSession()
     {
-        planExecutionSession = null;
-        planExecutionBaseline = null;
-        planExecutionVerificationResult = null;
-        planExecutionReconciliationResult = null;
-    }
-
-    private void StartGlobalPlannerTask(
-        RequirementSet requirementSet,
-        ResolutionPolicy resolutionPolicy)
-    {
-        var currentCharacterId =
-            Plugin.PlayerState.IsLoaded
-                ? Plugin.PlayerState.ContentId
-                : 0;
-
-        if (currentCharacterId == 0)
-            return;
-
-        StartGlobalPlannerTask(
-            requirementSet,
-            resolutionPolicy,
-            currentCharacterId,
-            currentCharacterId,
-            replanMessage: null,
-            autoStartExecution: false);
+        planExecutionCoordinator.Clear();
     }
 
     private void StartExecutionReplanTask(
@@ -1162,9 +1091,8 @@ public class MainWindow : Window, IDisposable
             if (autoStartExecutionAfterPlannerCompletion &&
                 globalPlannerPlan != null)
             {
-                planExecutionSession =
-                    new PlanExecutionSession(
-                        globalPlannerPlan);
+                planExecutionCoordinator.Start(
+                    globalPlannerPlan);
             }
         }
         catch (Exception ex)
