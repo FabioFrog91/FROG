@@ -35,6 +35,10 @@ public static class CclInventoryBootstrap
         builder.RegisterSingletonSelfAndInterfaces<MarketOrderService>();
         builder.RegisterSingletonSelfAndInterfaces<InventoryScanner>();
         builder.RegisterSingletonSelfAndInterfaces<InventoryMonitor>();
+
+        builder.RegisterType<RetainerDisplayLocator>()
+            .AsSelf()
+            .SingleInstance();
     }
 }
 

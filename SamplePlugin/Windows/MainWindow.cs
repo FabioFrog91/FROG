@@ -13,7 +13,6 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Numerics;
-using System.Threading.Tasks;
 
 namespace FROG.Windows;
 
@@ -22,17 +21,12 @@ public class MainWindow : Window, IDisposable
     private readonly Plugin plugin;
     private readonly ICharacterMonitor characterMonitor;
     private readonly CharacterCatalog characterCatalog;
+    private readonly PlannerSourceBuilder plannerSourceBuilder;
+    private readonly RetainerDisplayLocator retainerDisplayLocator;
 
     private RequirementSet? importedRequirementSet;
-    private PlannerPlan? globalPlannerPlan;
-    private Task<PlannerPlan>? globalPlannerTask;
-    private GlobalTransferPlannerDiagnostics? globalPlannerDiagnostics;
-    private string? globalPlannerError;
+    private readonly GlobalPlannerCoordinator globalPlannerCoordinator = new();
     private readonly PlanExecutionCoordinator planExecutionCoordinator = new();
-    private string? globalPlannerReplanMessage;
-    private bool autoStartExecutionAfterPlannerCompletion;
-    private int? globalPlannerResolverMissingSnapshot;
-    private DateTime? globalPlannerResolverSyncSnapshot;
     private readonly OptimizationSettings optimizationSettings = new();
 
     private RequirementSet? resolverCachedRequirementSet;
@@ -54,12 +48,18 @@ public class MainWindow : Window, IDisposable
     public MainWindow(
         Plugin plugin,
         ICharacterMonitor characterMonitor,
-        CharacterCatalog characterCatalog)
+        CharacterCatalog characterCatalog,
+        RetainerDisplayLocator retainerDisplayLocator)
         : base("FROG")
     {
         this.plugin = plugin;
         this.characterMonitor = characterMonitor;
         this.characterCatalog = characterCatalog;
+        this.retainerDisplayLocator = retainerDisplayLocator;
+        plannerSourceBuilder =
+            new PlannerSourceBuilder(
+                characterCatalog,
+                characterMonitor);
 
         SizeConstraints = new WindowSizeConstraints
         {
@@ -171,9 +171,7 @@ public class MainWindow : Window, IDisposable
             InvalidateResolverCache(
                 resetDiagnostics: true);
 
-            globalPlannerPlan = null;
-            globalPlannerDiagnostics = null;
-            globalPlannerError = null;
+            globalPlannerCoordinator.ClearResult();
             ResetPlanExecutionSession();
         }
 
@@ -222,10 +220,7 @@ public class MainWindow : Window, IDisposable
             return;
         }
 
-        var indexItems =
-            plugin.InventoryIndex.Items;
-
-        if (indexItems.Count == 0)
+        if (plugin.InventoryIndex.Count == 0)
         {
             ImGui.Text(
                 "Inventory Index vuoto. Nessun Requirement può essere risolto.");
@@ -248,7 +243,6 @@ public class MainWindow : Window, IDisposable
 
         EnsureResolverCache(
             importedRequirementSet,
-            indexItems,
             currentCharacterId);
 
         var sources =
@@ -455,7 +449,6 @@ public class MainWindow : Window, IDisposable
 
     private void EnsureResolverCache(
         RequirementSet requirementSet,
-        IReadOnlyList<InventoryItemSnapshot> indexItems,
         ulong currentCharacterId)
     {
         var currentSyncAtUtc =
@@ -475,6 +468,9 @@ public class MainWindow : Window, IDisposable
         if (cacheIsValid)
             return;
 
+        var indexItems =
+            plugin.InventoryIndex.Items;
+
         var resolverAllocatedBefore =
             GC.GetAllocatedBytesForCurrentThread();
 
@@ -482,7 +478,7 @@ public class MainWindow : Window, IDisposable
             Stopwatch.StartNew();
 
         var sources =
-            BuildPlannerSources(
+            plannerSourceBuilder.Build(
                 indexItems,
                 currentCharacterId);
 
@@ -590,7 +586,10 @@ public class MainWindow : Window, IDisposable
         RequirementSet requirementSet,
         ResolutionPolicy resolutionPolicy)
     {
-        TryCompleteGlobalPlannerTask();
+        ApplyGlobalPlannerCompletion();
+
+        var plannerState =
+            globalPlannerCoordinator.Snapshot;
 
         ImGui.Text("GLOBAL TRANSFER PLANNER");
         ImGui.Separator();
@@ -598,23 +597,26 @@ public class MainWindow : Window, IDisposable
         ImGui.TextWrapped(
             "Planner globale: risolve l'intera lista considerando inventario principale, retainer, FC e cambi personaggio.");
 
-        if (globalPlannerTask == null)
+        if (!plannerState.IsRunning)
         {
             if (ImGui.Button("CALCOLA PIANO GLOBALE"))
             {
                 StartGlobalPlannerTask(
                     requirementSet,
                     resolutionPolicy);
+
+                plannerState =
+                    globalPlannerCoordinator.Snapshot;
             }
         }
         else
         {
             ImGui.Text("Calcolo...");
 
-            if (globalPlannerDiagnostics != null)
+            if (plannerState.Diagnostics != null)
             {
                 var diagnostics =
-                    globalPlannerDiagnostics.Snapshot();
+                    plannerState.Diagnostics.Snapshot();
 
                 DrawGlobalPlannerSearchDiagnostics(
                     diagnostics);
@@ -631,17 +633,21 @@ public class MainWindow : Window, IDisposable
             }
         }
 
-        if (!string.IsNullOrWhiteSpace(globalPlannerError))
+        if (!string.IsNullOrWhiteSpace(
+                plannerState.Error))
         {
             ImGui.TextWrapped(
-                $"Errore planner: {globalPlannerError}");
+                $"Errore planner: {plannerState.Error}");
 
             return;
         }
 
-        if (globalPlannerPlan == null)
+        var plan =
+            plannerState.Plan;
+
+        if (plan == null)
         {
-            if (globalPlannerTask == null)
+            if (!plannerState.IsRunning)
             {
                 ImGui.Text(
                     "Nessun piano globale calcolato.");
@@ -651,49 +657,49 @@ public class MainWindow : Window, IDisposable
         }
 
         ImGui.Text(
-            $"Risultato: {globalPlannerPlan.Result}");
+            $"Risultato: {plan.Result}");
 
         ImGui.Text(
-            $"Mancante: {globalPlannerPlan.Missing}");
+            $"Mancante: {plan.Missing}");
 
-        if (globalPlannerResolverMissingSnapshot.HasValue)
+        if (plannerState.ResolverMissingSnapshot.HasValue)
         {
             var delta =
-                globalPlannerPlan.Missing -
-                globalPlannerResolverMissingSnapshot.Value;
+                plan.Missing -
+                plannerState.ResolverMissingSnapshot.Value;
 
             ImGui.Text(
-                $"Resolver stesso snapshot: {globalPlannerResolverMissingSnapshot.Value}");
+                $"Resolver stesso snapshot: {plannerState.ResolverMissingSnapshot.Value}");
 
             ImGui.Text(
                 $"Delta planner-resolver: {delta:+#;-#;0}");
         }
 
         ImGui.Text(
-            $"Cambi personaggio: {globalPlannerPlan.CharacterSwitches}");
+            $"Cambi personaggio: {plan.CharacterSwitches}");
 
         ImGui.Text(
-            $"Accessi retainer: {globalPlannerPlan.RetainerAccesses}");
+            $"Accessi retainer: {plan.RetainerAccesses}");
 
         ImGui.Text(
-            $"Hop logici: {globalPlannerPlan.TransferHops}");
+            $"Hop logici: {plan.TransferHops}");
 
         ImGui.Text(
-            $"Azioni: {globalPlannerPlan.Actions.Count}");
+            $"Azioni: {plan.Actions.Count}");
 
         if (!string.IsNullOrWhiteSpace(
-                globalPlannerReplanMessage))
+                plannerState.ReplanMessage))
         {
             ImGui.TextWrapped(
-                globalPlannerReplanMessage);
+                plannerState.ReplanMessage);
         }
 
-        if (globalPlannerDiagnostics != null)
+        if (plannerState.Diagnostics != null)
         {
             ImGui.Spacing();
 
             DrawGlobalPlannerSearchDiagnostics(
-                globalPlannerDiagnostics.Snapshot());
+                plannerState.Diagnostics.Snapshot());
         }
 
         ImGui.Spacing();
@@ -703,21 +709,27 @@ public class MainWindow : Window, IDisposable
             ImGui.SetClipboardText(
                 BuildGlobalPlannerClipboardText(
                     requirementSet,
-                    globalPlannerPlan));
+                    plan));
         }
 
         ImGui.Spacing();
 
         DrawPlanExecutionSession(
-            globalPlannerPlan,
+            plan,
             requirementSet);
 
-        if (globalPlannerPlan == null)
+        plannerState =
+            globalPlannerCoordinator.Snapshot;
+
+        plan =
+            plannerState.Plan;
+
+        if (plan == null)
             return;
 
         ImGui.Spacing();
 
-        foreach (var action in globalPlannerPlan.Actions)
+        foreach (var action in plan.Actions)
         {
             if (action.Type == PlannerActionType.SwitchCharacter)
             {
@@ -858,7 +870,11 @@ public class MainWindow : Window, IDisposable
                 $"Qty {action.Quantity}");
 
             ImGui.TextWrapped(
-                $"DA: {GetSourceName(action.Source)} | {GetContainerName(action.Source)}");
+                $"DA: {GetSourceName(action.Source)} | " +
+                GetActionSourceLocationText(
+                    plan,
+                    session.CurrentActionIndex - 1,
+                    action));
 
             ImGui.TextWrapped(
                 $"A: {GetSourceName(action.Destination)} | {GetContainerName(action.Destination)}");
@@ -918,7 +934,7 @@ public class MainWindow : Window, IDisposable
         PlannerPlan previousPlan,
         PlanExecutionReconciliationResult reconciliation)
     {
-        if (globalPlannerTask != null)
+        if (globalPlannerCoordinator.Snapshot.IsRunning)
             return;
 
         var currentCharacterId =
@@ -939,7 +955,7 @@ public class MainWindow : Window, IDisposable
             plugin.InventoryIndex.Items;
 
         var sources =
-            BuildPlannerSources(
+            plannerSourceBuilder.Build(
                 currentItems,
                 mainCharacterId);
 
@@ -1005,127 +1021,42 @@ public class MainWindow : Window, IDisposable
         string? replanMessage,
         bool autoStartExecution)
     {
-        if (globalPlannerTask != null ||
-            mainCharacterId == 0 ||
-            currentCharacterId == 0)
-        {
-            return;
-        }
-
-        var requirementSetSnapshot =
-            new RequirementSet(
-                requirementSet.Name);
-
-        foreach (var requirement in requirementSet.Requirements)
-        {
-            requirementSetSnapshot.Add(
-                requirement);
-        }
-
-        var requiredItemIds =
-            requirementSetSnapshot.Requirements
-                .Select(requirement =>
-                    requirement.BaseItemId)
-                .ToHashSet();
-
-        var plannerItems =
-            plugin.InventoryIndex.Items
-                .Where(item =>
-                    requiredItemIds.Contains(
-                        item.BaseItemId))
-                .ToList();
-
-        var stateSnapshot =
-            new PlannerState(
+        var started =
+            globalPlannerCoordinator.TryStart(
+                requirementSet,
+                resolutionPolicy,
                 mainCharacterId,
                 currentCharacterId,
-                plannerItems);
+                plugin.InventoryIndex.Items,
+                optimizationSettings,
+                plugin.LastSyncAtUtc,
+                replanMessage == null
+                    ? resolverCachedPlan?.Missing
+                    : null,
+                replanMessage,
+                autoStartExecution);
 
-        var resolutionPolicySnapshot =
-            new ResolutionPolicy(
-                resolutionPolicy.Sources.ToList(),
-                mainCharacterId);
+        if (!started)
+            return;
 
-        var optimizationSettingsSnapshot =
-            new OptimizationSettings(
-                optimizationSettings.Criteria.ToList());
-
-        globalPlannerPlan = null;
-        globalPlannerError = null;
         ResetPlanExecutionSession();
-
-        globalPlannerReplanMessage =
-            replanMessage;
-
-        autoStartExecutionAfterPlannerCompletion =
-            autoStartExecution;
-
-        if (replanMessage == null)
-        {
-            globalPlannerResolverMissingSnapshot =
-                resolverCachedPlan?.Missing;
-
-            globalPlannerResolverSyncSnapshot =
-                plugin.LastSyncAtUtc;
-        }
-        else
-        {
-            globalPlannerResolverMissingSnapshot = null;
-            globalPlannerResolverSyncSnapshot =
-                plugin.LastSyncAtUtc;
-        }
-
-        var planner =
-            new GlobalTransferPlanner();
-
-        globalPlannerDiagnostics =
-            planner.Diagnostics;
-
-        globalPlannerTask =
-            Task.Run(
-                () =>
-                    planner.Plan(
-                        requirementSetSnapshot,
-                        stateSnapshot,
-                        resolutionPolicySnapshot,
-                        optimizationSettingsSnapshot));
     }
 
-    private void TryCompleteGlobalPlannerTask()
+    private void ApplyGlobalPlannerCompletion()
     {
-        if (globalPlannerTask == null ||
-            !globalPlannerTask.IsCompleted)
+        if (!globalPlannerCoordinator.TryConsumeCompletion(
+                out var completion))
         {
             return;
         }
 
-        try
-        {
-            globalPlannerPlan =
-                globalPlannerTask
-                    .GetAwaiter()
-                    .GetResult();
+        ResetPlanExecutionSession();
 
-            globalPlannerError = null;
-            ResetPlanExecutionSession();
-
-            if (autoStartExecutionAfterPlannerCompletion &&
-                globalPlannerPlan != null)
-            {
-                planExecutionCoordinator.Start(
-                    globalPlannerPlan);
-            }
-        }
-        catch (Exception ex)
+        if (completion.AutoStartExecution &&
+            completion.Plan != null)
         {
-            globalPlannerPlan = null;
-            globalPlannerError = ex.Message;
-            ResetPlanExecutionSession();
-        }
-        finally
-        {
-            autoStartExecutionAfterPlannerCompletion = false;
-            globalPlannerTask = null;
+            planExecutionCoordinator.Start(
+                completion.Plan);
         }
     }
 
@@ -1351,6 +1282,9 @@ public class MainWindow : Window, IDisposable
         RequirementSet requirementSet,
         PlannerPlan plan)
     {
+        var plannerState =
+            globalPlannerCoordinator.Snapshot;
+
         var lines =
             new List<string>
             {
@@ -1360,19 +1294,19 @@ public class MainWindow : Window, IDisposable
                 $"Requirements={requirementSet.Requirements.Count}",
                 $"Result={plan.Result}",
                 $"Missing={plan.Missing}",
-                $"ResolverMissingSnapshot={(globalPlannerResolverMissingSnapshot.HasValue ? globalPlannerResolverMissingSnapshot.Value : -1)}",
-                $"MissingDeltaVsResolver={(globalPlannerResolverMissingSnapshot.HasValue ? plan.Missing - globalPlannerResolverMissingSnapshot.Value : 0)}",
-                $"ResolverSyncSnapshotUtc={(globalPlannerResolverSyncSnapshot.HasValue ? globalPlannerResolverSyncSnapshot.Value.ToString("O") : "n/a")}",
+                $"ResolverMissingSnapshot={(plannerState.ResolverMissingSnapshot.HasValue ? plannerState.ResolverMissingSnapshot.Value : -1)}",
+                $"MissingDeltaVsResolver={(plannerState.ResolverMissingSnapshot.HasValue ? plan.Missing - plannerState.ResolverMissingSnapshot.Value : 0)}",
+                $"ResolverSyncSnapshotUtc={(plannerState.ResolverSyncSnapshot.HasValue ? plannerState.ResolverSyncSnapshot.Value.ToString("O") : "n/a")}",
                 $"CharacterSwitches={plan.CharacterSwitches}",
                 $"RetainerAccesses={plan.RetainerAccesses}",
                 $"TransferHops={plan.TransferHops}",
                 $"Actions={plan.Actions.Count}"
             };
 
-        if (globalPlannerDiagnostics != null)
+        if (plannerState.Diagnostics != null)
         {
             var diagnostics =
-                globalPlannerDiagnostics.Snapshot();
+                plannerState.Diagnostics.Snapshot();
 
             lines.Add(string.Empty);
             lines.Add("===== SEARCH DIAGNOSTICS =====");
@@ -1400,23 +1334,27 @@ public class MainWindow : Window, IDisposable
         lines.Add(string.Empty);
         lines.Add("===== ACTIONS =====");
 
-        var actionIndex = 1;
-
-        foreach (var action in plan.Actions)
+        for (var actionIndex = 0;
+             actionIndex < plan.Actions.Count;
+             actionIndex++)
         {
+            var action =
+                plan.Actions[actionIndex];
+
+            var actionNumber =
+                actionIndex + 1;
             if (action.Type == PlannerActionType.SwitchCharacter)
             {
                 lines.Add(
                     string.Join(
                         "\t",
-                        actionIndex,
+                        actionNumber,
                         "SWITCH",
                         GetCharacterName(action.FromCharacterId),
                         action.FromCharacterId,
                         GetCharacterName(action.ToCharacterId),
                         action.ToCharacterId));
 
-                actionIndex++;
                 continue;
             }
 
@@ -1429,7 +1367,7 @@ public class MainWindow : Window, IDisposable
             lines.Add(
                 string.Join(
                     "\t",
-                    actionIndex,
+                    actionNumber,
                     "MOVE",
                     GetItemName(action.BaseItemId),
                     action.BaseItemId,
@@ -1439,14 +1377,16 @@ public class MainWindow : Window, IDisposable
                     action.Source.Storage,
                     action.Source.OwnerId,
                     action.Source.ParentCharacterId,
-                    GetContainerName(action.Source),
+                    GetActionSourceLocationText(
+                        plan,
+                        actionIndex,
+                        action),
                     GetSourceName(action.Destination),
                     action.Destination.Storage,
                     action.Destination.OwnerId,
                     action.Destination.ParentCharacterId,
                     GetContainerName(action.Destination)));
 
-            actionIndex++;
         }
 
         return string.Join(
@@ -2118,257 +2058,6 @@ public class MainWindow : Window, IDisposable
         return $"Unknown Item ({baseItemId})";
     }
 
-    private IReadOnlyList<InventorySource> BuildPlannerSources(
-        IReadOnlyList<InventoryItemSnapshot> indexItems,
-        ulong mainCharacterId)
-    {
-        var sources =
-            new List<InventorySource>();
-
-        var allowedCharacterIds =
-            GetPlannerCharacterIds(
-                    mainCharacterId)
-                .ToHashSet();
-
-        if (allowedCharacterIds.Count == 0)
-            allowedCharacterIds.Add(mainCharacterId);
-
-        var mainFreeCompanyId =
-            GetCharacterFreeCompanyId(
-                mainCharacterId);
-
-        foreach (var snapshot in indexItems)
-        {
-            var source =
-                CreateSource(snapshot);
-
-            if (!IsPlannerSourceAllowed(
-                    source,
-                    allowedCharacterIds,
-                    mainFreeCompanyId))
-            {
-                continue;
-            }
-
-            AddPlannerSource(
-                sources,
-                source);
-        }
-
-        foreach (var characterId in allowedCharacterIds)
-        {
-            AddCharacterInventoryDestination(
-                sources,
-                characterId);
-        }
-
-        if (mainFreeCompanyId != 0)
-        {
-            AddFreeCompanyHub(
-                sources,
-                mainFreeCompanyId);
-        }
-
-        return sources;
-    }
-
-    private IEnumerable<ulong> GetPlannerCharacterIds(
-        ulong mainCharacterId)
-    {
-        yield return mainCharacterId;
-
-        var mainFreeCompanyId =
-            GetCharacterFreeCompanyId(
-                mainCharacterId);
-
-        if (mainFreeCompanyId == 0)
-            yield break;
-
-        foreach (var identity in characterCatalog.Entries)
-        {
-            if (identity.Type != CharacterIdentityType.Character)
-                continue;
-
-            if (identity.CharacterId == 0 ||
-                identity.CharacterId == mainCharacterId)
-            {
-                continue;
-            }
-
-            if (identity.FreeCompanyId != mainFreeCompanyId)
-                continue;
-
-            yield return identity.CharacterId;
-        }
-    }
-
-    private ulong GetCharacterFreeCompanyId(
-        ulong characterId)
-    {
-        if (characterCatalog.TryGet(
-                characterId,
-                out var identity) &&
-            identity.Type == CharacterIdentityType.Character &&
-            identity.FreeCompanyId != 0)
-        {
-            return identity.FreeCompanyId;
-        }
-
-        return characterMonitor
-            .GetCharacterById(characterId)
-            ?.FreeCompanyId ?? 0;
-    }
-
-    private static bool IsPlannerSourceAllowed(
-        InventorySource source,
-        IReadOnlySet<ulong> allowedCharacterIds,
-        ulong mainFreeCompanyId)
-    {
-        return source.Storage switch
-        {
-            StorageType.CharacterInventory =>
-                allowedCharacterIds.Contains(
-                    source.OwnerId),
-
-            StorageType.Retainer =>
-                allowedCharacterIds.Contains(
-                    source.ParentCharacterId),
-
-            StorageType.FreeCompanyChest =>
-                mainFreeCompanyId != 0 &&
-                source.OwnerId == mainFreeCompanyId,
-
-            _ =>
-                false
-        };
-    }
-
-    private void AddCharacterInventoryDestination(
-        List<InventorySource> sources,
-        ulong characterId)
-    {
-        var ownerName =
-            GetCharacterName(characterId);
-
-        AddPlannerSource(
-            sources,
-            new InventorySource(
-                StorageType.CharacterInventory,
-                characterId,
-                (uint)GameInventoryType.Inventory1,
-                OwnerName: ownerName));
-    }
-
-    private void AddFreeCompanyHub(
-        List<InventorySource> sources,
-        ulong freeCompanyId)
-    {
-        var freeCompanyName =
-            characterCatalog.GetName(
-                freeCompanyId);
-
-        if (string.IsNullOrWhiteSpace(
-                freeCompanyName))
-        {
-            freeCompanyName =
-                GetFreeCompanyOwnerName(
-                    freeCompanyId);
-        }
-
-        AddPlannerSource(
-            sources,
-            new InventorySource(
-                StorageType.FreeCompanyChest,
-                freeCompanyId,
-                (uint)GameInventoryType.FreeCompanyPage1,
-                ParentCharacterId: 0,
-                OwnerName: freeCompanyName));
-    }
-
-    private static void AddPlannerSource(
-        List<InventorySource> sources,
-        InventorySource source)
-    {
-        var existingIndex =
-            sources.FindIndex(existing =>
-                existing.Storage == source.Storage &&
-                existing.OwnerId == source.OwnerId &&
-                existing.Container == source.Container &&
-                existing.ParentCharacterId == source.ParentCharacterId);
-
-        if (existingIndex < 0)
-        {
-            sources.Add(source);
-            return;
-        }
-
-        if (string.IsNullOrWhiteSpace(
-                sources[existingIndex].OwnerName) &&
-            !string.IsNullOrWhiteSpace(
-                source.OwnerName))
-        {
-            sources[existingIndex] = source;
-        }
-    }
-
-    private InventorySource CreateSource(
-        InventoryItemSnapshot snapshot)
-    {
-        var parentCharacterId =
-            snapshot.ParentCharacterId;
-
-        if (snapshot.Storage == StorageType.FreeCompanyChest)
-        {
-            parentCharacterId = 0;
-        }
-        else if (parentCharacterId == 0 &&
-                 snapshot.Storage == StorageType.Retainer)
-        {
-            parentCharacterId =
-                characterCatalog.GetParentCharacterId(
-                    snapshot.OwnerId);
-        }
-
-        if (parentCharacterId == 0 &&
-            snapshot.Storage == StorageType.Retainer)
-        {
-            parentCharacterId =
-                characterMonitor
-                    .GetParentCharacterById(
-                        snapshot.OwnerId)
-                    ?.CharacterId ?? 0;
-        }
-
-        var ownerName =
-            GetSnapshotOwnerName(snapshot);
-
-        return new InventorySource(
-            snapshot.Storage,
-            snapshot.OwnerId,
-            snapshot.Container,
-            parentCharacterId,
-            ownerName);
-    }
-
-    private string GetSnapshotOwnerName(
-        InventoryItemSnapshot snapshot)
-    {
-        return snapshot.Storage switch
-        {
-            StorageType.CharacterInventory =>
-                GetCharacterInventoryOwnerName(snapshot.OwnerId),
-
-            StorageType.Retainer =>
-                GetRetainerOwnerName(snapshot.OwnerId),
-
-            StorageType.FreeCompanyChest =>
-                GetFreeCompanyOwnerName(snapshot.OwnerId),
-
-            _ =>
-                snapshot.OwnerId.ToString()
-        };
-    }
-
     private string GetSourceName(
         InventorySource source)
     {
@@ -2575,6 +2264,46 @@ public class MainWindow : Window, IDisposable
         return $"Free Company {ownerId}";
     }
 
+    private string GetActionSourceLocationText(
+        PlannerPlan plan,
+        int actionIndex,
+        PlannerAction action)
+    {
+        if (action.Source is null)
+            return "Source non disponibile";
+
+        if (action.Source.Storage != StorageType.Retainer)
+        {
+            return GetContainerName(
+                action.Source);
+        }
+
+        var displayLocation =
+            retainerDisplayLocator.LocateSource(
+                plan,
+                actionIndex);
+
+        var internalContainer =
+            GetContainerName(
+                action.Source);
+
+        if (!displayLocation.IsAvailable)
+        {
+            return
+                $"Posizione visibile retainer non disponibile | {internalContainer}";
+        }
+
+        var visiblePositions =
+            string.Join(
+                ", ",
+                displayLocation.Positions
+                    .Select(position =>
+                        $"Pagina visibile {position.Page}, slot {position.Slot} x{position.Quantity}"));
+
+        return
+            $"{visiblePositions} | {internalContainer}";
+    }
+
     private static string GetContainerName(
         InventoryItemSnapshot snapshot)
     {
@@ -2634,13 +2363,13 @@ public class MainWindow : Window, IDisposable
     {
         return container switch
         {
-            10000 => "Retainer Page 1",
-            10001 => "Retainer Page 2",
-            10002 => "Retainer Page 3",
-            10003 => "Retainer Page 4",
-            10004 => "Retainer Page 5",
-            10005 => "Retainer Page 6",
-            10006 => "Retainer Page 7",
+            10000 => "Retainer Internal Container 1",
+            10001 => "Retainer Internal Container 2",
+            10002 => "Retainer Internal Container 3",
+            10003 => "Retainer Internal Container 4",
+            10004 => "Retainer Internal Container 5",
+            10005 => "Retainer Internal Container 6",
+            10006 => "Retainer Internal Container 7",
 
             _ =>
                 $"Retainer Container ({container})"

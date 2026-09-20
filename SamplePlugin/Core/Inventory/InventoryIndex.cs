@@ -27,6 +27,17 @@ public sealed class InventoryIndex
         }
     }
 
+    public int Count
+    {
+        get
+        {
+            lock (syncLock)
+            {
+                return items.Count;
+            }
+        }
+    }
+
     public bool IsDirty
     {
         get
