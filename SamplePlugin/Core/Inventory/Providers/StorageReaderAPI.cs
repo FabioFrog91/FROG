@@ -10,8 +10,9 @@ public interface StorageReaderAPI
         out IReadOnlyList<InventorySource> sources,
         out IReadOnlyList<InventoryItemSnapshot> snapshots);
 
-    bool TryReadActiveFreeCompany(
+    bool TryReadActiveFreeCompanyPage(
         DateTime observedAtUtc,
-        out IReadOnlyList<InventorySource> sources,
+        uint container,
+        out InventorySource source,
         out IReadOnlyList<InventoryItemSnapshot> snapshots);
 }
