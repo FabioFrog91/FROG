@@ -217,10 +217,7 @@ public class MainWindow : Window, IDisposable
             return;
         }
 
-        var indexItems =
-            plugin.InventoryIndex.Items;
-
-        if (indexItems.Count == 0)
+        if (plugin.InventoryIndex.Count == 0)
         {
             ImGui.Text(
                 "Inventory Index vuoto. Nessun Requirement può essere risolto.");
@@ -243,7 +240,6 @@ public class MainWindow : Window, IDisposable
 
         EnsureResolverCache(
             importedRequirementSet,
-            indexItems,
             currentCharacterId);
 
         var sources =
@@ -450,7 +446,6 @@ public class MainWindow : Window, IDisposable
 
     private void EnsureResolverCache(
         RequirementSet requirementSet,
-        IReadOnlyList<InventoryItemSnapshot> indexItems,
         ulong currentCharacterId)
     {
         var currentSyncAtUtc =
@@ -469,6 +464,9 @@ public class MainWindow : Window, IDisposable
 
         if (cacheIsValid)
             return;
+
+        var indexItems =
+            plugin.InventoryIndex.Items;
 
         var resolverAllocatedBefore =
             GC.GetAllocatedBytesForCurrentThread();
