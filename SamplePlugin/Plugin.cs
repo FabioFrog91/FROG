@@ -89,7 +89,6 @@ public sealed class Plugin : HostedPlugin
     private ConfigWindow ConfigWindow { get; }
     private MainWindow? MainWindow { get; set; }
     private ExecutionWindow? ExecutionWindow { get; set; }
-    private RetainerRowInspectorWindow? RetainerRowInspectorWindow { get; set; }
 
     private string InventoryIndexFilePath =>
         Path.Combine(
@@ -244,6 +243,11 @@ public sealed class Plugin : HostedPlugin
             .SingleInstance();
 
         containerBuilder
+            .RegisterType<RetainerListHighlighter>()
+            .AsSelf()
+            .SingleInstance();
+
+        containerBuilder
             .RegisterType<StorageReader>()
             .As<StorageReaderAPI>()
             .SingleInstance();
@@ -302,9 +306,6 @@ public sealed class Plugin : HostedPlugin
                 characterMonitor,
                 CharacterCatalog);
 
-        RetainerRowInspectorWindow =
-            new RetainerRowInspectorWindow();
-
         MainWindow =
             new MainWindow(
                 this,
@@ -314,12 +315,10 @@ public sealed class Plugin : HostedPlugin
                 resolverCoordinator,
                 globalPlannerCoordinator,
                 executionRuntime,
-                ExecutionWindow,
-                RetainerRowInspectorWindow);
+                ExecutionWindow);
 
         WindowSystem.AddWindow(MainWindow);
         WindowSystem.AddWindow(ExecutionWindow);
-        WindowSystem.AddWindow(RetainerRowInspectorWindow);
 
         return Task.CompletedTask;
     }
@@ -387,7 +386,6 @@ public sealed class Plugin : HostedPlugin
         ConfigWindow.Dispose();
         MainWindow?.Dispose();
         ExecutionWindow?.Dispose();
-        RetainerRowInspectorWindow?.Dispose();
 
         CommandManager.RemoveHandler(CommandName);
 
@@ -863,6 +861,7 @@ internal sealed class FrogInventoryStartup : IHostedService
     private readonly StorageReaderAPI storageReader;
     private readonly Plugin plugin;
     private readonly PlanExecutionRuntime executionRuntime;
+    private readonly RetainerListHighlighter retainerListHighlighter;
     private long lastFreeCompanyPollAtMs;
 
     public FrogInventoryStartup(
@@ -870,13 +869,15 @@ internal sealed class FrogInventoryStartup : IHostedService
         IInventoryScanner inventoryScanner,
         StorageReaderAPI storageReader,
         Plugin plugin,
-        PlanExecutionRuntime executionRuntime)
+        PlanExecutionRuntime executionRuntime,
+        RetainerListHighlighter retainerListHighlighter)
     {
         this.inventoryMonitor = inventoryMonitor;
         this.inventoryScanner = inventoryScanner;
         this.storageReader = storageReader;
         this.plugin = plugin;
         this.executionRuntime = executionRuntime;
+        this.retainerListHighlighter = retainerListHighlighter;
     }
 
     public Task StartAsync(
@@ -900,6 +901,8 @@ internal sealed class FrogInventoryStartup : IHostedService
         inventoryMonitor.OnInventoryChanged -= OnInventoryChanged;
         Plugin.Framework.Update -= OnFrameworkUpdate;
 
+        retainerListHighlighter.Clear();
+
         return Task.CompletedTask;
     }
 
@@ -912,6 +915,9 @@ internal sealed class FrogInventoryStartup : IHostedService
                 : 0;
 
         executionRuntime.Update(
+            currentCharacterId);
+
+        retainerListHighlighter.Update(
             currentCharacterId);
 
         if (!plugin.IsFreeCompanyChestOpen)
