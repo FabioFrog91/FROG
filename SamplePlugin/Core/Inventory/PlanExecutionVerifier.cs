@@ -10,6 +10,12 @@ public enum PlanExecutionVerificationStatus
     Mismatch
 }
 
+public sealed record PlanExecutionObservation(
+    int SourceQuantity,
+    int DestinationQuantity,
+    DateTime? SourceObservedAtUtc,
+    DateTime? DestinationObservedAtUtc);
+
 public sealed record PlanExecutionBaseline(
     int ActionIndex,
     int SourceQuantity,
@@ -28,20 +34,35 @@ public sealed class PlanExecutionVerifier
         PlannerAction action,
         InventoryIndex inventoryIndex)
     {
+        var observation =
+            Observe(
+                action,
+                inventoryIndex);
+
+        return new PlanExecutionBaseline(
+            actionIndex,
+            observation.SourceQuantity,
+            observation.DestinationQuantity,
+            observation.SourceObservedAtUtc,
+            observation.DestinationObservedAtUtc);
+    }
+
+    public PlanExecutionObservation Observe(
+        PlannerAction action,
+        InventoryIndex inventoryIndex)
+    {
         if (action.Type == PlannerActionType.SwitchCharacter ||
             action.Source is null ||
             action.Destination is null)
         {
-            return new PlanExecutionBaseline(
-                actionIndex,
+            return new PlanExecutionObservation(
                 0,
                 0,
                 null,
                 null);
         }
 
-        return new PlanExecutionBaseline(
-            actionIndex,
+        return new PlanExecutionObservation(
             inventoryIndex.GetQuantity(
                 action.BaseItemId,
                 action.IsHq,
@@ -81,37 +102,22 @@ public sealed class PlanExecutionVerifier
                 "MOVE privo di source o destination.");
         }
 
-        var sourceObservedAtUtc =
-            inventoryIndex.GetSourceObservedAtUtc(
-                action.Source);
-
-        var destinationObservedAtUtc =
-            GetDestinationObservedAtUtc(
-                inventoryIndex,
-                action);
+        var observation =
+            Observe(
+                action,
+                inventoryIndex);
 
         if (!IsNewerObservation(
-                sourceObservedAtUtc,
+                observation.SourceObservedAtUtc,
                 baseline.SourceObservedAtUtc) ||
             !IsNewerObservation(
-                destinationObservedAtUtc,
+                observation.DestinationObservedAtUtc,
                 baseline.DestinationObservedAtUtc))
         {
             return new PlanExecutionVerificationResult(
                 PlanExecutionVerificationStatus.WaitingForObservation,
                 "In attesa di una nuova osservazione di source e destination.");
         }
-
-        var sourceQuantity =
-            inventoryIndex.GetQuantity(
-                action.BaseItemId,
-                action.IsHq,
-                action.Source);
-
-        var destinationQuantity =
-            GetDestinationQuantity(
-                inventoryIndex,
-                action);
 
         var expectedSourceMaximum =
             Math.Max(
@@ -121,8 +127,8 @@ public sealed class PlanExecutionVerifier
         var expectedDestinationMinimum =
             baseline.DestinationQuantity + action.Quantity;
 
-        if (sourceQuantity <= expectedSourceMaximum &&
-            destinationQuantity >= expectedDestinationMinimum)
+        if (observation.SourceQuantity <= expectedSourceMaximum &&
+            observation.DestinationQuantity >= expectedDestinationMinimum)
         {
             return new PlanExecutionVerificationResult(
                 PlanExecutionVerificationStatus.Verified,
@@ -131,8 +137,8 @@ public sealed class PlanExecutionVerifier
 
         return new PlanExecutionVerificationResult(
             PlanExecutionVerificationStatus.Mismatch,
-            $"Delta non coerente. Source {baseline.SourceQuantity}->{sourceQuantity}, " +
-            $"Destination {baseline.DestinationQuantity}->{destinationQuantity}.");
+            $"Delta non coerente. Source {baseline.SourceQuantity}->{observation.SourceQuantity}, " +
+            $"Destination {baseline.DestinationQuantity}->{observation.DestinationQuantity}.");
     }
 
     private static int GetDestinationQuantity(
