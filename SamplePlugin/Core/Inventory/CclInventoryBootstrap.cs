@@ -43,6 +43,10 @@ public static class CclInventoryBootstrap
         builder.RegisterType<CharacterDisplayLocator>()
             .AsSelf()
             .SingleInstance();
+
+        builder.RegisterType<ExecutionOrderCompiler>()
+            .AsSelf()
+            .SingleInstance();
     }
 }
 
