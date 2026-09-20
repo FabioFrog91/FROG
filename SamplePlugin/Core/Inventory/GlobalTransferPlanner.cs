@@ -60,16 +60,6 @@ public sealed class GlobalTransferPlannerDiagnostics
     private long appliedActions;
     private long moveActionsGenerated;
     private long switchActionsGenerated;
-    private long expandedStates;
-    private long pathCyclePrunes;
-    private long deadEnds;
-    private long branchingTotal;
-    private long maxBranching;
-    private long statesWithOneAction;
-    private long statesWithTwoActions;
-    private long statesWithThreeToFiveActions;
-    private long statesWithSixToTenActions;
-    private long statesWithMoreThanTenActions;
     private long maxDepth;
     private long elapsedMilliseconds;
     private long managedMemoryStartBytes;
@@ -117,46 +107,6 @@ public sealed class GlobalTransferPlannerDiagnostics
 
         Interlocked.Exchange(
             ref switchActionsGenerated,
-            0);
-
-        Interlocked.Exchange(
-            ref expandedStates,
-            0);
-
-        Interlocked.Exchange(
-            ref pathCyclePrunes,
-            0);
-
-        Interlocked.Exchange(
-            ref deadEnds,
-            0);
-
-        Interlocked.Exchange(
-            ref branchingTotal,
-            0);
-
-        Interlocked.Exchange(
-            ref maxBranching,
-            0);
-
-        Interlocked.Exchange(
-            ref statesWithOneAction,
-            0);
-
-        Interlocked.Exchange(
-            ref statesWithTwoActions,
-            0);
-
-        Interlocked.Exchange(
-            ref statesWithThreeToFiveActions,
-            0);
-
-        Interlocked.Exchange(
-            ref statesWithSixToTenActions,
-            0);
-
-        Interlocked.Exchange(
-            ref statesWithMoreThanTenActions,
             0);
 
         lock (actionBreakdownLock)
@@ -311,62 +261,6 @@ public sealed class GlobalTransferPlannerDiagnostics
         }
     }
 
-    internal void RecordExpansion(
-        int generatedCount,
-        int appliedCount)
-    {
-        Interlocked.Increment(
-            ref expandedStates);
-
-        Interlocked.Add(
-            ref branchingTotal,
-            generatedCount);
-
-        UpdateMaximum(
-            ref maxBranching,
-            generatedCount);
-
-        if (appliedCount == 0)
-        {
-            Interlocked.Increment(
-                ref deadEnds);
-        }
-
-        if (generatedCount == 1)
-        {
-            Interlocked.Increment(
-                ref statesWithOneAction);
-        }
-        else if (generatedCount == 2)
-        {
-            Interlocked.Increment(
-                ref statesWithTwoActions);
-        }
-        else if (generatedCount >= 3 &&
-                 generatedCount <= 5)
-        {
-            Interlocked.Increment(
-                ref statesWithThreeToFiveActions);
-        }
-        else if (generatedCount >= 6 &&
-                 generatedCount <= 10)
-        {
-            Interlocked.Increment(
-                ref statesWithSixToTenActions);
-        }
-        else if (generatedCount > 10)
-        {
-            Interlocked.Increment(
-                ref statesWithMoreThanTenActions);
-        }
-    }
-
-    internal void RecordPathCyclePrune()
-    {
-        Interlocked.Increment(
-            ref pathCyclePrunes);
-    }
-
     internal void RecordAppliedAction()
     {
         Interlocked.Increment(
@@ -472,36 +366,6 @@ public sealed class GlobalTransferPlannerDiagnostics
             SwitchActionsGenerated:
                 Interlocked.Read(
                     ref switchActionsGenerated),
-            ExpandedStates:
-                Interlocked.Read(
-                    ref expandedStates),
-            PathCyclePrunes:
-                Interlocked.Read(
-                    ref pathCyclePrunes),
-            DeadEnds:
-                Interlocked.Read(
-                    ref deadEnds),
-            BranchingTotal:
-                Interlocked.Read(
-                    ref branchingTotal),
-            MaxBranching:
-                Interlocked.Read(
-                    ref maxBranching),
-            StatesWithOneAction:
-                Interlocked.Read(
-                    ref statesWithOneAction),
-            StatesWithTwoActions:
-                Interlocked.Read(
-                    ref statesWithTwoActions),
-            StatesWithThreeToFiveActions:
-                Interlocked.Read(
-                    ref statesWithThreeToFiveActions),
-            StatesWithSixToTenActions:
-                Interlocked.Read(
-                    ref statesWithSixToTenActions),
-            StatesWithMoreThanTenActions:
-                Interlocked.Read(
-                    ref statesWithMoreThanTenActions),
             TopItems:
                 topItems,
             TopSources:
@@ -612,16 +476,6 @@ public sealed record GlobalTransferPlannerDiagnosticsSnapshot(
     long AppliedActions,
     long MoveActionsGenerated,
     long SwitchActionsGenerated,
-    long ExpandedStates,
-    long PathCyclePrunes,
-    long DeadEnds,
-    long BranchingTotal,
-    long MaxBranching,
-    long StatesWithOneAction,
-    long StatesWithTwoActions,
-    long StatesWithThreeToFiveActions,
-    long StatesWithSixToTenActions,
-    long StatesWithMoreThanTenActions,
     IReadOnlyList<PlannerActionItemDiagnostic> TopItems,
     IReadOnlyList<PlannerActionSourceDiagnostic> TopSources,
     long MaxDepth,
