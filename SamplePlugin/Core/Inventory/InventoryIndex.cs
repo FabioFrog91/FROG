@@ -27,6 +27,17 @@ public sealed class InventoryIndex
         }
     }
 
+    public long Revision
+    {
+        get
+        {
+            lock (syncLock)
+            {
+                return revision;
+            }
+        }
+    }
+
     public int Count
     {
         get
@@ -50,6 +61,7 @@ public sealed class InventoryIndex
     }
 
     private bool isDirty;
+    private long revision;
 
     public IReadOnlyList<InventoryIndexAuditEntry> AuditHistory
     {
@@ -104,6 +116,7 @@ public sealed class InventoryIndex
                 observedAtUtc ?? DateTime.UtcNow;
 
             isDirty = true;
+            revision++;
 
             AddAuditEntry(
                 $"REPLACE_SOURCE {source.Storage} owner={source.OwnerId} container={source.Container}",
@@ -161,6 +174,7 @@ public sealed class InventoryIndex
             }
 
             isDirty = true;
+            revision++;
 
             return true;
         }
@@ -174,6 +188,7 @@ public sealed class InventoryIndex
             items.AddRange(snapshots);
             sourceObservedAtUtc.Clear();
             isDirty = true;
+            revision++;
         }
     }
 
@@ -232,6 +247,7 @@ public sealed class InventoryIndex
             items.AddRange(snapshots);
             sourceObservedAtUtc.Clear();
             isDirty = false;
+            revision++;
 
             AddAuditEntry(
                 "LOAD_FROM_DISK",
