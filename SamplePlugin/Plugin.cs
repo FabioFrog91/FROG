@@ -89,6 +89,7 @@ public sealed class Plugin : HostedPlugin
     private ConfigWindow ConfigWindow { get; }
     private MainWindow? MainWindow { get; set; }
     private ExecutionWindow? ExecutionWindow { get; set; }
+    private RetainerRowInspectorWindow? RetainerRowInspectorWindow { get; set; }
 
     private string InventoryIndexFilePath =>
         Path.Combine(
@@ -301,6 +302,9 @@ public sealed class Plugin : HostedPlugin
                 characterMonitor,
                 CharacterCatalog);
 
+        RetainerRowInspectorWindow =
+            new RetainerRowInspectorWindow();
+
         MainWindow =
             new MainWindow(
                 this,
@@ -310,10 +314,12 @@ public sealed class Plugin : HostedPlugin
                 resolverCoordinator,
                 globalPlannerCoordinator,
                 executionRuntime,
-                ExecutionWindow);
+                ExecutionWindow,
+                RetainerRowInspectorWindow);
 
         WindowSystem.AddWindow(MainWindow);
         WindowSystem.AddWindow(ExecutionWindow);
+        WindowSystem.AddWindow(RetainerRowInspectorWindow);
 
         return Task.CompletedTask;
     }
@@ -381,6 +387,7 @@ public sealed class Plugin : HostedPlugin
         ConfigWindow.Dispose();
         MainWindow?.Dispose();
         ExecutionWindow?.Dispose();
+        RetainerRowInspectorWindow?.Dispose();
 
         CommandManager.RemoveHandler(CommandName);
 
