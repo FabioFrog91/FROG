@@ -22,6 +22,7 @@ public class MainWindow : Window, IDisposable
     private readonly Plugin plugin;
     private readonly ICharacterMonitor characterMonitor;
     private readonly CharacterCatalog characterCatalog;
+    private readonly PlannerSourceBuilder plannerSourceBuilder;
 
     private RequirementSet? importedRequirementSet;
     private PlannerPlan? globalPlannerPlan;
@@ -60,6 +61,10 @@ public class MainWindow : Window, IDisposable
         this.plugin = plugin;
         this.characterMonitor = characterMonitor;
         this.characterCatalog = characterCatalog;
+        plannerSourceBuilder =
+            new PlannerSourceBuilder(
+                characterCatalog,
+                characterMonitor);
 
         SizeConstraints = new WindowSizeConstraints
         {
@@ -482,7 +487,7 @@ public class MainWindow : Window, IDisposable
             Stopwatch.StartNew();
 
         var sources =
-            BuildPlannerSources(
+            plannerSourceBuilder.Build(
                 indexItems,
                 currentCharacterId);
 
@@ -939,7 +944,7 @@ public class MainWindow : Window, IDisposable
             plugin.InventoryIndex.Items;
 
         var sources =
-            BuildPlannerSources(
+            plannerSourceBuilder.Build(
                 currentItems,
                 mainCharacterId);
 
@@ -2116,257 +2121,6 @@ public class MainWindow : Window, IDisposable
         }
 
         return $"Unknown Item ({baseItemId})";
-    }
-
-    private IReadOnlyList<InventorySource> BuildPlannerSources(
-        IReadOnlyList<InventoryItemSnapshot> indexItems,
-        ulong mainCharacterId)
-    {
-        var sources =
-            new List<InventorySource>();
-
-        var allowedCharacterIds =
-            GetPlannerCharacterIds(
-                    mainCharacterId)
-                .ToHashSet();
-
-        if (allowedCharacterIds.Count == 0)
-            allowedCharacterIds.Add(mainCharacterId);
-
-        var mainFreeCompanyId =
-            GetCharacterFreeCompanyId(
-                mainCharacterId);
-
-        foreach (var snapshot in indexItems)
-        {
-            var source =
-                CreateSource(snapshot);
-
-            if (!IsPlannerSourceAllowed(
-                    source,
-                    allowedCharacterIds,
-                    mainFreeCompanyId))
-            {
-                continue;
-            }
-
-            AddPlannerSource(
-                sources,
-                source);
-        }
-
-        foreach (var characterId in allowedCharacterIds)
-        {
-            AddCharacterInventoryDestination(
-                sources,
-                characterId);
-        }
-
-        if (mainFreeCompanyId != 0)
-        {
-            AddFreeCompanyHub(
-                sources,
-                mainFreeCompanyId);
-        }
-
-        return sources;
-    }
-
-    private IEnumerable<ulong> GetPlannerCharacterIds(
-        ulong mainCharacterId)
-    {
-        yield return mainCharacterId;
-
-        var mainFreeCompanyId =
-            GetCharacterFreeCompanyId(
-                mainCharacterId);
-
-        if (mainFreeCompanyId == 0)
-            yield break;
-
-        foreach (var identity in characterCatalog.Entries)
-        {
-            if (identity.Type != CharacterIdentityType.Character)
-                continue;
-
-            if (identity.CharacterId == 0 ||
-                identity.CharacterId == mainCharacterId)
-            {
-                continue;
-            }
-
-            if (identity.FreeCompanyId != mainFreeCompanyId)
-                continue;
-
-            yield return identity.CharacterId;
-        }
-    }
-
-    private ulong GetCharacterFreeCompanyId(
-        ulong characterId)
-    {
-        if (characterCatalog.TryGet(
-                characterId,
-                out var identity) &&
-            identity.Type == CharacterIdentityType.Character &&
-            identity.FreeCompanyId != 0)
-        {
-            return identity.FreeCompanyId;
-        }
-
-        return characterMonitor
-            .GetCharacterById(characterId)
-            ?.FreeCompanyId ?? 0;
-    }
-
-    private static bool IsPlannerSourceAllowed(
-        InventorySource source,
-        IReadOnlySet<ulong> allowedCharacterIds,
-        ulong mainFreeCompanyId)
-    {
-        return source.Storage switch
-        {
-            StorageType.CharacterInventory =>
-                allowedCharacterIds.Contains(
-                    source.OwnerId),
-
-            StorageType.Retainer =>
-                allowedCharacterIds.Contains(
-                    source.ParentCharacterId),
-
-            StorageType.FreeCompanyChest =>
-                mainFreeCompanyId != 0 &&
-                source.OwnerId == mainFreeCompanyId,
-
-            _ =>
-                false
-        };
-    }
-
-    private void AddCharacterInventoryDestination(
-        List<InventorySource> sources,
-        ulong characterId)
-    {
-        var ownerName =
-            GetCharacterName(characterId);
-
-        AddPlannerSource(
-            sources,
-            new InventorySource(
-                StorageType.CharacterInventory,
-                characterId,
-                (uint)GameInventoryType.Inventory1,
-                OwnerName: ownerName));
-    }
-
-    private void AddFreeCompanyHub(
-        List<InventorySource> sources,
-        ulong freeCompanyId)
-    {
-        var freeCompanyName =
-            characterCatalog.GetName(
-                freeCompanyId);
-
-        if (string.IsNullOrWhiteSpace(
-                freeCompanyName))
-        {
-            freeCompanyName =
-                GetFreeCompanyOwnerName(
-                    freeCompanyId);
-        }
-
-        AddPlannerSource(
-            sources,
-            new InventorySource(
-                StorageType.FreeCompanyChest,
-                freeCompanyId,
-                (uint)GameInventoryType.FreeCompanyPage1,
-                ParentCharacterId: 0,
-                OwnerName: freeCompanyName));
-    }
-
-    private static void AddPlannerSource(
-        List<InventorySource> sources,
-        InventorySource source)
-    {
-        var existingIndex =
-            sources.FindIndex(existing =>
-                existing.Storage == source.Storage &&
-                existing.OwnerId == source.OwnerId &&
-                existing.Container == source.Container &&
-                existing.ParentCharacterId == source.ParentCharacterId);
-
-        if (existingIndex < 0)
-        {
-            sources.Add(source);
-            return;
-        }
-
-        if (string.IsNullOrWhiteSpace(
-                sources[existingIndex].OwnerName) &&
-            !string.IsNullOrWhiteSpace(
-                source.OwnerName))
-        {
-            sources[existingIndex] = source;
-        }
-    }
-
-    private InventorySource CreateSource(
-        InventoryItemSnapshot snapshot)
-    {
-        var parentCharacterId =
-            snapshot.ParentCharacterId;
-
-        if (snapshot.Storage == StorageType.FreeCompanyChest)
-        {
-            parentCharacterId = 0;
-        }
-        else if (parentCharacterId == 0 &&
-                 snapshot.Storage == StorageType.Retainer)
-        {
-            parentCharacterId =
-                characterCatalog.GetParentCharacterId(
-                    snapshot.OwnerId);
-        }
-
-        if (parentCharacterId == 0 &&
-            snapshot.Storage == StorageType.Retainer)
-        {
-            parentCharacterId =
-                characterMonitor
-                    .GetParentCharacterById(
-                        snapshot.OwnerId)
-                    ?.CharacterId ?? 0;
-        }
-
-        var ownerName =
-            GetSnapshotOwnerName(snapshot);
-
-        return new InventorySource(
-            snapshot.Storage,
-            snapshot.OwnerId,
-            snapshot.Container,
-            parentCharacterId,
-            ownerName);
-    }
-
-    private string GetSnapshotOwnerName(
-        InventoryItemSnapshot snapshot)
-    {
-        return snapshot.Storage switch
-        {
-            StorageType.CharacterInventory =>
-                GetCharacterInventoryOwnerName(snapshot.OwnerId),
-
-            StorageType.Retainer =>
-                GetRetainerOwnerName(snapshot.OwnerId),
-
-            StorageType.FreeCompanyChest =>
-                GetFreeCompanyOwnerName(snapshot.OwnerId),
-
-            _ =>
-                snapshot.OwnerId.ToString()
-        };
     }
 
     private string GetSourceName(
