@@ -46,14 +46,14 @@ public sealed class PlanExecutionVerifier
                 action.BaseItemId,
                 action.IsHq,
                 action.Source),
-            inventoryIndex.GetQuantity(
-                action.BaseItemId,
-                action.IsHq,
-                action.Destination),
+            GetDestinationQuantity(
+                inventoryIndex,
+                action),
             inventoryIndex.GetSourceObservedAtUtc(
                 action.Source),
-            inventoryIndex.GetSourceObservedAtUtc(
-                action.Destination));
+            GetDestinationObservedAtUtc(
+                inventoryIndex,
+                action));
     }
 
     public PlanExecutionVerificationResult Verify(
@@ -86,8 +86,9 @@ public sealed class PlanExecutionVerifier
                 action.Source);
 
         var destinationObservedAtUtc =
-            inventoryIndex.GetSourceObservedAtUtc(
-                action.Destination);
+            GetDestinationObservedAtUtc(
+                inventoryIndex,
+                action);
 
         if (!IsNewerObservation(
                 sourceObservedAtUtc,
@@ -108,10 +109,9 @@ public sealed class PlanExecutionVerifier
                 action.Source);
 
         var destinationQuantity =
-            inventoryIndex.GetQuantity(
-                action.BaseItemId,
-                action.IsHq,
-                action.Destination);
+            GetDestinationQuantity(
+                inventoryIndex,
+                action);
 
         var expectedSourceMaximum =
             Math.Max(
@@ -133,6 +133,46 @@ public sealed class PlanExecutionVerifier
             PlanExecutionVerificationStatus.Mismatch,
             $"Delta non coerente. Source {baseline.SourceQuantity}->{sourceQuantity}, " +
             $"Destination {baseline.DestinationQuantity}->{destinationQuantity}.");
+    }
+
+    private static int GetDestinationQuantity(
+        InventoryIndex inventoryIndex,
+        PlannerAction action)
+    {
+        if (action.Destination is null)
+            return 0;
+
+        if (action.Destination.Storage ==
+            StorageType.CharacterInventory)
+        {
+            return inventoryIndex.GetCharacterInventoryQuantity(
+                action.Destination.OwnerId,
+                action.BaseItemId,
+                action.IsHq);
+        }
+
+        return inventoryIndex.GetQuantity(
+            action.BaseItemId,
+            action.IsHq,
+            action.Destination);
+    }
+
+    private static DateTime? GetDestinationObservedAtUtc(
+        InventoryIndex inventoryIndex,
+        PlannerAction action)
+    {
+        if (action.Destination is null)
+            return null;
+
+        if (action.Destination.Storage ==
+            StorageType.CharacterInventory)
+        {
+            return inventoryIndex.GetCharacterInventoryObservedAtUtc(
+                action.Destination.OwnerId);
+        }
+
+        return inventoryIndex.GetSourceObservedAtUtc(
+            action.Destination);
     }
 
     private static bool IsNewerObservation(
