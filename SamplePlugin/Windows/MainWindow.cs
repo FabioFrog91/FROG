@@ -28,6 +28,7 @@ public class MainWindow : Window, IDisposable
     private Task<PlannerPlan>? globalPlannerTask;
     private GlobalTransferPlannerDiagnostics? globalPlannerDiagnostics;
     private string? globalPlannerError;
+    private PlanExecutionSession? planExecutionSession;
     private int? globalPlannerResolverMissingSnapshot;
     private DateTime? globalPlannerResolverSyncSnapshot;
     private readonly OptimizationSettings optimizationSettings = new();
@@ -171,6 +172,7 @@ public class MainWindow : Window, IDisposable
             globalPlannerPlan = null;
             globalPlannerDiagnostics = null;
             globalPlannerError = null;
+            planExecutionSession = null;
         }
 
         if (importedRequirementSet == null)
@@ -697,6 +699,11 @@ public class MainWindow : Window, IDisposable
 
         ImGui.Spacing();
 
+        DrawPlanExecutionSession(
+            globalPlannerPlan);
+
+        ImGui.Spacing();
+
         foreach (var action in globalPlannerPlan.Actions)
         {
             if (action.Type == PlannerActionType.SwitchCharacter)
@@ -722,6 +729,94 @@ public class MainWindow : Window, IDisposable
                 $"Qty {action.Quantity} | " +
                 $"{GetSourceName(action.Source)} -> " +
                 $"{GetSourceName(action.Destination)}");
+        }
+    }
+
+    private void DrawPlanExecutionSession(
+        PlannerPlan plan)
+    {
+        ImGui.Text("ESECUZIONE MANUALE");
+        ImGui.Separator();
+
+        if (planExecutionSession == null ||
+            !ReferenceEquals(
+                planExecutionSession.Plan,
+                plan))
+        {
+            ImGui.TextWrapped(
+                "Avvia una sessione per seguire il piano senza modificarlo. Le azioni vengono solo segnate come eseguite manualmente; la verifica dell'inventario resterà uno strato separato.");
+
+            if (ImGui.Button("AVVIA ESECUZIONE"))
+            {
+                planExecutionSession =
+                    new PlanExecutionSession(
+                        plan);
+            }
+
+            return;
+        }
+
+        ImGui.Text(
+            $"Eseguite: {planExecutionSession.ExecutedActionCount}/{planExecutionSession.TotalActionCount}");
+
+        ImGui.Text(
+            $"Rimanenti: {planExecutionSession.RemainingActionCount}");
+
+        if (planExecutionSession.IsComplete)
+        {
+            ImGui.Text(
+                "Tutte le azioni pianificate sono state segnate come eseguite.");
+
+            if (ImGui.Button("RESET PROGRESSO"))
+            {
+                planExecutionSession.Reset();
+            }
+
+            return;
+        }
+
+        var action =
+            planExecutionSession.CurrentAction;
+
+        if (action == null)
+            return;
+
+        ImGui.Spacing();
+
+        ImGui.Text(
+            $"AZIONE CORRENTE #{planExecutionSession.ExecutedActionCount + 1}");
+
+        if (action.Type == PlannerActionType.SwitchCharacter)
+        {
+            ImGui.TextWrapped(
+                $"SWITCH {GetCharacterName(action.FromCharacterId)} -> {GetCharacterName(action.ToCharacterId)}");
+        }
+        else if (action.Source is not null &&
+                 action.Destination is not null)
+        {
+            ImGui.TextWrapped(
+                $"{GetItemName(action.BaseItemId)} | " +
+                $"{(action.IsHq ? "HQ" : "NQ")} | " +
+                $"Qty {action.Quantity}");
+
+            ImGui.TextWrapped(
+                $"DA: {GetSourceName(action.Source)} | {GetContainerName(action.Source)}");
+
+            ImGui.TextWrapped(
+                $"A: {GetSourceName(action.Destination)} | {GetContainerName(action.Destination)}");
+        }
+
+        if (ImGui.Button("SEGNA AZIONE ESEGUITA"))
+        {
+            planExecutionSession.TryMarkCurrentExecuted(
+                out _);
+        }
+
+        ImGui.SameLine();
+
+        if (ImGui.Button("RESET PROGRESSO"))
+        {
+            planExecutionSession.Reset();
         }
     }
 
@@ -780,6 +875,7 @@ public class MainWindow : Window, IDisposable
 
         globalPlannerPlan = null;
         globalPlannerError = null;
+        planExecutionSession = null;
 
         globalPlannerResolverMissingSnapshot =
             resolverCachedPlan?.Missing;
@@ -819,11 +915,13 @@ public class MainWindow : Window, IDisposable
                     .GetResult();
 
             globalPlannerError = null;
+            planExecutionSession = null;
         }
         catch (Exception ex)
         {
             globalPlannerPlan = null;
             globalPlannerError = ex.Message;
+            planExecutionSession = null;
         }
         finally
         {
