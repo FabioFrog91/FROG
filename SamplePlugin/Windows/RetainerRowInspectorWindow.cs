@@ -20,6 +20,8 @@ public sealed unsafe class RetainerRowInspectorWindow : Window, IDisposable
     private string snapshotText =
         "Apri la Summoning Bell / Retainer List, poi premi AGGIORNA LETTURA.";
 
+    private DateTime? pendingCaptureAtUtc;
+
     public RetainerRowInspectorWindow()
         : base("FROG - Retainer Row Inspector###FROGRetainerRowInspector")
     {
@@ -45,6 +47,18 @@ public sealed unsafe class RetainerRowInspectorWindow : Window, IDisposable
 
         if (ImGui.Button("AGGIORNA LETTURA"))
         {
+            pendingCaptureAtUtc =
+                DateTime.UtcNow.AddSeconds(1);
+
+            snapshotText =
+                "Cattura programmata tra 1 secondo: porta ora il mouse sulla riga da osservare...";
+        }
+
+        if (pendingCaptureAtUtc.HasValue &&
+            DateTime.UtcNow >= pendingCaptureAtUtc.Value)
+        {
+            pendingCaptureAtUtc = null;
+
             snapshotText =
                 BuildSnapshot();
         }
