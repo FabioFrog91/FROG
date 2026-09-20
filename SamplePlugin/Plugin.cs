@@ -248,6 +248,11 @@ public sealed class Plugin : HostedPlugin
             .SingleInstance();
 
         containerBuilder
+            .RegisterType<ExecutionInventoryHighlighter>()
+            .AsSelf()
+            .SingleInstance();
+
+        containerBuilder
             .RegisterType<StorageReader>()
             .As<StorageReaderAPI>()
             .SingleInstance();
@@ -862,6 +867,7 @@ internal sealed class FrogInventoryStartup : IHostedService
     private readonly Plugin plugin;
     private readonly PlanExecutionRuntime executionRuntime;
     private readonly RetainerListHighlighter retainerListHighlighter;
+    private readonly ExecutionInventoryHighlighter executionInventoryHighlighter;
     private long lastFreeCompanyPollAtMs;
 
     public FrogInventoryStartup(
@@ -870,7 +876,8 @@ internal sealed class FrogInventoryStartup : IHostedService
         StorageReaderAPI storageReader,
         Plugin plugin,
         PlanExecutionRuntime executionRuntime,
-        RetainerListHighlighter retainerListHighlighter)
+        RetainerListHighlighter retainerListHighlighter,
+        ExecutionInventoryHighlighter executionInventoryHighlighter)
     {
         this.inventoryMonitor = inventoryMonitor;
         this.inventoryScanner = inventoryScanner;
@@ -878,6 +885,7 @@ internal sealed class FrogInventoryStartup : IHostedService
         this.plugin = plugin;
         this.executionRuntime = executionRuntime;
         this.retainerListHighlighter = retainerListHighlighter;
+        this.executionInventoryHighlighter = executionInventoryHighlighter;
     }
 
     public Task StartAsync(
@@ -902,6 +910,7 @@ internal sealed class FrogInventoryStartup : IHostedService
         Plugin.Framework.Update -= OnFrameworkUpdate;
 
         retainerListHighlighter.Clear();
+        executionInventoryHighlighter.Clear();
 
         return Task.CompletedTask;
     }
@@ -918,6 +927,9 @@ internal sealed class FrogInventoryStartup : IHostedService
             currentCharacterId);
 
         retainerListHighlighter.Update(
+            currentCharacterId);
+
+        executionInventoryHighlighter.Update(
             currentCharacterId);
 
         if (!plugin.IsFreeCompanyChestOpen)
