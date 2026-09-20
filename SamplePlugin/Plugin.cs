@@ -246,6 +246,9 @@ public sealed class Plugin : HostedPlugin
         var characterMonitor =
             Host.Services.GetRequiredService<ICharacterMonitor>();
 
+        var retainerDisplayLocator =
+            Host.Services.GetRequiredService<RetainerDisplayLocator>();
+
         characterCatalogSync =
             new CharacterCatalogSync(
                 characterMonitor,
@@ -260,7 +263,8 @@ public sealed class Plugin : HostedPlugin
             new MainWindow(
                 this,
                 characterMonitor,
-                CharacterCatalog);
+                CharacterCatalog,
+                retainerDisplayLocator);
 
         WindowSystem.AddWindow(MainWindow);
 
