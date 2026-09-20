@@ -524,110 +524,123 @@ public sealed class Plugin : HostedPlugin
         var chestOpen =
             isFreeCompanyChestOpen;
 
-        var freeCompanyReadSucceeded =
-            storageReader.TryReadActiveFreeCompany(
-                observedAtUtc,
-                out var freeCompanySources,
-                out var freeCompanySnapshots);
+        var freeCompanyReadSucceeded = false;
+        IReadOnlyList<InventorySource> freeCompanySources =
+            Array.Empty<InventorySource>();
+        IReadOnlyList<InventoryItemSnapshot> freeCompanySnapshots =
+            Array.Empty<InventoryItemSnapshot>();
 
         var pageDiagnostics =
             new List<FreeCompanyPageSyncDiagnostic>();
 
-        if (freeCompanyReadSucceeded)
+        // The FC chest is only an observable source while its UI is open.
+        // When it is closed, preserve the last known snapshot instead of
+        // replacing it from client memory that may merely be stale or
+        // transiently incomplete.
+        if (chestOpen)
         {
-            foreach (var source in freeCompanySources)
+            freeCompanyReadSucceeded =
+                storageReader.TryReadActiveFreeCompany(
+                    observedAtUtc,
+                    out freeCompanySources,
+                    out freeCompanySnapshots);
+
+            if (freeCompanyReadSucceeded)
             {
-                var sourceSnapshots = freeCompanySnapshots
-                    .Where(x =>
-                        x.Storage == source.Storage &&
-                        x.OwnerId == source.OwnerId &&
-                        x.Container == source.Container)
-                    .ToList();
-
-                var beforeSnapshots =
-                    InventoryIndex.Items
+                foreach (var source in freeCompanySources)
+                {
+                    var sourceSnapshots = freeCompanySnapshots
                         .Where(x =>
                             x.Storage == source.Storage &&
                             x.OwnerId == source.OwnerId &&
                             x.Container == source.Container)
                         .ToList();
 
-                InventoryIndex.ReplaceSource(
-                    source,
-                    sourceSnapshots);
+                    var beforeSnapshots =
+                        InventoryIndex.Items
+                            .Where(x =>
+                                x.Storage == source.Storage &&
+                                x.OwnerId == source.OwnerId &&
+                                x.Container == source.Container)
+                            .ToList();
 
-                var afterSnapshots =
-                    InventoryIndex.Items
-                        .Where(x =>
-                            x.Storage == source.Storage &&
-                            x.OwnerId == source.OwnerId &&
-                            x.Container == source.Container)
-                        .ToList();
+                    InventoryIndex.ReplaceSource(
+                        source,
+                        sourceSnapshots);
 
-                var beforeByItem =
-                    beforeSnapshots
-                        .GroupBy(x =>
-                            new
-                            {
-                                x.BaseItemId,
-                                x.IsHq
-                            })
-                        .ToDictionary(
-                            group =>
-                                (group.Key.BaseItemId, group.Key.IsHq),
-                            group =>
-                                group.Sum(x => x.Quantity));
+                    var afterSnapshots =
+                        InventoryIndex.Items
+                            .Where(x =>
+                                x.Storage == source.Storage &&
+                                x.OwnerId == source.OwnerId &&
+                                x.Container == source.Container)
+                            .ToList();
 
-                var readByItem =
-                    sourceSnapshots
-                        .GroupBy(x =>
-                            new
-                            {
-                                x.BaseItemId,
-                                x.IsHq
-                            })
-                        .ToDictionary(
-                            group =>
-                                (group.Key.BaseItemId, group.Key.IsHq),
-                            group =>
-                                group.Sum(x => x.Quantity));
+                    var beforeByItem =
+                        beforeSnapshots
+                            .GroupBy(x =>
+                                new
+                                {
+                                    x.BaseItemId,
+                                    x.IsHq
+                                })
+                            .ToDictionary(
+                                group =>
+                                    (group.Key.BaseItemId, group.Key.IsHq),
+                                group =>
+                                    group.Sum(x => x.Quantity));
 
-                var changedItems =
-                    beforeByItem.Keys
-                        .Union(readByItem.Keys)
-                        .Select(key =>
-                            new FreeCompanyItemSyncDiagnostic(
-                                key.BaseItemId,
-                                key.IsHq,
-                                beforeByItem.TryGetValue(
-                                    key,
-                                    out var beforeQuantity)
-                                    ? beforeQuantity
-                                    : 0,
-                                readByItem.TryGetValue(
-                                    key,
-                                    out var readQuantity)
-                                    ? readQuantity
-                                    : 0))
-                        .Where(item =>
-                            item.BeforeQuantity != item.ReadQuantity)
-                        .OrderBy(item =>
-                            item.BaseItemId)
-                        .ThenBy(item =>
-                            item.IsHq)
-                        .ToList();
+                    var readByItem =
+                        sourceSnapshots
+                            .GroupBy(x =>
+                                new
+                                {
+                                    x.BaseItemId,
+                                    x.IsHq
+                                })
+                            .ToDictionary(
+                                group =>
+                                    (group.Key.BaseItemId, group.Key.IsHq),
+                                group =>
+                                    group.Sum(x => x.Quantity));
 
-                pageDiagnostics.Add(
-                    new FreeCompanyPageSyncDiagnostic(
-                        source.OwnerId,
-                        source.Container,
-                        beforeSnapshots.Count,
-                        beforeSnapshots.Sum(x => x.Quantity),
-                        sourceSnapshots.Count,
-                        sourceSnapshots.Sum(x => x.Quantity),
-                        afterSnapshots.Count,
-                        afterSnapshots.Sum(x => x.Quantity),
-                        changedItems));
+                    var changedItems =
+                        beforeByItem.Keys
+                            .Union(readByItem.Keys)
+                            .Select(key =>
+                                new FreeCompanyItemSyncDiagnostic(
+                                    key.BaseItemId,
+                                    key.IsHq,
+                                    beforeByItem.TryGetValue(
+                                        key,
+                                        out var beforeQuantity)
+                                        ? beforeQuantity
+                                        : 0,
+                                    readByItem.TryGetValue(
+                                        key,
+                                        out var readQuantity)
+                                        ? readQuantity
+                                        : 0))
+                            .Where(item =>
+                                item.BeforeQuantity != item.ReadQuantity)
+                            .OrderBy(item =>
+                                item.BaseItemId)
+                            .ThenBy(item =>
+                                item.IsHq)
+                            .ToList();
+
+                    pageDiagnostics.Add(
+                        new FreeCompanyPageSyncDiagnostic(
+                            source.OwnerId,
+                            source.Container,
+                            beforeSnapshots.Count,
+                            beforeSnapshots.Sum(x => x.Quantity),
+                            sourceSnapshots.Count,
+                            sourceSnapshots.Sum(x => x.Quantity),
+                            afterSnapshots.Count,
+                            afterSnapshots.Sum(x => x.Quantity),
+                            changedItems));
+                }
             }
         }
 
