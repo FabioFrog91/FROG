@@ -157,7 +157,7 @@ public sealed unsafe class RetainerListHighlighter
             return null;
 
         var addon =
-            (AtkUnitBase*)addonAddress;
+            (AtkUnitBase*)addonAddress.Address;
 
         if (addon == null)
             return null;
