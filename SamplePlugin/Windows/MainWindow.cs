@@ -25,7 +25,6 @@ public class MainWindow : Window, IDisposable
     private readonly GlobalPlannerCoordinator globalPlannerCoordinator;
     private readonly PlanExecutionRuntime executionRuntime;
     private readonly ExecutionWindow executionWindow;
-    private readonly RetainerRowInspectorWindow retainerRowInspectorWindow;
 
     private RequirementSet? importedRequirementSet;
     private readonly OptimizationSettings optimizationSettings = new();
@@ -40,8 +39,7 @@ public class MainWindow : Window, IDisposable
         ResolverCoordinator resolverCoordinator,
         GlobalPlannerCoordinator globalPlannerCoordinator,
         PlanExecutionRuntime executionRuntime,
-        ExecutionWindow executionWindow,
-        RetainerRowInspectorWindow retainerRowInspectorWindow)
+        ExecutionWindow executionWindow)
         : base("FROG")
     {
         this.plugin = plugin;
@@ -52,7 +50,6 @@ public class MainWindow : Window, IDisposable
         this.globalPlannerCoordinator = globalPlannerCoordinator;
         this.executionRuntime = executionRuntime;
         this.executionWindow = executionWindow;
-        this.retainerRowInspectorWindow = retainerRowInspectorWindow;
 
         SizeConstraints = new WindowSizeConstraints
         {
@@ -1131,13 +1128,6 @@ public class MainWindow : Window, IDisposable
         {
             ImGui.Text(
                 $"Zona: {territoryRow.PlaceName.Value.Name}");
-        }
-
-        ImGui.Spacing();
-
-        if (ImGui.Button("APRI RETAINER ROW INSPECTOR"))
-        {
-            retainerRowInspectorWindow.IsOpen = true;
         }
     }
 
