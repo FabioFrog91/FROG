@@ -19,64 +19,17 @@ public sealed class GlobalTransferPlanner
         ResolutionPolicy resolutionPolicy,
         OptimizationSettings optimizationSettings)
     {
-        Diagnostics.Reset();
-        Diagnostics.Start();
+        var planner =
+            new GlobalAllocationPlanner(
+                actionValidator,
+                planEvaluator,
+                Diagnostics);
 
-        var initialMissing =
-            CalculateMissing(
-                requirements,
-                initialState);
-
-        var initialPlan =
-            new PlannerPlan(
-                initialState,
-                initialState,
-                Array.Empty<PlannerAction>(),
-                initialMissing == 0
-                    ? PlannerPlanResult.Completed
-                    : PlannerPlanResult.CompletedWithMissing,
-                initialMissing);
-
-        var bestPlan =
-            initialPlan;
-
-        var pathStates =
-            new HashSet<string>();
-
-        var memo =
-            new Dictionary<string, List<MemoEntry>>();
-
-        try
-        {
-            Search(
-                requirements,
-                resolutionPolicy,
-                optimizationSettings,
-                initialState,
-                initialPlan,
-                pathStates,
-                memo,
-                0,
-                ref bestPlan);
-
-            var missing =
-                CalculateMissing(
-                    requirements,
-                    bestPlan.FinalState);
-
-            return bestPlan.WithResult(
-                missing == 0
-                    ? PlannerPlanResult.Completed
-                    : PlannerPlanResult.CompletedWithMissing,
-                missing);
-        }
-        finally
-        {
-            Diagnostics.Complete(
-                memo.Count,
-                memo.Sum(pair =>
-                    pair.Value.Count));
-        }
+        return planner.Plan(
+            requirements,
+            initialState,
+            resolutionPolicy,
+            optimizationSettings);
     }
 
     private void Search(
