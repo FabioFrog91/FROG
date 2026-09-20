@@ -64,10 +64,19 @@ public sealed class CharacterCatalog
 
     public bool TryGet(
         ulong characterId,
-        out CharacterIdentity identity) =>
-        entries.TryGetValue(
-            characterId,
-            out identity!);
+        out CharacterIdentity identity)
+    {
+        if (entries.TryGetValue(
+                characterId,
+                out var existing))
+        {
+            identity = existing;
+            return true;
+        }
+
+        identity = null!;
+        return false;
+    }
 
     public ulong GetParentCharacterId(
         ulong characterId)
