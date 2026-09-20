@@ -17,7 +17,7 @@ public class ConfigWindow : Window, IDisposable
         Flags = ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoScrollbar |
                 ImGuiWindowFlags.NoScrollWithMouse;
 
-        Size = new Vector2(410, 210);
+        Size = new Vector2(430, 240);
         SizeCondition = ImGuiCond.Always;
 
         configuration = plugin.Configuration;
@@ -81,6 +81,19 @@ public class ConfigWindow : Window, IDisposable
         {
             configuration.EnableInventoryExecutionHighlight =
                 enableInventoryHighlight;
+
+            configuration.Save();
+        }
+
+        var enableQuantityOverlay =
+            configuration.EnableExecutionQuantityOverlay;
+
+        if (ImGui.Checkbox(
+                "Show quantity badge near highlighted slots",
+                ref enableQuantityOverlay))
+        {
+            configuration.EnableExecutionQuantityOverlay =
+                enableQuantityOverlay;
 
             configuration.Save();
         }
