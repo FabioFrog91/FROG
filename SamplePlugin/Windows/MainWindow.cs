@@ -1307,6 +1307,78 @@ public class MainWindow : Window, IDisposable
             ImGui.Text(
                 $"Free Company presenti nell'Index: {freeCompanies}");
         }
+
+        var fcSync =
+            plugin.GetFreeCompanySyncDiagnostics();
+
+        ImGui.Spacing();
+        ImGui.Text("DEBUG FC SYNC");
+        ImGui.Separator();
+
+        ImGui.Text(
+            $"Ultimo tentativo: {(fcSync.ObservedAtUtc.HasValue ? fcSync.ObservedAtUtc.Value.ToString("HH:mm:ss.fff") : "n/a")} UTC");
+
+        ImGui.Text(
+            $"Cassa aperta al sync: {(fcSync.ChestOpen ? "SI" : "NO")}");
+
+        ImGui.Text(
+            $"Read succeeded: {(fcSync.ReadSucceeded ? "SI" : "NO")}");
+
+        ImGui.Text(
+            $"Source lette: {fcSync.SourceCount}");
+
+        ImGui.Text(
+            $"Snapshot FC letti: {fcSync.SnapshotCount}");
+
+        ImGui.Text(
+            $"Quantità FC letta: {fcSync.TotalQuantity}");
+
+        if (ImGui.Button("COPIA DEBUG FC SYNC"))
+        {
+            ImGui.SetClipboardText(
+                BuildFreeCompanySyncDiagnosticsClipboardText(
+                    fcSync));
+        }
+    }
+
+    private static string BuildFreeCompanySyncDiagnosticsClipboardText(
+        FreeCompanySyncDiagnosticsSnapshot diagnostics)
+    {
+        var lines =
+            new List<string>
+            {
+                "FROG DEBUG | FREE COMPANY SYNC",
+                $"GeneratedUtc={DateTime.UtcNow:O}",
+                $"ObservedAtUtc={(diagnostics.ObservedAtUtc.HasValue ? diagnostics.ObservedAtUtc.Value.ToString("O") : "n/a")}",
+                $"ChestOpen={diagnostics.ChestOpen}",
+                $"ReadSucceeded={diagnostics.ReadSucceeded}",
+                $"SourceCount={diagnostics.SourceCount}",
+                $"SnapshotCount={diagnostics.SnapshotCount}",
+                $"TotalQuantity={diagnostics.TotalQuantity}"
+            };
+
+        lines.Add(string.Empty);
+        lines.Add("===== PAGES =====");
+
+        foreach (var page in diagnostics.Pages
+                     .OrderBy(page => page.Container))
+        {
+            lines.Add(
+                string.Join(
+                    "\t",
+                    page.FreeCompanyId,
+                    page.Container,
+                    $"BeforeSnapshots={page.BeforeSnapshotCount}",
+                    $"BeforeQty={page.BeforeQuantity}",
+                    $"ReadSnapshots={page.ReadSnapshotCount}",
+                    $"ReadQty={page.ReadQuantity}",
+                    $"AfterSnapshots={page.AfterSnapshotCount}",
+                    $"AfterQty={page.AfterQuantity}"));
+        }
+
+        return string.Join(
+            Environment.NewLine,
+            lines);
     }
 
     private void DrawSyncDiagnostics()
