@@ -7,19 +7,13 @@ using System.Linq;
 namespace FROG.Core.Inventory;
 
 /// <summary>
-/// Reorders already-selected MOVE actions into the order the player actually
-/// sees in game. This runs after optimization, so it cannot change source
-/// selection, quantities, scoring, missing counts, or search complexity.
-///
-/// Only contiguous MOVE runs are reordered. SWITCH boundaries and route phases
-/// remain intact. When ODR data is unavailable, the original deterministic
-/// physical container/slot ordering is used.
+/// Captures the game's visible inventory order on the framework thread.
+/// The immutable snapshot can then be used safely by the background planner.
 /// </summary>
 public sealed class ExecutionOrderCompiler
 {
     private const uint RetainerContainerFirst = 10000;
     private const uint RetainerContainerLast = 10006;
-    private const int RetainerPhysicalSlotsPerContainer = 25;
 
     private readonly IOdrScanner odrScanner;
 
@@ -29,166 +23,45 @@ public sealed class ExecutionOrderCompiler
         this.odrScanner = odrScanner;
     }
 
-    public PlannerPlan Compile(
-        PlannerPlan plan)
+    public ExecutionOrderSnapshot Capture(
+        IReadOnlyList<InventoryItemSnapshot> inventoryItems)
     {
-        if (plan.Actions.Count < 2)
-            return plan;
+        var displayIndices =
+            new Dictionary<PhysicalStackKey, int>();
 
-        var actions =
-            plan.Actions.ToList();
-
-        var start = 0;
-
-        while (start < actions.Count)
+        foreach (var characterId in inventoryItems
+                     .Where(item =>
+                         item.Storage == StorageType.CharacterInventory)
+                     .Select(item =>
+                         item.OwnerId)
+                     .Distinct())
         {
-            if (actions[start].Type != PlannerActionType.Move)
-            {
-                start++;
-                continue;
-            }
-
-            var end = start + 1;
-
-            while (end < actions.Count &&
-                   actions[end].Type == PlannerActionType.Move &&
-                   IsSameExecutionPhase(
-                       actions[start],
-                       actions[end]))
-            {
-                end++;
-            }
-
-            if (end - start > 1)
-            {
-                var ordered =
-                    actions
-                        .GetRange(
-                            start,
-                            end - start)
-                        .Select((action, originalIndex) =>
-                            new OrderedAction(
-                                action,
-                                originalIndex,
-                                GetActionOrder(
-                                    plan,
-                                    action)))
-                        .OrderBy(entry =>
-                            entry.Order.IsDisplayOrderAvailable
-                                ? 0
-                                : 1)
-                        .ThenBy(entry =>
-                            entry.Order.DisplayIndex)
-                        .ThenBy(entry =>
-                            entry.Order.PhysicalContainer)
-                        .ThenBy(entry =>
-                            entry.Order.PhysicalSlot)
-                        .ThenBy(entry =>
-                            entry.Action.BaseItemId)
-                        .ThenBy(entry =>
-                            entry.Action.IsHq)
-                        .ThenBy(entry =>
-                            entry.OriginalIndex)
-                        .Select(entry =>
-                            entry.Action)
-                        .ToList();
-
-                for (var index = 0;
-                     index < ordered.Count;
-                     index++)
-                {
-                    actions[start + index] =
-                        ordered[index];
-                }
-            }
-
-            start = end;
+            CaptureCharacter(
+                characterId,
+                inventoryItems,
+                displayIndices);
         }
 
-        return plan.WithActions(
-            actions);
-    }
-
-    private ActionOrder GetActionOrder(
-        PlannerPlan plan,
-        PlannerAction action)
-    {
-        if (action.Source is null)
-            return ActionOrder.Unavailable;
-
-        var source =
-            action.Source;
-
-        var matchingStacks =
-            plan.InitialState.Items
-                .Where(item =>
-                    item.Storage == source.Storage &&
-                    item.OwnerId == source.OwnerId &&
-                    item.Container == source.Container &&
-                    item.BaseItemId == action.BaseItemId &&
-                    item.IsHq == action.IsHq &&
-                    item.Quantity > 0)
-                .ToList();
-
-        if (matchingStacks.Count == 0)
+        foreach (var retainerGroup in inventoryItems
+                     .Where(item =>
+                         item.Storage == StorageType.Retainer &&
+                         item.ParentCharacterId != 0)
+                     .GroupBy(item =>
+                         new
+                         {
+                             item.OwnerId,
+                             item.ParentCharacterId
+                         }))
         {
-            return new ActionOrder(
-                false,
-                int.MaxValue,
-                source.Container,
-                int.MaxValue);
+            CaptureRetainer(
+                retainerGroup.Key.OwnerId,
+                retainerGroup.Key.ParentCharacterId,
+                retainerGroup,
+                displayIndices);
         }
 
-        if (source.Storage == StorageType.Retainer)
-        {
-            var visible =
-                TryGetRetainerDisplayIndices(
-                    source,
-                    matchingStacks);
-
-            if (visible.Count > 0)
-            {
-                return new ActionOrder(
-                    true,
-                    visible.Min(pair =>
-                        pair.DisplayIndex),
-                    source.Container,
-                    visible
-                        .OrderBy(pair =>
-                            pair.DisplayIndex)
-                        .First()
-                        .PhysicalSlot);
-            }
-        }
-        else if (source.Storage ==
-                 StorageType.CharacterInventory)
-        {
-            var visible =
-                TryGetCharacterDisplayIndices(
-                    source,
-                    matchingStacks);
-
-            if (visible.Count > 0)
-            {
-                return new ActionOrder(
-                    true,
-                    visible.Min(pair =>
-                        pair.DisplayIndex),
-                    source.Container,
-                    visible
-                        .OrderBy(pair =>
-                            pair.DisplayIndex)
-                        .First()
-                        .PhysicalSlot);
-            }
-        }
-
-        return new ActionOrder(
-            false,
-            int.MaxValue,
-            source.Container,
-            matchingStacks.Min(item =>
-                item.Slot));
+        return new ExecutionOrderSnapshot(
+            displayIndices);
     }
 
     public IReadOnlyList<InventoryItemSnapshot> OrderStacksForExecution(
@@ -201,156 +74,107 @@ public sealed class ExecutionOrderCompiler
         if (materialized.Count < 2)
             return materialized;
 
-        if (source.Storage == StorageType.Retainer)
-        {
-            var display =
-                TryGetRetainerDisplayIndices(
-                    source,
-                    materialized);
+        var snapshot =
+            Capture(
+                materialized);
 
-            if (display.Count == materialized.Count)
-            {
-                var indexBySlot =
-                    display.ToDictionary(
-                        pair => pair.PhysicalSlot,
-                        pair => pair.DisplayIndex);
-
-                return materialized
-                    .OrderBy(item =>
-                        indexBySlot[item.Slot])
-                    .ThenBy(item =>
-                        item.Slot)
-                    .ToList();
-            }
-        }
-
-        if (source.Storage == StorageType.CharacterInventory)
-        {
-            var display =
-                TryGetCharacterDisplayIndices(
-                    source,
-                    materialized);
-
-            if (display.Count == materialized.Count)
-            {
-                var indexBySlot =
-                    display.ToDictionary(
-                        pair => pair.PhysicalSlot,
-                        pair => pair.DisplayIndex);
-
-                return materialized
-                    .OrderBy(item =>
-                        indexBySlot[item.Slot])
-                    .ThenBy(item =>
-                        item.Slot)
-                    .ToList();
-            }
-        }
-
-        return materialized
-            .OrderBy(item =>
-                item.Slot)
-            .ToList();
+        return snapshot.OrderStacks(
+            source,
+            materialized);
     }
 
-    private List<DisplayStackIndex> TryGetRetainerDisplayIndices(
-        InventorySource source,
-        IReadOnlyList<InventoryItemSnapshot> stacks)
+    private void CaptureCharacter(
+        ulong characterId,
+        IReadOnlyList<InventoryItemSnapshot> inventoryItems,
+        Dictionary<PhysicalStackKey, int> result)
     {
-        var result =
-            new List<DisplayStackIndex>();
-
-        if (source.Container < RetainerContainerFirst ||
-            source.Container > RetainerContainerLast ||
-            source.ParentCharacterId == 0)
-        {
-            return result;
-        }
-
         var sortOrder =
             odrScanner.GetSortOrder(
-                source.ParentCharacterId);
-
-        if (sortOrder is null ||
-            !sortOrder.RetainerInventories.TryGetValue(
-                source.OwnerId,
-                out var retainerSortOrder))
-        {
-            return result;
-        }
-
-        var coordinates =
-            retainerSortOrder.InventoryCoords;
-
-        var containerIndex =
-            checked(
-                (int)(source.Container -
-                      RetainerContainerFirst));
-
-        foreach (var stack in stacks)
-        {
-            var displayIndex =
-                FindDisplayIndex(
-                    coordinates,
-                    containerIndex,
-                    stack.Slot);
-
-            if (displayIndex >= 0)
-            {
-                result.Add(
-                    new DisplayStackIndex(
-                        stack.Slot,
-                        displayIndex));
-            }
-        }
-
-        return result;
-    }
-
-    private List<DisplayStackIndex> TryGetCharacterDisplayIndices(
-        InventorySource source,
-        IReadOnlyList<InventoryItemSnapshot> stacks)
-    {
-        var result =
-            new List<DisplayStackIndex>();
-
-        var containerIndex =
-            GetCharacterContainerIndex(
-                source.Container);
-
-        if (containerIndex < 0)
-            return result;
-
-        var sortOrder =
-            odrScanner.GetSortOrder(
-                source.OwnerId);
+                characterId);
 
         if (sortOrder is null ||
             !sortOrder.NormalInventories.TryGetValue(
                 "PlayerInventory",
                 out var coordinates))
         {
-            return result;
+            return;
         }
 
-        foreach (var stack in stacks)
+        foreach (var item in inventoryItems.Where(item =>
+                     item.Storage == StorageType.CharacterInventory &&
+                     item.OwnerId == characterId))
         {
+            var containerIndex =
+                GetCharacterContainerIndex(
+                    item.Container);
+
+            if (containerIndex < 0)
+                continue;
+
             var displayIndex =
                 FindDisplayIndex(
                     coordinates,
                     containerIndex,
-                    stack.Slot);
+                    item.Slot);
 
-            if (displayIndex >= 0)
-            {
-                result.Add(
-                    new DisplayStackIndex(
-                        stack.Slot,
-                        displayIndex));
-            }
+            if (displayIndex < 0)
+                continue;
+
+            result[
+                PhysicalStackKey.From(
+                    item)] =
+                displayIndex;
+        }
+    }
+
+    private void CaptureRetainer(
+        ulong retainerId,
+        ulong parentCharacterId,
+        IEnumerable<InventoryItemSnapshot> inventoryItems,
+        Dictionary<PhysicalStackKey, int> result)
+    {
+        var sortOrder =
+            odrScanner.GetSortOrder(
+                parentCharacterId);
+
+        if (sortOrder is null ||
+            !sortOrder.RetainerInventories.TryGetValue(
+                retainerId,
+                out var retainerSortOrder))
+        {
+            return;
         }
 
-        return result;
+        var coordinates =
+            retainerSortOrder.InventoryCoords;
+
+        foreach (var item in inventoryItems)
+        {
+            if (item.Container < RetainerContainerFirst ||
+                item.Container > RetainerContainerLast)
+            {
+                continue;
+            }
+
+            var containerIndex =
+                checked(
+                    (int)(item.Container -
+                          RetainerContainerFirst));
+
+            var displayIndex =
+                FindDisplayIndex(
+                    coordinates,
+                    containerIndex,
+                    item.Slot);
+
+            if (displayIndex < 0)
+                continue;
+
+            result[
+                PhysicalStackKey.From(
+                    item)] =
+                displayIndex;
+        }
     }
 
     private static int FindDisplayIndex(
@@ -385,8 +209,198 @@ public sealed class ExecutionOrderCompiler
             (uint)GameInventoryType.Inventory4 => 3,
             _ => -1
         };
+}
 
-    private static bool IsSameExecutionPhase(
+public sealed class ExecutionOrderSnapshot
+{
+    private readonly IReadOnlyDictionary<PhysicalStackKey, int>
+        displayIndices;
+
+    public ExecutionOrderSnapshot(
+        IReadOnlyDictionary<PhysicalStackKey, int> displayIndices)
+    {
+        this.displayIndices =
+            new Dictionary<PhysicalStackKey, int>(
+                displayIndices);
+    }
+
+    public PlannerPlan Compile(
+        PlannerPlan plan)
+    {
+        if (plan.Actions.Count < 2)
+            return plan;
+
+        var actions =
+            plan.Actions.ToList();
+
+        var start = 0;
+
+        while (start < actions.Count)
+        {
+            if (actions[start].Type != PlannerActionType.Move)
+            {
+                start++;
+                continue;
+            }
+
+            var end = start + 1;
+
+            while (end < actions.Count &&
+                   actions[end].Type == PlannerActionType.Move &&
+                   IsSameExecutionGroup(
+                       actions[start],
+                       actions[end]))
+            {
+                end++;
+            }
+
+            if (end - start > 1)
+            {
+                var ordered =
+                    actions
+                        .GetRange(
+                            start,
+                            end - start)
+                        .Select((action, originalIndex) =>
+                            new OrderedAction(
+                                action,
+                                originalIndex,
+                                GetActionOrder(
+                                    plan,
+                                    action)))
+                        .OrderBy(entry =>
+                            entry.Order.HasVisibleOrder
+                                ? 0
+                                : 1)
+                        .ThenBy(entry =>
+                            entry.Order.DisplayIndex)
+                        .ThenBy(entry =>
+                            entry.Order.PhysicalContainer)
+                        .ThenBy(entry =>
+                            entry.Order.PhysicalSlot)
+                        .ThenBy(entry =>
+                            entry.Action.BaseItemId)
+                        .ThenBy(entry =>
+                            entry.Action.IsHq)
+                        .ThenBy(entry =>
+                            entry.OriginalIndex)
+                        .Select(entry =>
+                            entry.Action)
+                        .ToList();
+
+                for (var index = 0;
+                     index < ordered.Count;
+                     index++)
+                {
+                    actions[start + index] =
+                        ordered[index];
+                }
+            }
+
+            start = end;
+        }
+
+        return plan.WithActions(
+            actions);
+    }
+
+    public IReadOnlyList<InventoryItemSnapshot> OrderStacks(
+        InventorySource source,
+        IEnumerable<InventoryItemSnapshot> stacks)
+    {
+        return stacks
+            .OrderBy(item =>
+                TryGetDisplayIndex(
+                    item,
+                    out var displayIndex)
+                    ? 0
+                    : 1)
+            .ThenBy(item =>
+                TryGetDisplayIndex(
+                    item,
+                    out var displayIndex)
+                    ? displayIndex
+                    : int.MaxValue)
+            .ThenBy(item =>
+                item.Container)
+            .ThenBy(item =>
+                item.Slot)
+            .ToList();
+    }
+
+    private ActionOrder GetActionOrder(
+        PlannerPlan plan,
+        PlannerAction action)
+    {
+        if (action.Source is null)
+            return ActionOrder.Unavailable;
+
+        var source =
+            action.Source;
+
+        var matchingStacks =
+            plan.InitialState.Items
+                .Where(item =>
+                    item.Storage == source.Storage &&
+                    item.OwnerId == source.OwnerId &&
+                    item.Container == source.Container &&
+                    item.BaseItemId == action.BaseItemId &&
+                    item.IsHq == action.IsHq &&
+                    item.Quantity > 0)
+                .ToList();
+
+        if (matchingStacks.Count == 0)
+        {
+            return new ActionOrder(
+                false,
+                int.MaxValue,
+                source.Container,
+                int.MaxValue);
+        }
+
+        var firstVisible =
+            matchingStacks
+                .Select(item =>
+                    new
+                    {
+                        Item = item,
+                        HasVisible =
+                            TryGetDisplayIndex(
+                                item,
+                                out var displayIndex),
+                        DisplayIndex =
+                            TryGetDisplayIndex(
+                                item,
+                                out displayIndex)
+                                ? displayIndex
+                                : int.MaxValue
+                    })
+                .OrderBy(entry =>
+                    entry.HasVisible
+                        ? 0
+                        : 1)
+                .ThenBy(entry =>
+                    entry.DisplayIndex)
+                .ThenBy(entry =>
+                    entry.Item.Slot)
+                .First();
+
+        return new ActionOrder(
+            firstVisible.HasVisible,
+            firstVisible.DisplayIndex,
+            source.Container,
+            firstVisible.Item.Slot);
+    }
+
+    private bool TryGetDisplayIndex(
+        InventoryItemSnapshot item,
+        out int displayIndex) =>
+        displayIndices.TryGetValue(
+            PhysicalStackKey.From(
+                item),
+            out displayIndex);
+
+    private static bool IsSameExecutionGroup(
         PlannerAction first,
         PlannerAction candidate)
     {
@@ -400,26 +414,18 @@ public sealed class ExecutionOrderCompiler
 
         return first.Source.Storage ==
                    candidate.Source.Storage &&
-               GetExecutionOwner(first.Source) ==
-                   GetExecutionOwner(candidate.Source) &&
+               first.Source.OwnerId ==
+                   candidate.Source.OwnerId &&
+               first.Source.ParentCharacterId ==
+                   candidate.Source.ParentCharacterId &&
                first.Destination.Storage ==
                    candidate.Destination.Storage &&
                first.Destination.OwnerId ==
                    candidate.Destination.OwnerId;
     }
 
-    private static ulong GetExecutionOwner(
-        InventorySource source) =>
-        source.Storage == StorageType.Retainer
-            ? source.ParentCharacterId
-            : source.OwnerId;
-
-    private readonly record struct DisplayStackIndex(
-        int PhysicalSlot,
-        int DisplayIndex);
-
     private readonly record struct ActionOrder(
-        bool IsDisplayOrderAvailable,
+        bool HasVisibleOrder,
         int DisplayIndex,
         uint PhysicalContainer,
         int PhysicalSlot)
@@ -436,4 +442,19 @@ public sealed class ExecutionOrderCompiler
         PlannerAction Action,
         int OriginalIndex,
         ActionOrder Order);
+}
+
+public readonly record struct PhysicalStackKey(
+    StorageType Storage,
+    ulong OwnerId,
+    uint Container,
+    int Slot)
+{
+    public static PhysicalStackKey From(
+        InventoryItemSnapshot item) =>
+        new(
+            item.Storage,
+            item.OwnerId,
+            item.Container,
+            item.Slot);
 }
