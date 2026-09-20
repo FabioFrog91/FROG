@@ -96,7 +96,10 @@ public sealed class GlobalTransferPlanner
             BuildStateKey(state);
 
         if (!pathStates.Add(stateKey))
+        {
+            Diagnostics.RecordPathCyclePrune();
             return;
+        }
 
         try
         {
@@ -174,12 +177,17 @@ public sealed class GlobalTransferPlanner
             if (currentMissing == 0)
                 return;
 
+            var generatedAtState = 0;
+            var appliedAtState = 0;
+
             foreach (var action in GenerateActions(
                          requirements,
                          state,
                          resolutionPolicy))
             {
-                Diagnostics.RecordGeneratedAction();
+                generatedAtState++;
+                Diagnostics.RecordGeneratedAction(
+                    action);
 
                 if (!actionValidator.CanApply(
                         state,
@@ -203,6 +211,7 @@ public sealed class GlobalTransferPlanner
                     continue;
                 }
 
+                appliedAtState++;
                 Diagnostics.RecordAppliedAction();
 
                 var nextPlan =
@@ -221,6 +230,10 @@ public sealed class GlobalTransferPlanner
                     depth + 1,
                     ref bestPlan);
             }
+
+            Diagnostics.RecordExpansion(
+                generatedAtState,
+                appliedAtState);
         }
         finally
         {
@@ -980,6 +993,9 @@ public sealed class GlobalTransferPlannerDiagnostics
     private const long MemorySampleInterval = 256;
 
     private readonly Stopwatch stopwatch = new();
+    private readonly object actionBreakdownLock = new();
+    private readonly Dictionary<uint, long> generatedActionsByItem = new();
+    private readonly Dictionary<PlannerActionSourceKey, long> generatedActionsBySource = new();
 
     private long searchCalls;
     private long uniqueStates;
@@ -988,6 +1004,18 @@ public sealed class GlobalTransferPlannerDiagnostics
     private long memoEntries;
     private long generatedActions;
     private long appliedActions;
+    private long moveActionsGenerated;
+    private long switchActionsGenerated;
+    private long expandedStates;
+    private long pathCyclePrunes;
+    private long deadEnds;
+    private long branchingTotal;
+    private long maxBranching;
+    private long statesWithOneAction;
+    private long statesWithTwoActions;
+    private long statesWithThreeToFiveActions;
+    private long statesWithSixToTenActions;
+    private long statesWithMoreThanTenActions;
     private long maxDepth;
     private long elapsedMilliseconds;
     private long managedMemoryStartBytes;
@@ -1028,6 +1056,60 @@ public sealed class GlobalTransferPlannerDiagnostics
         Interlocked.Exchange(
             ref appliedActions,
             0);
+
+        Interlocked.Exchange(
+            ref moveActionsGenerated,
+            0);
+
+        Interlocked.Exchange(
+            ref switchActionsGenerated,
+            0);
+
+        Interlocked.Exchange(
+            ref expandedStates,
+            0);
+
+        Interlocked.Exchange(
+            ref pathCyclePrunes,
+            0);
+
+        Interlocked.Exchange(
+            ref deadEnds,
+            0);
+
+        Interlocked.Exchange(
+            ref branchingTotal,
+            0);
+
+        Interlocked.Exchange(
+            ref maxBranching,
+            0);
+
+        Interlocked.Exchange(
+            ref statesWithOneAction,
+            0);
+
+        Interlocked.Exchange(
+            ref statesWithTwoActions,
+            0);
+
+        Interlocked.Exchange(
+            ref statesWithThreeToFiveActions,
+            0);
+
+        Interlocked.Exchange(
+            ref statesWithSixToTenActions,
+            0);
+
+        Interlocked.Exchange(
+            ref statesWithMoreThanTenActions,
+            0);
+
+        lock (actionBreakdownLock)
+        {
+            generatedActionsByItem.Clear();
+            generatedActionsBySource.Clear();
+        }
 
         Interlocked.Exchange(
             ref maxDepth,
@@ -1130,10 +1212,105 @@ public sealed class GlobalTransferPlannerDiagnostics
             memoEntryDelta);
     }
 
-    internal void RecordGeneratedAction()
+    internal void RecordGeneratedAction(
+        PlannerAction action)
     {
         Interlocked.Increment(
             ref generatedActions);
+
+        if (action.Type == PlannerActionType.SwitchCharacter)
+        {
+            Interlocked.Increment(
+                ref switchActionsGenerated);
+
+            return;
+        }
+
+        Interlocked.Increment(
+            ref moveActionsGenerated);
+
+        lock (actionBreakdownLock)
+        {
+            generatedActionsByItem.TryGetValue(
+                action.BaseItemId,
+                out var itemCount);
+
+            generatedActionsByItem[action.BaseItemId] =
+                itemCount + 1;
+
+            if (action.Source is not null)
+            {
+                var sourceKey =
+                    new PlannerActionSourceKey(
+                        action.Source.Storage,
+                        action.Source.OwnerId,
+                        action.Source.Container,
+                        action.Source.ParentCharacterId);
+
+                generatedActionsBySource.TryGetValue(
+                    sourceKey,
+                    out var sourceCount);
+
+                generatedActionsBySource[sourceKey] =
+                    sourceCount + 1;
+            }
+        }
+    }
+
+    internal void RecordExpansion(
+        int generatedCount,
+        int appliedCount)
+    {
+        Interlocked.Increment(
+            ref expandedStates);
+
+        Interlocked.Add(
+            ref branchingTotal,
+            generatedCount);
+
+        UpdateMaximum(
+            ref maxBranching,
+            generatedCount);
+
+        if (appliedCount == 0)
+        {
+            Interlocked.Increment(
+                ref deadEnds);
+        }
+
+        if (generatedCount == 1)
+        {
+            Interlocked.Increment(
+                ref statesWithOneAction);
+        }
+        else if (generatedCount == 2)
+        {
+            Interlocked.Increment(
+                ref statesWithTwoActions);
+        }
+        else if (generatedCount >= 3 &&
+                 generatedCount <= 5)
+        {
+            Interlocked.Increment(
+                ref statesWithThreeToFiveActions);
+        }
+        else if (generatedCount >= 6 &&
+                 generatedCount <= 10)
+        {
+            Interlocked.Increment(
+                ref statesWithSixToTenActions);
+        }
+        else if (generatedCount > 10)
+        {
+            Interlocked.Increment(
+                ref statesWithMoreThanTenActions);
+        }
+    }
+
+    internal void RecordPathCyclePrune()
+    {
+        Interlocked.Increment(
+            ref pathCyclePrunes);
     }
 
     internal void RecordAppliedAction()
@@ -1174,6 +1351,45 @@ public sealed class GlobalTransferPlannerDiagnostics
 
     public GlobalTransferPlannerDiagnosticsSnapshot Snapshot()
     {
+        PlannerActionItemDiagnostic[] topItems;
+        PlannerActionSourceDiagnostic[] topSources;
+
+        lock (actionBreakdownLock)
+        {
+            topItems =
+                generatedActionsByItem
+                    .OrderByDescending(pair =>
+                        pair.Value)
+                    .ThenBy(pair =>
+                        pair.Key)
+                    .Take(10)
+                    .Select(pair =>
+                        new PlannerActionItemDiagnostic(
+                            pair.Key,
+                            pair.Value))
+                    .ToArray();
+
+            topSources =
+                generatedActionsBySource
+                    .OrderByDescending(pair =>
+                        pair.Value)
+                    .ThenBy(pair =>
+                        pair.Key.Storage)
+                    .ThenBy(pair =>
+                        pair.Key.OwnerId)
+                    .ThenBy(pair =>
+                        pair.Key.Container)
+                    .Take(10)
+                    .Select(pair =>
+                        new PlannerActionSourceDiagnostic(
+                            pair.Key.Storage,
+                            pair.Key.OwnerId,
+                            pair.Key.Container,
+                            pair.Key.ParentCharacterId,
+                            pair.Value))
+                    .ToArray();
+        }
+
         return new GlobalTransferPlannerDiagnosticsSnapshot(
             SearchCalls:
                 Interlocked.Read(
@@ -1196,6 +1412,46 @@ public sealed class GlobalTransferPlannerDiagnostics
             AppliedActions:
                 Interlocked.Read(
                     ref appliedActions),
+            MoveActionsGenerated:
+                Interlocked.Read(
+                    ref moveActionsGenerated),
+            SwitchActionsGenerated:
+                Interlocked.Read(
+                    ref switchActionsGenerated),
+            ExpandedStates:
+                Interlocked.Read(
+                    ref expandedStates),
+            PathCyclePrunes:
+                Interlocked.Read(
+                    ref pathCyclePrunes),
+            DeadEnds:
+                Interlocked.Read(
+                    ref deadEnds),
+            BranchingTotal:
+                Interlocked.Read(
+                    ref branchingTotal),
+            MaxBranching:
+                Interlocked.Read(
+                    ref maxBranching),
+            StatesWithOneAction:
+                Interlocked.Read(
+                    ref statesWithOneAction),
+            StatesWithTwoActions:
+                Interlocked.Read(
+                    ref statesWithTwoActions),
+            StatesWithThreeToFiveActions:
+                Interlocked.Read(
+                    ref statesWithThreeToFiveActions),
+            StatesWithSixToTenActions:
+                Interlocked.Read(
+                    ref statesWithSixToTenActions),
+            StatesWithMoreThanTenActions:
+                Interlocked.Read(
+                    ref statesWithMoreThanTenActions),
+            TopItems:
+                topItems,
+            TopSources:
+                topSources,
             MaxDepth:
                 Interlocked.Read(
                     ref maxDepth),
@@ -1251,6 +1507,12 @@ public sealed class GlobalTransferPlannerDiagnostics
                 currentAllocated - startAllocated));
     }
 
+    private readonly record struct PlannerActionSourceKey(
+        StorageType Storage,
+        ulong OwnerId,
+        uint Container,
+        ulong ParentCharacterId);
+
     private static void UpdateMaximum(
         ref long target,
         long candidate)
@@ -1275,6 +1537,17 @@ public sealed class GlobalTransferPlannerDiagnostics
     }
 }
 
+public sealed record PlannerActionItemDiagnostic(
+    uint BaseItemId,
+    long GeneratedActions);
+
+public sealed record PlannerActionSourceDiagnostic(
+    StorageType Storage,
+    ulong OwnerId,
+    uint Container,
+    ulong ParentCharacterId,
+    long GeneratedActions);
+
 public sealed record GlobalTransferPlannerDiagnosticsSnapshot(
     long SearchCalls,
     long UniqueStates,
@@ -1283,6 +1556,20 @@ public sealed record GlobalTransferPlannerDiagnosticsSnapshot(
     long MemoEntries,
     long GeneratedActions,
     long AppliedActions,
+    long MoveActionsGenerated,
+    long SwitchActionsGenerated,
+    long ExpandedStates,
+    long PathCyclePrunes,
+    long DeadEnds,
+    long BranchingTotal,
+    long MaxBranching,
+    long StatesWithOneAction,
+    long StatesWithTwoActions,
+    long StatesWithThreeToFiveActions,
+    long StatesWithSixToTenActions,
+    long StatesWithMoreThanTenActions,
+    IReadOnlyList<PlannerActionItemDiagnostic> TopItems,
+    IReadOnlyList<PlannerActionSourceDiagnostic> TopSources,
     long MaxDepth,
     long ElapsedMilliseconds,
     long ManagedMemoryStartBytes,
