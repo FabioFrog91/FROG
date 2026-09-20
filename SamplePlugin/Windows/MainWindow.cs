@@ -1348,6 +1348,15 @@ public class MainWindow : Window, IDisposable
                 BuildFreeCompanySyncDiagnosticsHistoryClipboardText(
                     plugin.GetFreeCompanySyncDiagnosticsHistory()));
         }
+
+        ImGui.SameLine();
+
+        if (ImGui.Button("COPIA AUDIT INDEX FC"))
+        {
+            ImGui.SetClipboardText(
+                BuildInventoryIndexAuditClipboardText(
+                    plugin.InventoryIndex.AuditHistory));
+        }
     }
 
     private static string BuildFreeCompanySyncDiagnosticsClipboardText(
@@ -1442,6 +1451,67 @@ public class MainWindow : Window, IDisposable
                             $"BeforeQty={item.BeforeQuantity}",
                             $"ReadQty={item.ReadQuantity}"));
                 }
+            }
+        }
+
+        return string.Join(
+            Environment.NewLine,
+            lines);
+    }
+
+    private static string BuildInventoryIndexAuditClipboardText(
+        IReadOnlyList<InventoryIndexAuditEntry> history)
+    {
+        var lines =
+            new List<string>
+            {
+                "FROG DEBUG | INVENTORY INDEX FC AUDIT",
+                $"GeneratedUtc={DateTime.UtcNow:O}",
+                $"Entries={history.Count}"
+            };
+
+        foreach (var entry in history)
+        {
+            lines.Add(string.Empty);
+            lines.Add(
+                $"===== {entry.AtUtc:O} | {entry.Operation} =====");
+
+            var beforeByPage =
+                entry.BeforeFreeCompanyPages
+                    .ToDictionary(
+                        page =>
+                            (page.FreeCompanyId, page.Container));
+
+            var afterByPage =
+                entry.FreeCompanyPages
+                    .ToDictionary(
+                        page =>
+                            (page.FreeCompanyId, page.Container));
+
+            foreach (var key in beforeByPage.Keys
+                         .Union(afterByPage.Keys)
+                         .OrderBy(key =>
+                             key.FreeCompanyId)
+                         .ThenBy(key =>
+                             key.Container))
+            {
+                beforeByPage.TryGetValue(
+                    key,
+                    out var before);
+
+                afterByPage.TryGetValue(
+                    key,
+                    out var after);
+
+                lines.Add(
+                    string.Join(
+                        "\t",
+                        key.FreeCompanyId,
+                        key.Container,
+                        $"BeforeSnapshots={before?.SnapshotCount ?? 0}",
+                        $"BeforeQty={before?.Quantity ?? 0}",
+                        $"AfterSnapshots={after?.SnapshotCount ?? 0}",
+                        $"AfterQty={after?.Quantity ?? 0}"));
             }
         }
 
