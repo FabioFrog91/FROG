@@ -14,6 +14,8 @@ public sealed class ExecutionOrderCompiler
 {
     private const uint RetainerContainerFirst = 10000;
     private const uint RetainerContainerLast = 10006;
+    private const int CharacterInventorySlotCount = 4 * 35;
+    private const int RetainerInventorySlotCount = 7 * 25;
 
     private readonly IOdrScanner odrScanner;
 
@@ -95,7 +97,8 @@ public sealed class ExecutionOrderCompiler
         if (sortOrder is null ||
             !sortOrder.NormalInventories.TryGetValue(
                 "PlayerInventory",
-                out var coordinates))
+                out var coordinates) ||
+            coordinates.Count != CharacterInventorySlotCount)
         {
             return;
         }
@@ -147,6 +150,9 @@ public sealed class ExecutionOrderCompiler
 
         var coordinates =
             retainerSortOrder.InventoryCoords;
+
+        if (coordinates.Count != RetainerInventorySlotCount)
+            return;
 
         foreach (var item in inventoryItems)
         {
@@ -233,6 +239,9 @@ public sealed class ExecutionOrderSnapshot
         var actions =
             plan.Actions.ToList();
 
+        var consumedBySource =
+            new Dictionary<ActionConsumptionKey, int>();
+
         var start = 0;
 
         while (start < actions.Count)
@@ -256,37 +265,70 @@ public sealed class ExecutionOrderSnapshot
 
             if (end - start > 1)
             {
-                var ordered =
+                var consumedInsideGroup =
+                    new Dictionary<ActionConsumptionKey, int>();
+
+                var candidates =
                     actions
                         .GetRange(
                             start,
                             end - start)
                         .Select((action, originalIndex) =>
-                            new OrderedAction(
+                        {
+                            var key =
+                                ActionConsumptionKey.From(
+                                    action);
+
+                            var quantityToSkip =
+                                GetConsumedQuantity(
+                                    consumedBySource,
+                                    key) +
+                                GetConsumedQuantity(
+                                    consumedInsideGroup,
+                                    key);
+
+                            AddConsumedQuantity(
+                                consumedInsideGroup,
+                                key,
+                                action.Quantity);
+
+                            return new OrderedAction(
                                 action,
                                 originalIndex,
                                 GetActionOrder(
                                     plan,
-                                    action)))
-                        .OrderBy(entry =>
-                            entry.Order.HasVisibleOrder
-                                ? 0
-                                : 1)
-                        .ThenBy(entry =>
-                            entry.Order.DisplayIndex)
-                        .ThenBy(entry =>
-                            entry.Order.PhysicalContainer)
-                        .ThenBy(entry =>
-                            entry.Order.PhysicalSlot)
-                        .ThenBy(entry =>
-                            entry.Action.BaseItemId)
-                        .ThenBy(entry =>
-                            entry.Action.IsHq)
-                        .ThenBy(entry =>
-                            entry.OriginalIndex)
-                        .Select(entry =>
-                            entry.Action)
+                                    action,
+                                    quantityToSkip));
+                        })
                         .ToList();
+
+                var hasCompleteVisibleOrder =
+                    candidates.All(entry =>
+                        entry.Order.HasVisibleOrder);
+
+                var ordered =
+                    (hasCompleteVisibleOrder
+                        ? candidates
+                            .OrderBy(entry =>
+                                entry.Order.DisplayIndex)
+                            .ThenBy(entry =>
+                                entry.Order.PhysicalContainer)
+                            .ThenBy(entry =>
+                                entry.Order.PhysicalSlot)
+                        : candidates
+                            .OrderBy(entry =>
+                                entry.Order.PhysicalContainer)
+                            .ThenBy(entry =>
+                                entry.Order.PhysicalSlot))
+                    .ThenBy(entry =>
+                        entry.Action.BaseItemId)
+                    .ThenBy(entry =>
+                        entry.Action.IsHq)
+                    .ThenBy(entry =>
+                        entry.OriginalIndex)
+                    .Select(entry =>
+                        entry.Action)
+                    .ToList();
 
                 for (var index = 0;
                      index < ordered.Count;
@@ -295,6 +337,20 @@ public sealed class ExecutionOrderSnapshot
                     actions[start + index] =
                         ordered[index];
                 }
+            }
+
+            for (var index = start;
+                 index < end;
+                 index++)
+            {
+                var action =
+                    actions[index];
+
+                AddConsumedQuantity(
+                    consumedBySource,
+                    ActionConsumptionKey.From(
+                        action),
+                    action.Quantity);
             }
 
             start = end;
@@ -308,20 +364,32 @@ public sealed class ExecutionOrderSnapshot
         InventorySource source,
         IEnumerable<InventoryItemSnapshot> stacks)
     {
-        return stacks
+        var materialized =
+            stacks.ToList();
+
+        var hasCompleteVisibleOrder =
+            materialized.Count > 0 &&
+            materialized.All(item =>
+                TryGetDisplayIndex(
+                    item,
+                    out _));
+
+        if (hasCompleteVisibleOrder)
+        {
+            return materialized
+                .OrderBy(item =>
+                    displayIndices[
+                        PhysicalStackKey.From(
+                            item)])
+                .ThenBy(item =>
+                    item.Container)
+                .ThenBy(item =>
+                    item.Slot)
+                .ToList();
+        }
+
+        return materialized
             .OrderBy(item =>
-                TryGetDisplayIndex(
-                    item,
-                    out var displayIndex)
-                    ? 0
-                    : 1)
-            .ThenBy(item =>
-                TryGetDisplayIndex(
-                    item,
-                    out var displayIndex)
-                    ? displayIndex
-                    : int.MaxValue)
-            .ThenBy(item =>
                 item.Container)
             .ThenBy(item =>
                 item.Slot)
@@ -330,7 +398,8 @@ public sealed class ExecutionOrderSnapshot
 
     private ActionOrder GetActionOrder(
         PlannerPlan plan,
-        PlannerAction action)
+        PlannerAction action,
+        int quantityToSkip)
     {
         if (action.Source is null)
             return ActionOrder.Unavailable;
@@ -358,42 +427,88 @@ public sealed class ExecutionOrderSnapshot
                 int.MaxValue);
         }
 
-        var firstVisible =
-            matchingStacks
-                .Select(item =>
-                    CreateStackOrder(
-                        item))
-                .OrderBy(entry =>
-                    entry.HasVisibleOrder
-                        ? 0
-                        : 1)
-                .ThenBy(entry =>
-                    entry.DisplayIndex)
-                .ThenBy(entry =>
-                    entry.Item.Slot)
-                .First();
+        var hasCompleteVisibleOrder =
+            matchingStacks.All(item =>
+                TryGetDisplayIndex(
+                    item,
+                    out _));
 
-        return new ActionOrder(
-            firstVisible.HasVisibleOrder,
-            firstVisible.DisplayIndex,
-            source.Container,
-            firstVisible.Item.Slot);
-    }
+        var orderedStacks =
+            hasCompleteVisibleOrder
+                ? matchingStacks
+                    .OrderBy(item =>
+                        displayIndices[
+                            PhysicalStackKey.From(
+                                item)])
+                    .ThenBy(item =>
+                        item.Slot)
+                : matchingStacks
+                    .OrderBy(item =>
+                        item.Container)
+                    .ThenBy(item =>
+                        item.Slot);
 
-    private StackOrder CreateStackOrder(
-        InventoryItemSnapshot item)
-    {
+        InventoryItemSnapshot? firstConsumedStack = null;
+
+        foreach (var stack in orderedStacks)
+        {
+            if (quantityToSkip >= stack.Quantity)
+            {
+                quantityToSkip -=
+                    stack.Quantity;
+
+                continue;
+            }
+
+            firstConsumedStack =
+                stack;
+
+            break;
+        }
+
+        if (firstConsumedStack is null)
+        {
+            return new ActionOrder(
+                false,
+                int.MaxValue,
+                source.Container,
+                int.MaxValue);
+        }
+
         var hasVisibleOrder =
+            hasCompleteVisibleOrder &&
             TryGetDisplayIndex(
-                item,
+                firstConsumedStack,
                 out var displayIndex);
 
-        return new StackOrder(
-            item,
+        return new ActionOrder(
             hasVisibleOrder,
             hasVisibleOrder
                 ? displayIndex
-                : int.MaxValue);
+                : int.MaxValue,
+            source.Container,
+            firstConsumedStack.Slot);
+    }
+
+    private static int GetConsumedQuantity(
+        Dictionary<ActionConsumptionKey, int> consumed,
+        ActionConsumptionKey key) =>
+        consumed.TryGetValue(
+            key,
+            out var quantity)
+            ? quantity
+            : 0;
+
+    private static void AddConsumedQuantity(
+        Dictionary<ActionConsumptionKey, int> consumed,
+        ActionConsumptionKey key,
+        int quantity)
+    {
+        consumed[key] =
+            GetConsumedQuantity(
+                consumed,
+                key) +
+            quantity;
     }
 
     private bool TryGetDisplayIndex(
@@ -416,6 +531,10 @@ public sealed class ExecutionOrderSnapshot
             return false;
         }
 
+        // Source.Container is intentionally not compared: physical pages of
+        // the same inventory are precisely what this post-compiler orders.
+        // The storage owners and route layer must still match, so no move is
+        // allowed to cross a switch or a Retainer -> Inventory -> FC boundary.
         return first.Source.Storage ==
                    candidate.Source.Storage &&
                first.Source.OwnerId ==
@@ -425,13 +544,29 @@ public sealed class ExecutionOrderSnapshot
                first.Destination.Storage ==
                    candidate.Destination.Storage &&
                first.Destination.OwnerId ==
-                   candidate.Destination.OwnerId;
+                   candidate.Destination.OwnerId &&
+               first.Destination.ParentCharacterId ==
+                   candidate.Destination.ParentCharacterId;
     }
 
-    private readonly record struct StackOrder(
-        InventoryItemSnapshot Item,
-        bool HasVisibleOrder,
-        int DisplayIndex);
+    private readonly record struct ActionConsumptionKey(
+        StorageType Storage,
+        ulong OwnerId,
+        uint Container,
+        ulong ParentCharacterId,
+        uint BaseItemId,
+        bool IsHq)
+    {
+        public static ActionConsumptionKey From(
+            PlannerAction action) =>
+            new(
+                action.Source!.Storage,
+                action.Source.OwnerId,
+                action.Source.Container,
+                action.Source.ParentCharacterId,
+                action.BaseItemId,
+                action.IsHq);
+    }
 
     private readonly record struct ActionOrder(
         bool HasVisibleOrder,

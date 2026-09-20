@@ -31,11 +31,14 @@ public sealed class CharacterDisplayLocator
     private const int VisibleSlotsPerPage = 35;
 
     private readonly IOdrScanner odrScanner;
+    private readonly ExecutionOrderCompiler executionOrderCompiler;
 
     public CharacterDisplayLocator(
-        IOdrScanner odrScanner)
+        IOdrScanner odrScanner,
+        ExecutionOrderCompiler executionOrderCompiler)
     {
         this.odrScanner = odrScanner;
+        this.executionOrderCompiler = executionOrderCompiler;
     }
 
     public CharacterDisplayLocation LocateSource(
@@ -96,29 +99,16 @@ public sealed class CharacterDisplayLocator
                     previous.Quantity);
 
         var matchingStacks =
-            plan.InitialState.Items
+            executionOrderCompiler.OrderStacksForExecution(
+                source,
+                plan.InitialState.Items
                 .Where(item =>
                     item.Storage == source.Storage &&
                     item.OwnerId == source.OwnerId &&
                     item.Container == source.Container &&
                     item.BaseItemId == action.BaseItemId &&
                     item.IsHq == action.IsHq &&
-                    item.Quantity > 0)
-                .OrderBy(item =>
-                {
-                    var displayIndex =
-                        FindDisplayIndex(
-                            coordinates,
-                            physicalContainerIndex,
-                            item.Slot);
-
-                    return displayIndex >= 0
-                        ? displayIndex
-                        : int.MaxValue;
-                })
-                .ThenBy(item =>
-                    item.Slot)
-                .ToList();
+                    item.Quantity > 0));
 
         var remaining =
             action.Quantity;
