@@ -825,6 +825,11 @@ public class MainWindow : Window, IDisposable
             {
                 planExecutionSession.TryMarkCurrentVerified();
                 planExecutionBaseline = null;
+
+                ImGui.Text(
+                    "Azione verificata. Passaggio alla successiva.");
+
+                return;
             }
         }
 
