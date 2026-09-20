@@ -12,6 +12,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Numerics;
+using System.Threading.Tasks;
 
 namespace FROG.Windows;
 
@@ -23,6 +24,8 @@ public class MainWindow : Window, IDisposable
 
     private RequirementSet? importedRequirementSet;
     private PlannerPlan? globalPlannerPlan;
+    private Task<PlannerPlan>? globalPlannerTask;
+    private string? globalPlannerError;
     private readonly OptimizationSettings optimizationSettings = new();
 
     private int searchItemId;
@@ -145,6 +148,7 @@ public class MainWindow : Window, IDisposable
                 importer.Import(text);
 
             globalPlannerPlan = null;
+            globalPlannerError = null;
         }
 
         if (importedRequirementSet == null)
@@ -410,39 +414,44 @@ public class MainWindow : Window, IDisposable
         RequirementSet requirementSet,
         ResolutionPolicy resolutionPolicy)
     {
+        TryCompleteGlobalPlannerTask();
+
         ImGui.Text("GLOBAL TRANSFER PLANNER");
         ImGui.Separator();
 
         ImGui.TextWrapped(
             "Planner globale: risolve l'intera lista considerando inventario principale, retainer, FC e cambi personaggio.");
 
-        if (ImGui.Button("CALCOLA PIANO GLOBALE"))
+        if (globalPlannerTask == null)
         {
-            var mainCharacterId =
-                Plugin.PlayerState.IsLoaded
-                    ? Plugin.PlayerState.ContentId
-                    : 0;
-
-            if (mainCharacterId != 0)
+            if (ImGui.Button("CALCOLA PIANO GLOBALE"))
             {
-                var state =
-                    new PlannerState(
-                        mainCharacterId,
-                        mainCharacterId,
-                        plugin.InventoryIndex.Items);
-
-                globalPlannerPlan =
-                    new GlobalTransferPlanner().Plan(
-                        requirementSet,
-                        state,
-                        resolutionPolicy,
-                        optimizationSettings);
+                StartGlobalPlannerTask(
+                    requirementSet,
+                    resolutionPolicy);
             }
+        }
+        else
+        {
+            ImGui.Text("Calcolo...");
+        }
+
+        if (!string.IsNullOrWhiteSpace(globalPlannerError))
+        {
+            ImGui.TextWrapped(
+                $"Errore planner: {globalPlannerError}");
+
+            return;
         }
 
         if (globalPlannerPlan == null)
         {
-            ImGui.Text("Nessun piano globale calcolato.");
+            if (globalPlannerTask == null)
+            {
+                ImGui.Text(
+                    "Nessun piano globale calcolato.");
+            }
+
             return;
         }
 
@@ -501,6 +510,87 @@ public class MainWindow : Window, IDisposable
                 $"Qty {action.Quantity} | " +
                 $"{GetSourceName(action.Source)} -> " +
                 $"{GetSourceName(action.Destination)}");
+        }
+    }
+
+    private void StartGlobalPlannerTask(
+        RequirementSet requirementSet,
+        ResolutionPolicy resolutionPolicy)
+    {
+        if (globalPlannerTask != null)
+            return;
+
+        var mainCharacterId =
+            Plugin.PlayerState.IsLoaded
+                ? Plugin.PlayerState.ContentId
+                : 0;
+
+        if (mainCharacterId == 0)
+            return;
+
+        var requirementSetSnapshot =
+            new RequirementSet(
+                requirementSet.Name);
+
+        foreach (var requirement in requirementSet.Requirements)
+        {
+            requirementSetSnapshot.Add(
+                requirement);
+        }
+
+        var stateSnapshot =
+            new PlannerState(
+                mainCharacterId,
+                mainCharacterId,
+                plugin.InventoryIndex.Items.ToList());
+
+        var resolutionPolicySnapshot =
+            new ResolutionPolicy(
+                resolutionPolicy.Sources.ToList(),
+                mainCharacterId);
+
+        var optimizationSettingsSnapshot =
+            new OptimizationSettings(
+                optimizationSettings.Criteria.ToList());
+
+        globalPlannerPlan = null;
+        globalPlannerError = null;
+
+        globalPlannerTask =
+            Task.Run(
+                () =>
+                    new GlobalTransferPlanner().Plan(
+                        requirementSetSnapshot,
+                        stateSnapshot,
+                        resolutionPolicySnapshot,
+                        optimizationSettingsSnapshot));
+    }
+
+    private void TryCompleteGlobalPlannerTask()
+    {
+        if (globalPlannerTask == null ||
+            !globalPlannerTask.IsCompleted)
+        {
+            return;
+        }
+
+        try
+        {
+            globalPlannerPlan =
+                globalPlannerTask
+                    .GetAwaiter()
+                    .GetResult();
+
+            globalPlannerError = null;
+        }
+        catch (Exception ex)
+        {
+            globalPlannerPlan = null;
+            globalPlannerError = ex.Message;
+        }
+        finally
+        {
+            globalPlannerTask = null;
         }
     }
 
