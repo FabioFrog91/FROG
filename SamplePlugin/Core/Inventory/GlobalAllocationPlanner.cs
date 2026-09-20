@@ -952,7 +952,7 @@ internal sealed class GlobalAllocationPlanner
             initialState;
 
         var currentCharacterId =
-            state.MainCharacterId;
+            state.CurrentCharacterId;
 
         var mainRetainerAllocations =
             allocations
@@ -969,7 +969,11 @@ internal sealed class GlobalAllocationPlanner
         if (mainCharacterInventory is null)
             return null;
 
-        if (!AppendGroupedMoves(
+        var mainRetainersProcessed =
+            currentCharacterId == state.MainCharacterId;
+
+        if (mainRetainersProcessed &&
+            !AppendGroupedMoves(
                 ref state,
                 actions,
                 mainRetainerAllocations,
@@ -989,6 +993,10 @@ internal sealed class GlobalAllocationPlanner
                     characterId != state.MainCharacterId)
                 .Distinct()
                 .OrderBy(characterId =>
+                    characterId == currentCharacterId
+                        ? 0
+                        : 1)
+                .ThenBy(characterId =>
                     GetCharacterPriority(
                         allocations,
                         resolutionPolicy,
@@ -1002,7 +1010,8 @@ internal sealed class GlobalAllocationPlanner
 
         foreach (var characterId in alternateCharacterIds)
         {
-            if (!AppendSwitch(
+            if (currentCharacterId != characterId &&
+                !AppendSwitch(
                     ref state,
                     actions,
                     currentCharacterId,
@@ -1171,6 +1180,17 @@ internal sealed class GlobalAllocationPlanner
 
             currentCharacterId =
                 state.MainCharacterId;
+        }
+
+        if (!mainRetainersProcessed &&
+            !AppendGroupedMoves(
+                ref state,
+                actions,
+                mainRetainerAllocations,
+                _ =>
+                    mainCharacterInventory))
+        {
+            return null;
         }
 
         var freeCompanyMoves =

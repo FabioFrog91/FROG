@@ -1,3 +1,5 @@
+using System;
+
 namespace FROG.Core.Inventory;
 
 public enum PlanExecutionCoordinatorStatus
@@ -25,6 +27,8 @@ public readonly record struct PlanExecutionCoordinatorSnapshot(
 /// </summary>
 public sealed class PlanExecutionCoordinator
 {
+    private const int MismatchSettleIntervalMs = 250;
+
     private readonly PlanExecutionVerifier verifier = new();
     private readonly PlanExecutionReconciler reconciler = new();
 
@@ -32,6 +36,8 @@ public sealed class PlanExecutionCoordinator
     private PlanExecutionBaseline? baseline;
     private PlanExecutionVerificationResult? verification;
     private PlanExecutionReconciliationResult? reconciliation;
+    private PlanExecutionObservation? pendingMismatchObservation;
+    private long pendingMismatchSinceMs;
 
     public PlanExecutionSession? Session =>
         session;
@@ -46,6 +52,7 @@ public sealed class PlanExecutionCoordinator
         baseline = null;
         verification = null;
         reconciliation = null;
+        ResetPendingMismatch();
     }
 
     public void Reset()
@@ -56,6 +63,7 @@ public sealed class PlanExecutionCoordinator
         baseline = null;
         verification = null;
         reconciliation = null;
+        ResetPendingMismatch();
     }
 
     public void Clear()
@@ -64,6 +72,7 @@ public sealed class PlanExecutionCoordinator
         baseline = null;
         verification = null;
         reconciliation = null;
+        ResetPendingMismatch();
     }
 
     public bool TryMarkCurrentExecuted(
@@ -149,6 +158,15 @@ public sealed class PlanExecutionCoordinator
                         action,
                         inventoryIndex);
 
+                if (verification.Status ==
+                        PlanExecutionVerificationStatus.Mismatch &&
+                    !IsMismatchObservationSettled(
+                        observation))
+                {
+                    return Snapshot(
+                        PlanExecutionCoordinatorStatus.WaitingForObservation);
+                }
+
                 reconciliation =
                     reconciler.Reconcile(
                         action,
@@ -206,6 +224,7 @@ public sealed class PlanExecutionCoordinator
             baseline = null;
             verification = null;
             reconciliation = null;
+            ResetPendingMismatch();
 
             return Snapshot(
                 session.IsComplete
@@ -242,6 +261,34 @@ public sealed class PlanExecutionCoordinator
 
         verification = null;
         reconciliation = null;
+        ResetPendingMismatch();
+    }
+
+    private bool IsMismatchObservationSettled(
+        PlanExecutionObservation observation)
+    {
+        var nowMs =
+            Environment.TickCount64;
+
+        if (pendingMismatchObservation is null ||
+            pendingMismatchObservation.SourceQuantity !=
+                observation.SourceQuantity ||
+            pendingMismatchObservation.DestinationQuantity !=
+                observation.DestinationQuantity)
+        {
+            pendingMismatchObservation = observation;
+            pendingMismatchSinceMs = nowMs;
+            return false;
+        }
+
+        return nowMs - pendingMismatchSinceMs >=
+            MismatchSettleIntervalMs;
+    }
+
+    private void ResetPendingMismatch()
+    {
+        pendingMismatchObservation = null;
+        pendingMismatchSinceMs = 0;
     }
 
     private PlanExecutionCoordinatorSnapshot Snapshot(

@@ -157,6 +157,15 @@ public sealed class PlanExecutionVerifier
                 action.IsHq);
         }
 
+        if (action.Destination.Storage ==
+            StorageType.FreeCompanyChest)
+        {
+            return inventoryIndex.GetFreeCompanyQuantity(
+                action.Destination.OwnerId,
+                action.BaseItemId,
+                action.IsHq);
+        }
+
         return inventoryIndex.GetQuantity(
             action.BaseItemId,
             action.IsHq,
@@ -174,6 +183,13 @@ public sealed class PlanExecutionVerifier
             StorageType.CharacterInventory)
         {
             return inventoryIndex.GetCharacterInventoryObservedAtUtc(
+                action.Destination.OwnerId);
+        }
+
+        if (action.Destination.Storage ==
+            StorageType.FreeCompanyChest)
+        {
+            return inventoryIndex.GetFreeCompanyObservedAtUtc(
                 action.Destination.OwnerId);
         }
 

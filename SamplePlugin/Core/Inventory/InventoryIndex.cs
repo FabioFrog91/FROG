@@ -316,6 +316,26 @@ public sealed class InventoryIndex
         }
     }
 
+    public DateTime? GetFreeCompanyObservedAtUtc(
+        ulong freeCompanyId)
+    {
+        lock (syncLock)
+        {
+            var observations =
+                sourceObservedAtUtc
+                    .Where(entry =>
+                        entry.Key.Storage == StorageType.FreeCompanyChest &&
+                        entry.Key.OwnerId == freeCompanyId)
+                    .Select(entry =>
+                        entry.Value)
+                    .ToList();
+
+            return observations.Count == 0
+                ? null
+                : observations.Max();
+        }
+    }
+
     public int GetCharacterInventoryQuantity(
         ulong characterId,
         uint baseItemId,
@@ -329,6 +349,24 @@ public sealed class InventoryIndex
                     item.IsHq == isHq &&
                     item.Storage == StorageType.CharacterInventory &&
                     item.OwnerId == characterId)
+                .Sum(item =>
+                    item.Quantity);
+        }
+    }
+
+    public int GetFreeCompanyQuantity(
+        ulong freeCompanyId,
+        uint baseItemId,
+        bool isHq)
+    {
+        lock (syncLock)
+        {
+            return items
+                .Where(item =>
+                    item.BaseItemId == baseItemId &&
+                    item.IsHq == isHq &&
+                    item.Storage == StorageType.FreeCompanyChest &&
+                    item.OwnerId == freeCompanyId)
                 .Sum(item =>
                     item.Quantity);
         }
