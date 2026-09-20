@@ -3,7 +3,8 @@ using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Common.Math;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using System;
-using System.Numerics;
+using NumericsVector2 = System.Numerics.Vector2;
+using NumericsVector4 = System.Numerics.Vector4;
 
 namespace FROG.Core.Inventory;
 
@@ -91,12 +92,12 @@ public sealed unsafe class ExecutionQuantityOverlay
                     text);
 
             var padding =
-                new Vector2(
+                new NumericsVector2(
                     4f,
                     2f);
 
             var textPosition =
-                new Vector2(
+                new NumericsVector2(
                     bounds.Pos2.X -
                     textSize.X -
                     padding.X,
@@ -114,7 +115,7 @@ public sealed unsafe class ExecutionQuantityOverlay
 
             var backgroundColour =
                 ImGui.ColorConvertFloat4ToU32(
-                    new Vector4(
+                    new NumericsVector4(
                         0f,
                         0f,
                         0f,
