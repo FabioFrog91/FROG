@@ -25,15 +25,8 @@ public class MainWindow : Window, IDisposable
     private readonly PlannerSourceBuilder plannerSourceBuilder;
 
     private RequirementSet? importedRequirementSet;
-    private PlannerPlan? globalPlannerPlan;
-    private Task<PlannerPlan>? globalPlannerTask;
-    private GlobalTransferPlannerDiagnostics? globalPlannerDiagnostics;
-    private string? globalPlannerError;
+    private readonly GlobalPlannerCoordinator globalPlannerCoordinator = new();
     private readonly PlanExecutionCoordinator planExecutionCoordinator = new();
-    private string? globalPlannerReplanMessage;
-    private bool autoStartExecutionAfterPlannerCompletion;
-    private int? globalPlannerResolverMissingSnapshot;
-    private DateTime? globalPlannerResolverSyncSnapshot;
     private readonly OptimizationSettings optimizationSettings = new();
 
     private RequirementSet? resolverCachedRequirementSet;
@@ -176,9 +169,7 @@ public class MainWindow : Window, IDisposable
             InvalidateResolverCache(
                 resetDiagnostics: true);
 
-            globalPlannerPlan = null;
-            globalPlannerDiagnostics = null;
-            globalPlannerError = null;
+            globalPlannerCoordinator.ClearResult();
             ResetPlanExecutionSession();
         }
 
