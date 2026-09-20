@@ -697,21 +697,65 @@ internal sealed class GlobalAllocationPlanner
             };
         }
 
+        // The physical PlannerAction addresses a source/container, not a
+        // particular slot. Therefore multiple stacks of the same item/quality
+        // inside one source are one optimization capacity. PlannerState.Move
+        // consumes the real stacks in slot order later.
+        var units =
+            candidates
+                .GroupBy(item =>
+                    new
+                    {
+                        item.Storage,
+                        item.OwnerId,
+                        item.Container,
+                        item.IsHq
+                    })
+                .Select(group =>
+                {
+                    var firstItem =
+                        group
+                            .OrderBy(item =>
+                                item.Slot)
+                            .First();
+
+                    return new AllocationUnit(
+                        firstItem,
+                        FindPolicySource(
+                            resolutionPolicy,
+                            firstItem)!,
+                        group.Sum(item =>
+                            item.Quantity));
+                })
+                .Where(unit =>
+                    unit.Source is not null)
+                .OrderBy(unit =>
+                    GetSourcePriority(
+                        resolutionPolicy,
+                        unit.Item))
+                .ThenBy(unit =>
+                    unit.Source.OwnerId)
+                .ThenBy(unit =>
+                    unit.Source.Container)
+                .ThenBy(unit =>
+                    unit.Item.Slot)
+                .ThenBy(unit =>
+                    unit.Item.IsHq)
+                .ToList();
+
         var total =
-            candidates.Sum(item =>
-                item.Quantity);
+            units.Sum(unit =>
+                unit.Quantity);
 
         if (total <= quantity)
         {
             var forced =
-                candidates
-                    .Select(item =>
+                units
+                    .Select(unit =>
                         new AllocationPick(
-                            item,
-                            FindPolicySource(
-                                resolutionPolicy,
-                                item)!,
-                            item.Quantity))
+                            unit.Item,
+                            unit.Source,
+                            unit.Quantity))
                     .ToList();
 
             return new[]
@@ -721,23 +765,22 @@ internal sealed class GlobalAllocationPlanner
         }
 
         var suffix =
-            new int[candidates.Count + 1];
+            new int[units.Count + 1];
 
-        for (var i = candidates.Count - 1;
+        for (var i = units.Count - 1;
              i >= 0;
              i--)
         {
             suffix[i] =
                 suffix[i + 1] +
-                candidates[i].Quantity;
+                units[i].Quantity;
         }
 
         var results =
             new List<IReadOnlyList<AllocationPick>>();
 
         EnumerateAllocationOptions(
-            candidates,
-            resolutionPolicy,
+            units,
             suffix,
             0,
             quantity,
@@ -749,8 +792,7 @@ internal sealed class GlobalAllocationPlanner
     }
 
     private static void EnumerateAllocationOptions(
-        IReadOnlyList<InventoryItemSnapshot> candidates,
-        ResolutionPolicy resolutionPolicy,
+        IReadOnlyList<AllocationUnit> units,
         IReadOnlyList<int> suffix,
         int index,
         int remaining,
@@ -765,49 +807,36 @@ internal sealed class GlobalAllocationPlanner
             return;
         }
 
-        if (index >= candidates.Count ||
+        if (index >= units.Count ||
             suffix[index] < remaining)
         {
             return;
         }
 
-        var item =
-            candidates[index];
+        var unit =
+            units[index];
 
-        // Skip this stack.
         EnumerateAllocationOptions(
-            candidates,
-            resolutionPolicy,
+            units,
             suffix,
             index + 1,
             remaining,
             current,
             results);
 
-        // If this stack participates, consume it fully whenever possible.
-        // At most one stack needs to be partial to hit an exact quantity.
         var used =
             Math.Min(
                 remaining,
-                item.Quantity);
-
-        var source =
-            FindPolicySource(
-                resolutionPolicy,
-                item);
-
-        if (source is null)
-            return;
+                unit.Quantity);
 
         current.Add(
             new AllocationPick(
-                item,
-                source,
+                unit.Item,
+                unit.Source,
                 used));
 
         EnumerateAllocationOptions(
-            candidates,
-            resolutionPolicy,
+            units,
             suffix,
             index + 1,
             remaining - used,
@@ -841,12 +870,10 @@ internal sealed class GlobalAllocationPlanner
                         .ThenBy(pick =>
                             pick.Source.Container)
                         .ThenBy(pick =>
-                            pick.Item.Slot)
-                        .ThenBy(pick =>
                             pick.Item.IsHq)
                         .Select(pick =>
                             $"{pick.Source.Storage}:{pick.Source.OwnerId}:{pick.Source.Container}:" +
-                            $"{pick.Item.Slot}:{pick.Item.IsHq}:{pick.Quantity}"));
+                            $"{pick.Item.IsHq}:{pick.Quantity}"));
 
             if (seen.Add(key))
                 result.Add(option);
@@ -934,14 +961,20 @@ internal sealed class GlobalAllocationPlanner
                     pick.Source.ParentCharacterId == state.MainCharacterId)
                 .ToList();
 
+        var mainCharacterInventory =
+            FindCharacterInventory(
+                resolutionPolicy,
+                state.MainCharacterId);
+
+        if (mainCharacterInventory is null)
+            return null;
+
         if (!AppendGroupedMoves(
                 ref state,
                 actions,
                 mainRetainerAllocations,
-                source =>
-                    FindCharacterInventory(
-                        resolutionPolicy,
-                        state.MainCharacterId)))
+                _ =>
+                    mainCharacterInventory))
         {
             return null;
         }
@@ -1140,20 +1173,12 @@ internal sealed class GlobalAllocationPlanner
                 state.MainCharacterId;
         }
 
-        var mainInventory =
-            FindCharacterInventory(
-                resolutionPolicy,
-                state.MainCharacterId);
-
-        if (mainInventory is null)
-            return null;
-
         var freeCompanyMoves =
             BuildFreeCompanyToMainMoves(
                 resolutionPolicy,
                 reservedFreeCompany,
                 bridgedToFreeCompany,
-                mainInventory);
+                mainCharacterInventory);
 
         if (!AppendMoves(
                 ref state,
@@ -1603,6 +1628,11 @@ internal sealed class GlobalAllocationPlanner
         IReadOnlyList<IReadOnlyList<AllocationPick>> Options);
 
     private sealed record AllocationPick(
+        InventoryItemSnapshot Item,
+        InventorySource Source,
+        int Quantity);
+
+    private sealed record AllocationUnit(
         InventoryItemSnapshot Item,
         InventorySource Source,
         int Quantity);
