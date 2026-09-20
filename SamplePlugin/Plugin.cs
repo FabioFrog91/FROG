@@ -228,6 +228,11 @@ public sealed class Plugin : HostedPlugin
             .SingleInstance();
 
         containerBuilder
+            .RegisterType<ResolverCoordinator>()
+            .AsSelf()
+            .SingleInstance();
+
+        containerBuilder
             .RegisterType<GlobalPlannerCoordinator>()
             .AsSelf()
             .SingleInstance();
@@ -270,6 +275,9 @@ public sealed class Plugin : HostedPlugin
         var retainerDisplayLocator =
             Host.Services.GetRequiredService<RetainerDisplayLocator>();
 
+        var resolverCoordinator =
+            Host.Services.GetRequiredService<ResolverCoordinator>();
+
         var globalPlannerCoordinator =
             Host.Services.GetRequiredService<GlobalPlannerCoordinator>();
 
@@ -299,6 +307,7 @@ public sealed class Plugin : HostedPlugin
                 characterMonitor,
                 CharacterCatalog,
                 retainerDisplayLocator,
+                resolverCoordinator,
                 globalPlannerCoordinator,
                 executionRuntime,
                 ExecutionWindow);
