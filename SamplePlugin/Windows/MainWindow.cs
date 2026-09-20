@@ -735,11 +735,24 @@ public class MainWindow : Window, IDisposable
                 requirement);
         }
 
+        var requiredItemIds =
+            requirementSetSnapshot.Requirements
+                .Select(requirement =>
+                    requirement.BaseItemId)
+                .ToHashSet();
+
+        var plannerItems =
+            plugin.InventoryIndex.Items
+                .Where(item =>
+                    requiredItemIds.Contains(
+                        item.BaseItemId))
+                .ToList();
+
         var stateSnapshot =
             new PlannerState(
                 mainCharacterId,
                 mainCharacterId,
-                plugin.InventoryIndex.Items.ToList());
+                plannerItems);
 
         var resolutionPolicySnapshot =
             new ResolutionPolicy(
