@@ -361,22 +361,10 @@ public sealed class ExecutionOrderSnapshot
         var firstVisible =
             matchingStacks
                 .Select(item =>
-                    new
-                    {
-                        Item = item,
-                        HasVisible =
-                            TryGetDisplayIndex(
-                                item,
-                                out var displayIndex),
-                        DisplayIndex =
-                            TryGetDisplayIndex(
-                                item,
-                                out displayIndex)
-                                ? displayIndex
-                                : int.MaxValue
-                    })
+                    CreateStackOrder(
+                        item))
                 .OrderBy(entry =>
-                    entry.HasVisible
+                    entry.HasVisibleOrder
                         ? 0
                         : 1)
                 .ThenBy(entry =>
@@ -386,10 +374,26 @@ public sealed class ExecutionOrderSnapshot
                 .First();
 
         return new ActionOrder(
-            firstVisible.HasVisible,
+            firstVisible.HasVisibleOrder,
             firstVisible.DisplayIndex,
             source.Container,
             firstVisible.Item.Slot);
+    }
+
+    private StackOrder CreateStackOrder(
+        InventoryItemSnapshot item)
+    {
+        var hasVisibleOrder =
+            TryGetDisplayIndex(
+                item,
+                out var displayIndex);
+
+        return new StackOrder(
+            item,
+            hasVisibleOrder,
+            hasVisibleOrder
+                ? displayIndex
+                : int.MaxValue);
     }
 
     private bool TryGetDisplayIndex(
@@ -423,6 +427,11 @@ public sealed class ExecutionOrderSnapshot
                first.Destination.OwnerId ==
                    candidate.Destination.OwnerId;
     }
+
+    private readonly record struct StackOrder(
+        InventoryItemSnapshot Item,
+        bool HasVisibleOrder,
+        int DisplayIndex);
 
     private readonly record struct ActionOrder(
         bool HasVisibleOrder,
