@@ -460,7 +460,8 @@ public sealed class Plugin : HostedPlugin
 
         InventoryIndex.ReplaceCharacterInventory(
             characterId,
-            allSnapshots);
+            allSnapshots,
+            observedAtUtc);
 
         LastSyncSnapshots = allSnapshots;
 
@@ -494,7 +495,8 @@ public sealed class Plugin : HostedPlugin
 
                 InventoryIndex.ReplaceSource(
                     source,
-                    sourceSnapshots);
+                    sourceSnapshots,
+                    observedAtUtc);
             }
         }
 
@@ -551,7 +553,8 @@ public sealed class Plugin : HostedPlugin
 
         InventoryIndex.ReplaceSource(
             freeCompanySource,
-            freeCompanySnapshots);
+            freeCompanySnapshots,
+            observedAtUtc);
     }
 
     private bool ShouldPromoteFreeCompanyObservation(
