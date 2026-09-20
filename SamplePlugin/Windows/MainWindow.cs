@@ -978,6 +978,27 @@ public class MainWindow : Window, IDisposable
 
     private void StartGlobalPlannerTask(
         RequirementSet requirementSet,
+        ResolutionPolicy resolutionPolicy)
+    {
+        var currentCharacterId =
+            Plugin.PlayerState.IsLoaded
+                ? Plugin.PlayerState.ContentId
+                : 0;
+
+        if (currentCharacterId == 0)
+            return;
+
+        StartGlobalPlannerTask(
+            requirementSet,
+            resolutionPolicy,
+            currentCharacterId,
+            currentCharacterId,
+            replanMessage: null,
+            autoStartExecution: false);
+    }
+
+    private void StartGlobalPlannerTask(
+        RequirementSet requirementSet,
         ResolutionPolicy resolutionPolicy,
         ulong mainCharacterId,
         ulong currentCharacterId,
