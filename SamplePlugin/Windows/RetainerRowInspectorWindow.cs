@@ -85,7 +85,7 @@ public sealed unsafe class RetainerRowInspectorWindow : Window, IDisposable
                 "RetainerList",
                 1);
 
-        if (addonAddress.IsNull)
+        if (addonAddress == IntPtr.Zero)
         {
             lines.Add("RetainerList=NOT_OPEN");
             return string.Join(
