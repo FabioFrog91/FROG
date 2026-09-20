@@ -30,8 +30,10 @@ public class MainWindow : Window, IDisposable
     private string? globalPlannerError;
     private PlanExecutionSession? planExecutionSession;
     private readonly PlanExecutionVerifier planExecutionVerifier = new();
+    private readonly PlanExecutionReconciler planExecutionReconciler = new();
     private PlanExecutionBaseline? planExecutionBaseline;
     private PlanExecutionVerificationResult? planExecutionVerificationResult;
+    private PlanExecutionReconciliationResult? planExecutionReconciliationResult;
     private int? globalPlannerResolverMissingSnapshot;
     private DateTime? globalPlannerResolverSyncSnapshot;
     private readonly OptimizationSettings optimizationSettings = new();
@@ -757,6 +759,7 @@ public class MainWindow : Window, IDisposable
 
                 planExecutionBaseline = null;
                 planExecutionVerificationResult = null;
+                planExecutionReconciliationResult = null;
             }
 
             return;
@@ -803,6 +806,7 @@ public class MainWindow : Window, IDisposable
                     plugin.InventoryIndex);
 
             planExecutionVerificationResult = null;
+            planExecutionReconciliationResult = null;
         }
 
         if (planExecutionSession.IsCurrentActionExecuted &&
@@ -825,11 +829,31 @@ public class MainWindow : Window, IDisposable
             {
                 planExecutionSession.TryMarkCurrentVerified();
                 planExecutionBaseline = null;
+                planExecutionReconciliationResult = null;
 
                 ImGui.Text(
                     "Azione verificata. Passaggio alla successiva.");
 
                 return;
+            }
+
+            if (planExecutionVerificationResult.Status ==
+                PlanExecutionVerificationStatus.Mismatch)
+            {
+                var observation =
+                    planExecutionVerifier.Observe(
+                        action,
+                        plugin.InventoryIndex);
+
+                planExecutionReconciliationResult =
+                    planExecutionReconciler.Reconcile(
+                        action,
+                        planExecutionBaseline,
+                        observation);
+            }
+            else
+            {
+                planExecutionReconciliationResult = null;
             }
         }
 
@@ -877,6 +901,21 @@ public class MainWindow : Window, IDisposable
                     $"Verifica: {planExecutionVerificationResult.Status} | " +
                     planExecutionVerificationResult.Message);
             }
+
+            if (planExecutionReconciliationResult != null)
+            {
+                ImGui.TextWrapped(
+                    $"Riconciliazione: {planExecutionReconciliationResult.Status} | " +
+                    $"Confermate {planExecutionReconciliationResult.ReconciledQuantity}/{planExecutionReconciliationResult.PlannedQuantity} | " +
+                    $"Rimanenti {planExecutionReconciliationResult.RemainingQuantity}");
+
+                ImGui.TextWrapped(
+                    $"Delta osservati: source -{planExecutionReconciliationResult.SourceDecrease}, " +
+                    $"destination +{planExecutionReconciliationResult.DestinationIncrease}");
+
+                ImGui.TextWrapped(
+                    planExecutionReconciliationResult.Message);
+            }
         }
 
         ImGui.SameLine();
@@ -886,6 +925,7 @@ public class MainWindow : Window, IDisposable
             planExecutionSession.Reset();
             planExecutionBaseline = null;
             planExecutionVerificationResult = null;
+            planExecutionReconciliationResult = null;
         }
     }
 
@@ -894,6 +934,7 @@ public class MainWindow : Window, IDisposable
         planExecutionSession = null;
         planExecutionBaseline = null;
         planExecutionVerificationResult = null;
+        planExecutionReconciliationResult = null;
     }
 
     private void StartGlobalPlannerTask(
