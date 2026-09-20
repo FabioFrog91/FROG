@@ -13,6 +13,8 @@ using Dalamud.Plugin.Services;
 using FROG.Core.Inventory;
 using FROG.Core.Inventory.Providers;
 using FROG.Windows;
+using FFXIVClientStructs.FFXIV.Client.Game;
+using FFXIVClientStructs.FFXIV.Component.GUI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using System;
@@ -46,6 +48,9 @@ public sealed class Plugin : HostedPlugin
 
     [PluginService]
     internal static IGameInventory GameInventory { get; private set; } = null!;
+
+    [PluginService]
+    internal static IGameGui GameGui { get; private set; } = null!;
 
     [PluginService]
     internal static IAddonLifecycle AddonLifecycle { get; private set; } = null!;
@@ -533,115 +538,110 @@ public sealed class Plugin : HostedPlugin
         var pageDiagnostics =
             new List<FreeCompanyPageSyncDiagnostic>();
 
-        // The FC chest is only an observable source while its UI is open.
-        // When it is closed, preserve the last known snapshot instead of
-        // replacing it from client memory that may merely be stale or
-        // transiently incomplete.
-        if (chestOpen)
+        // A Free Company container can report IsLoaded while still holding
+        // stale or transitional data from a different tab. Treat only the
+        // tab that is actually selected in the chest UI as Observed.
+        // Every other page remains Known at its last verified snapshot.
+        if (chestOpen &&
+            TryGetObservedFreeCompanyPage(
+                out var observedFreeCompanyContainer) &&
+            storageReader.TryReadActiveFreeCompanyPage(
+                observedAtUtc,
+                observedFreeCompanyContainer,
+                out var freeCompanySource,
+                out freeCompanySnapshots))
         {
-            freeCompanyReadSucceeded =
-                storageReader.TryReadActiveFreeCompany(
-                    observedAtUtc,
-                    out freeCompanySources,
-                    out freeCompanySnapshots);
-
-            if (freeCompanyReadSucceeded)
-            {
-                foreach (var source in freeCompanySources)
+            freeCompanyReadSucceeded = true;
+            freeCompanySources =
+                new[]
                 {
-                    var sourceSnapshots = freeCompanySnapshots
-                        .Where(x =>
-                            x.Storage == source.Storage &&
-                            x.OwnerId == source.OwnerId &&
-                            x.Container == source.Container)
-                        .ToList();
+                    freeCompanySource
+                };
 
-                    var beforeSnapshots =
-                        InventoryIndex.Items
-                            .Where(x =>
-                                x.Storage == source.Storage &&
-                                x.OwnerId == source.OwnerId &&
-                                x.Container == source.Container)
-                            .ToList();
+            var beforeSnapshots =
+                InventoryIndex.Items
+                    .Where(x =>
+                        x.Storage == freeCompanySource.Storage &&
+                        x.OwnerId == freeCompanySource.OwnerId &&
+                        x.Container == freeCompanySource.Container)
+                    .ToList();
 
-                    InventoryIndex.ReplaceSource(
-                        source,
-                        sourceSnapshots);
+            InventoryIndex.ReplaceSource(
+                freeCompanySource,
+                freeCompanySnapshots);
 
-                    var afterSnapshots =
-                        InventoryIndex.Items
-                            .Where(x =>
-                                x.Storage == source.Storage &&
-                                x.OwnerId == source.OwnerId &&
-                                x.Container == source.Container)
-                            .ToList();
+            var afterSnapshots =
+                InventoryIndex.Items
+                    .Where(x =>
+                        x.Storage == freeCompanySource.Storage &&
+                        x.OwnerId == freeCompanySource.OwnerId &&
+                        x.Container == freeCompanySource.Container)
+                    .ToList();
 
-                    var beforeByItem =
-                        beforeSnapshots
-                            .GroupBy(x =>
-                                new
-                                {
-                                    x.BaseItemId,
-                                    x.IsHq
-                                })
-                            .ToDictionary(
-                                group =>
-                                    (group.Key.BaseItemId, group.Key.IsHq),
-                                group =>
-                                    group.Sum(x => x.Quantity));
+            var beforeByItem =
+                beforeSnapshots
+                    .GroupBy(x =>
+                        new
+                        {
+                            x.BaseItemId,
+                            x.IsHq
+                        })
+                    .ToDictionary(
+                        group =>
+                            (group.Key.BaseItemId, group.Key.IsHq),
+                        group =>
+                            group.Sum(x => x.Quantity));
 
-                    var readByItem =
-                        sourceSnapshots
-                            .GroupBy(x =>
-                                new
-                                {
-                                    x.BaseItemId,
-                                    x.IsHq
-                                })
-                            .ToDictionary(
-                                group =>
-                                    (group.Key.BaseItemId, group.Key.IsHq),
-                                group =>
-                                    group.Sum(x => x.Quantity));
+            var readByItem =
+                freeCompanySnapshots
+                    .GroupBy(x =>
+                        new
+                        {
+                            x.BaseItemId,
+                            x.IsHq
+                        })
+                    .ToDictionary(
+                        group =>
+                            (group.Key.BaseItemId, group.Key.IsHq),
+                        group =>
+                            group.Sum(x => x.Quantity));
 
-                    var changedItems =
-                        beforeByItem.Keys
-                            .Union(readByItem.Keys)
-                            .Select(key =>
-                                new FreeCompanyItemSyncDiagnostic(
-                                    key.BaseItemId,
-                                    key.IsHq,
-                                    beforeByItem.TryGetValue(
-                                        key,
-                                        out var beforeQuantity)
-                                        ? beforeQuantity
-                                        : 0,
-                                    readByItem.TryGetValue(
-                                        key,
-                                        out var readQuantity)
-                                        ? readQuantity
-                                        : 0))
-                            .Where(item =>
-                                item.BeforeQuantity != item.ReadQuantity)
-                            .OrderBy(item =>
-                                item.BaseItemId)
-                            .ThenBy(item =>
-                                item.IsHq)
-                            .ToList();
+            var changedItems =
+                beforeByItem.Keys
+                    .Union(readByItem.Keys)
+                    .Select(key =>
+                        new FreeCompanyItemSyncDiagnostic(
+                            key.BaseItemId,
+                            key.IsHq,
+                            beforeByItem.TryGetValue(
+                                key,
+                                out var beforeQuantity)
+                                ? beforeQuantity
+                                : 0,
+                            readByItem.TryGetValue(
+                                key,
+                                out var readQuantity)
+                                ? readQuantity
+                                : 0))
+                    .Where(item =>
+                        item.BeforeQuantity != item.ReadQuantity)
+                    .OrderBy(item =>
+                        item.BaseItemId)
+                    .ThenBy(item =>
+                        item.IsHq)
+                    .ToList();
 
-                    pageDiagnostics.Add(
-                        new FreeCompanyPageSyncDiagnostic(
-                            source.OwnerId,
-                            source.Container,
-                            beforeSnapshots.Count,
-                            beforeSnapshots.Sum(x => x.Quantity),
-                            sourceSnapshots.Count,
-                            sourceSnapshots.Sum(x => x.Quantity),
-                            afterSnapshots.Count,
-                            afterSnapshots.Sum(x => x.Quantity),
-                            changedItems));
-                }
-            }
+            pageDiagnostics.Add(
+                new FreeCompanyPageSyncDiagnostic(
+                    freeCompanySource.OwnerId,
+                    freeCompanySource.Container,
+                    beforeSnapshots.Count,
+                    beforeSnapshots.Sum(x => x.Quantity),
+                    freeCompanySnapshots.Count,
+                    freeCompanySnapshots.Sum(x => x.Quantity),
+                    afterSnapshots.Count,
+                    afterSnapshots.Sum(x => x.Quantity),
+                    changedItems));
         }
 
         lock (freeCompanySyncDiagnosticsLock)
@@ -669,6 +669,111 @@ public sealed class Plugin : HostedPlugin
                     freeCompanySyncHistory.Count - maxFreeCompanySyncHistory);
             }
         }
+    }
+
+    private static unsafe bool TryGetObservedFreeCompanyPage(
+        out uint container)
+    {
+        container = 0;
+
+        var addon =
+            GameGui.GetAddonByName<AtkUnitBase>(
+                "FreeCompanyChest",
+                1);
+
+        if (addon == null ||
+            !addon->IsVisible)
+        {
+            return false;
+        }
+
+        if (IsFreeCompanyTabSelected(addon, 101))
+        {
+            container =
+                (uint)InventoryType.FreeCompanyPage1;
+
+            return true;
+        }
+
+        if (IsFreeCompanyTabSelected(addon, 100))
+        {
+            container =
+                (uint)InventoryType.FreeCompanyPage2;
+
+            return true;
+        }
+
+        if (IsFreeCompanyTabSelected(addon, 99))
+        {
+            container =
+                (uint)InventoryType.FreeCompanyPage3;
+
+            return true;
+        }
+
+        if (IsFreeCompanyTabSelected(addon, 98))
+        {
+            container =
+                (uint)InventoryType.FreeCompanyPage4;
+
+            return true;
+        }
+
+        if (IsFreeCompanyTabSelected(addon, 97))
+        {
+            container =
+                (uint)InventoryType.FreeCompanyPage5;
+
+            return true;
+        }
+
+        return false;
+    }
+
+    private static unsafe bool IsFreeCompanyTabSelected(
+        AtkUnitBase* addon,
+        uint nodeId)
+    {
+        if (nodeId >= addon->UldManager.NodeListCount)
+            return false;
+
+        var node =
+            addon->UldManager.NodeList[nodeId];
+
+        if (node == null ||
+            !node->IsVisible())
+        {
+            return false;
+        }
+
+        var componentNode =
+            node->GetAsAtkComponentNode();
+
+        if (componentNode == null ||
+            componentNode->Component == null)
+        {
+            return false;
+        }
+
+        var component =
+            componentNode->Component;
+
+        if (component->UldManager.NodeListCount > 2)
+        {
+            var checkMark =
+                component->UldManager.NodeList[2];
+
+            if (checkMark != null &&
+                checkMark->IsVisible())
+            {
+                return true;
+            }
+        }
+
+        var radioButton =
+            (AtkComponentRadioButton*)component;
+
+        return (radioButton->Flags & 0x40000) != 0;
     }
 
     private void OnRetainerListOpened(
