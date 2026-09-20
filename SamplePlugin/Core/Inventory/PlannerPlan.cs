@@ -52,23 +52,47 @@ public sealed class PlannerPlan
         IEnumerable<PlannerAction> actions,
         PlannerPlanResult result,
         int missing)
+        : this(
+            initialState,
+            finalState,
+            actions.ToList(),
+            result,
+            missing)
+    {
+    }
+
+    private PlannerPlan(
+        PlannerState initialState,
+        PlannerState finalState,
+        List<PlannerAction> actions,
+        PlannerPlanResult result,
+        int missing)
     {
         InitialState = initialState;
         FinalState = finalState;
-        this.actions = actions.ToList();
+        this.actions = actions;
         Result = result;
         Missing = missing;
     }
 
     public PlannerPlan Append(
         PlannerAction action,
-        PlannerState state) =>
-        new(
+        PlannerState state)
+    {
+        var updatedActions =
+            new List<PlannerAction>(
+                actions.Count + 1);
+
+        updatedActions.AddRange(actions);
+        updatedActions.Add(action);
+
+        return new PlannerPlan(
             InitialState,
             state,
-            actions.Append(action),
+            updatedActions,
             Result,
             Missing);
+    }
 
     public PlannerPlan WithResult(
         PlannerPlanResult result,
