@@ -103,4 +103,13 @@ public sealed class PlannerPlan
             actions,
             result,
             missing);
+
+    public PlannerPlan WithActions(
+        IEnumerable<PlannerAction> reorderedActions) =>
+        new(
+            InitialState,
+            FinalState,
+            reorderedActions,
+            Result,
+            Missing);
 }
