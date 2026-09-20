@@ -15,18 +15,29 @@ public sealed class GlobalTransferPlanner
         ResolutionPolicy resolutionPolicy,
         OptimizationSettings optimizationSettings)
     {
-        var initialMissing = CalculateMissing(requirements, initialState);
+        var initialMissing =
+            CalculateMissing(
+                requirements,
+                initialState);
 
-        var initialPlan = new PlannerPlan(
-            initialState,
-            initialState,
-            Array.Empty<PlannerAction>(),
-            initialMissing == 0
-                ? PlannerPlanResult.Completed
-                : PlannerPlanResult.CompletedWithMissing,
-            initialMissing);
+        var initialPlan =
+            new PlannerPlan(
+                initialState,
+                initialState,
+                Array.Empty<PlannerAction>(),
+                initialMissing == 0
+                    ? PlannerPlanResult.Completed
+                    : PlannerPlanResult.CompletedWithMissing,
+                initialMissing);
 
-        var bestPlan = initialPlan;
+        var bestPlan =
+            initialPlan;
+
+        var pathStates =
+            new HashSet<string>();
+
+        var memo =
+            new Dictionary<string, List<MemoEntry>>();
 
         Search(
             requirements,
@@ -34,12 +45,14 @@ public sealed class GlobalTransferPlanner
             optimizationSettings,
             initialState,
             initialPlan,
-            new HashSet<string>(),
+            pathStates,
+            memo,
             ref bestPlan);
 
-        var missing = CalculateMissing(
-            requirements,
-            bestPlan.FinalState);
+        var missing =
+            CalculateMissing(
+                requirements,
+                bestPlan.FinalState);
 
         return bestPlan.WithResult(
             missing == 0
@@ -54,78 +67,274 @@ public sealed class GlobalTransferPlanner
         OptimizationSettings optimizationSettings,
         PlannerState state,
         PlannerPlan plan,
-        HashSet<string> visitedStates,
+        HashSet<string> pathStates,
+        Dictionary<string, List<MemoEntry>> memo,
         ref PlannerPlan bestPlan)
     {
-        var stateKey = BuildStateKey(state);
+        var stateKey =
+            BuildStateKey(state);
 
-        if (!visitedStates.Add(stateKey))
+        if (!pathStates.Add(stateKey))
             return;
 
-        var currentMissing = CalculateMissing(
-            requirements,
-            state);
-
-        var bestMissing = CalculateMissing(
-            requirements,
-            bestPlan.FinalState);
-
-        if (currentMissing < bestMissing ||
-            currentMissing == bestMissing &&
-            planEvaluator.Evaluate(
+        try
+        {
+            var planScore =
+                planEvaluator.Evaluate(
                     plan,
                     requirements,
-                    resolutionPolicy)
-                .CompareTo(
+                    resolutionPolicy);
+
+            var memoEntry =
+                CreateMemoEntry(
+                    plan,
+                    planScore);
+
+            if (IsDominated(
+                    stateKey,
+                    memoEntry,
+                    memo))
+            {
+                return;
+            }
+
+            RegisterMemoEntry(
+                stateKey,
+                memoEntry,
+                memo);
+
+            var currentMissing =
+                CalculateMissing(
+                    requirements,
+                    state);
+
+            var bestMissing =
+                CalculateMissing(
+                    requirements,
+                    bestPlan.FinalState);
+
+            if (currentMissing < bestMissing)
+            {
+                bestPlan =
+                    plan.WithResult(
+                        currentMissing == 0
+                            ? PlannerPlanResult.Completed
+                            : PlannerPlanResult.CompletedWithMissing,
+                        currentMissing);
+            }
+            else if (currentMissing == bestMissing)
+            {
+                var bestScore =
                     planEvaluator.Evaluate(
                         bestPlan,
                         requirements,
-                        resolutionPolicy),
-                    optimizationSettings) < 0)
+                        resolutionPolicy);
+
+                if (planScore.CompareTo(
+                        bestScore,
+                        optimizationSettings) < 0)
+                {
+                    bestPlan =
+                        plan.WithResult(
+                            currentMissing == 0
+                                ? PlannerPlanResult.Completed
+                                : PlannerPlanResult.CompletedWithMissing,
+                            currentMissing);
+                }
+            }
+
+            if (currentMissing == 0)
+                return;
+
+            foreach (var action in GenerateActions(
+                         requirements,
+                         state,
+                         resolutionPolicy))
+            {
+                if (!actionValidator.CanApply(
+                        state,
+                        action,
+                        out _))
+                {
+                    continue;
+                }
+
+                PlannerState nextState;
+
+                try
+                {
+                    nextState =
+                        Apply(
+                            state,
+                            action);
+                }
+                catch (InvalidOperationException)
+                {
+                    continue;
+                }
+
+                var nextPlan =
+                    plan.Append(
+                        action,
+                        nextState);
+
+                Search(
+                    requirements,
+                    resolutionPolicy,
+                    optimizationSettings,
+                    nextState,
+                    nextPlan,
+                    pathStates,
+                    memo,
+                    ref bestPlan);
+            }
+        }
+        finally
         {
-            bestPlan = plan.WithResult(
-                currentMissing == 0
-                    ? PlannerPlanResult.Completed
-                    : PlannerPlanResult.CompletedWithMissing,
-                currentMissing);
+            pathStates.Remove(stateKey);
+        }
+    }
+
+    private static MemoEntry CreateMemoEntry(
+        PlannerPlan plan,
+        PlannerPlanScore score)
+    {
+        var retainerAccesses =
+            plan.Actions
+                .Where(action =>
+                    action.Type == PlannerActionType.Move &&
+                    action.Source?.Storage == StorageType.Retainer)
+                .Select(action =>
+                    $"{action.Source!.OwnerId}:{action.Source.ParentCharacterId}")
+                .ToHashSet();
+
+        var transferHops =
+            plan.Actions
+                .Where(action =>
+                    action.Type == PlannerActionType.Move &&
+                    action.Source is not null &&
+                    action.Destination is not null)
+                .Select(action =>
+                    BuildTransferHopKey(
+                        action.Source!,
+                        action.Destination!))
+                .ToHashSet();
+
+        return new MemoEntry(
+            score.CharacterSwitches,
+            score.SourcePriority,
+            score.Freshness,
+            score.Alphabetical,
+            retainerAccesses,
+            transferHops);
+    }
+
+    private static bool IsDominated(
+        string stateKey,
+        MemoEntry candidate,
+        Dictionary<string, List<MemoEntry>> memo)
+    {
+        if (!memo.TryGetValue(
+                stateKey,
+                out var entries))
+        {
+            return false;
         }
 
-        if (currentMissing == 0)
-            return;
+        return entries.Any(existing =>
+            Dominates(
+                existing,
+                candidate));
+    }
 
-        foreach (var action in GenerateActions(
-                     requirements,
-                     state,
-                     resolutionPolicy))
+    private static void RegisterMemoEntry(
+        string stateKey,
+        MemoEntry candidate,
+        Dictionary<string, List<MemoEntry>> memo)
+    {
+        if (!memo.TryGetValue(
+                stateKey,
+                out var entries))
         {
-            if (!actionValidator.CanApply(
-                    state,
-                    action,
-                    out _))
-            {
-                continue;
-            }
-
-            PlannerState nextState;
-
-            try
-            {
-                nextState = Apply(state, action);
-            }
-            catch (InvalidOperationException)
-            {
-                continue;
-            }
-
-            Search(
-                requirements,
-                resolutionPolicy,
-                optimizationSettings,
-                nextState,
-                plan.Append(action, nextState),
-                new HashSet<string>(visitedStates),
-                ref bestPlan);
+            entries = new List<MemoEntry>();
+            memo[stateKey] = entries;
         }
+
+        entries.RemoveAll(existing =>
+            Dominates(
+                candidate,
+                existing));
+
+        entries.Add(candidate);
+    }
+
+    private static bool Dominates(
+        MemoEntry left,
+        MemoEntry right)
+    {
+        if (!left.RetainerAccesses.SetEquals(
+                right.RetainerAccesses))
+        {
+            return false;
+        }
+
+        if (!left.TransferHops.SetEquals(
+                right.TransferHops))
+        {
+            return false;
+        }
+
+        if (!string.Equals(
+                left.Alphabetical,
+                right.Alphabetical,
+                StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var noWorse =
+            left.CharacterSwitches <= right.CharacterSwitches &&
+            left.SourcePriority <= right.SourcePriority &&
+            left.Freshness >= right.Freshness;
+
+        if (!noWorse)
+            return false;
+
+        return
+            left.CharacterSwitches < right.CharacterSwitches ||
+            left.SourcePriority < right.SourcePriority ||
+            left.Freshness > right.Freshness ||
+            IsEquivalent(
+                left,
+                right);
+    }
+
+    private static bool IsEquivalent(
+        MemoEntry left,
+        MemoEntry right)
+    {
+        return
+            left.CharacterSwitches == right.CharacterSwitches &&
+            left.SourcePriority == right.SourcePriority &&
+            left.Freshness == right.Freshness &&
+            string.Equals(
+                left.Alphabetical,
+                right.Alphabetical,
+                StringComparison.Ordinal) &&
+            left.RetainerAccesses.SetEquals(
+                right.RetainerAccesses) &&
+            left.TransferHops.SetEquals(
+                right.TransferHops);
+    }
+
+    private static string BuildTransferHopKey(
+        InventorySource source,
+        InventorySource destination)
+    {
+        return
+            $"{source.Storage}:{source.OwnerId}:{source.Container}" +
+            $">" +
+            $"{destination.Storage}:{destination.OwnerId}:{destination.Container}";
     }
 
     private static IEnumerable<PlannerAction> GenerateActions(
@@ -137,42 +346,50 @@ public sealed class GlobalTransferPlanner
         {
             foreach (var source in resolutionPolicy.Sources)
             {
-                if (!IsSourceAccessible(state.CurrentCharacterId, source))
+                if (!IsSourceAccessible(
+                        state.CurrentCharacterId,
+                        source))
+                {
                     continue;
+                }
 
                 foreach (var isHq in GetCandidateQualities(
                              requirement,
                              state,
                              source))
                 {
-                    var available = state.GetQuantity(
-                        requirement.BaseItemId,
-                        isHq,
-                        source);
+                    var available =
+                        state.GetQuantity(
+                            requirement.BaseItemId,
+                            isHq,
+                            source);
 
                     if (available <= 0)
                         continue;
 
-                    var needed = GetNeededFromSource(
-                        requirement,
-                        state,
-                        source,
-                        isHq);
+                    var needed =
+                        GetNeededFromSource(
+                            requirement,
+                            state,
+                            source,
+                            isHq);
 
                     if (needed <= 0)
                         continue;
 
-                    var destination = GetDestination(
-                        state,
-                        resolutionPolicy,
-                        source);
+                    var destination =
+                        GetDestination(
+                            state,
+                            resolutionPolicy,
+                            source);
 
                     if (destination is null)
                         continue;
 
-                    var quantity = Math.Min(
-                        available,
-                        needed);
+                    var quantity =
+                        Math.Min(
+                            available,
+                            needed);
 
                     yield return PlannerAction.Move(
                         source,
@@ -200,14 +417,24 @@ public sealed class GlobalTransferPlanner
         PlannerState state,
         InventorySource source)
     {
-        var qualities = requirement.QualityPolicy switch
-        {
-            RequirementQualityPolicy.HqOnly => new[] { true },
-            RequirementQualityPolicy.NqOnly => new[] { false },
-            RequirementQualityPolicy.HqFirst => new[] { true, false },
-            RequirementQualityPolicy.NqFirst => new[] { false, true },
-            _ => new[] { false, true }
-        };
+        var qualities =
+            requirement.QualityPolicy switch
+            {
+                RequirementQualityPolicy.HqOnly =>
+                    new[] { true },
+
+                RequirementQualityPolicy.NqOnly =>
+                    new[] { false },
+
+                RequirementQualityPolicy.HqFirst =>
+                    new[] { true, false },
+
+                RequirementQualityPolicy.NqFirst =>
+                    new[] { false, true },
+
+                _ =>
+                    new[] { false, true }
+            };
 
         foreach (var isHq in qualities)
         {
@@ -227,85 +454,110 @@ public sealed class GlobalTransferPlanner
         InventorySource source,
         bool isHq)
     {
-        var includeFreeCompany = source.Storage switch
-        {
-            StorageType.Retainer =>
-                source.ParentCharacterId != state.MainCharacterId,
+        var includeFreeCompany =
+            source.Storage switch
+            {
+                StorageType.Retainer =>
+                    source.ParentCharacterId != state.MainCharacterId,
 
-            StorageType.CharacterInventory =>
-                source.OwnerId != state.MainCharacterId,
+                StorageType.CharacterInventory =>
+                    source.OwnerId != state.MainCharacterId,
 
-            _ => false
-        };
+                _ =>
+                    false
+            };
 
-        var includeLocalInventory = source.Storage == StorageType.Retainer &&
-                                    source.ParentCharacterId != state.MainCharacterId;
+        var includeLocalInventory =
+            source.Storage == StorageType.Retainer &&
+            source.ParentCharacterId != state.MainCharacterId;
 
-        var hq = state.GetMainInventoryQuantity(
-            requirement.BaseItemId,
-            true);
-
-        var nq = state.GetMainInventoryQuantity(
-            requirement.BaseItemId,
-            false);
-
-        if (includeFreeCompany)
-        {
-            hq += state.GetFreeCompanyQuantity(
+        var hq =
+            state.GetMainInventoryQuantity(
                 requirement.BaseItemId,
                 true);
 
-            nq += state.GetFreeCompanyQuantity(
+        var nq =
+            state.GetMainInventoryQuantity(
                 requirement.BaseItemId,
                 false);
+
+        if (includeFreeCompany)
+        {
+            hq +=
+                state.GetFreeCompanyQuantity(
+                    requirement.BaseItemId,
+                    true);
+
+            nq +=
+                state.GetFreeCompanyQuantity(
+                    requirement.BaseItemId,
+                    false);
         }
 
         if (includeLocalInventory)
         {
-            hq += state.GetCharacterInventoryQuantity(
-                source.ParentCharacterId,
-                requirement.BaseItemId,
-                true);
+            hq +=
+                state.GetCharacterInventoryQuantity(
+                    source.ParentCharacterId,
+                    requirement.BaseItemId,
+                    true);
 
-            nq += state.GetCharacterInventoryQuantity(
-                source.ParentCharacterId,
-                requirement.BaseItemId,
-                false);
+            nq +=
+                state.GetCharacterInventoryQuantity(
+                    source.ParentCharacterId,
+                    requirement.BaseItemId,
+                    false);
         }
 
         return requirement.QualityPolicy switch
         {
             RequirementQualityPolicy.HqOnly =>
                 isHq
-                    ? Math.Max(0, requirement.Quantity - hq)
+                    ? Math.Max(
+                        0,
+                        requirement.Quantity - hq)
                     : 0,
 
             RequirementQualityPolicy.NqOnly =>
                 !isHq
-                    ? Math.Max(0, requirement.Quantity - nq)
+                    ? Math.Max(
+                        0,
+                        requirement.Quantity - nq)
                     : 0,
 
             RequirementQualityPolicy.HqFirst =>
                 isHq
-                    ? Math.Max(0, requirement.Quantity - hq)
-                    : Math.Max(0, requirement.Quantity - hq - nq),
+                    ? Math.Max(
+                        0,
+                        requirement.Quantity - hq)
+                    : Math.Max(
+                        0,
+                        requirement.Quantity - hq - nq),
 
             RequirementQualityPolicy.NqFirst =>
                 !isHq
-                    ? Math.Max(0, requirement.Quantity - nq)
-                    : Math.Max(0, requirement.Quantity - nq - hq),
+                    ? Math.Max(
+                        0,
+                        requirement.Quantity - nq)
+                    : Math.Max(
+                        0,
+                        requirement.Quantity - nq - hq),
 
             RequirementQualityPolicy.Any =>
-                Math.Max(0, requirement.Quantity - hq - nq),
+                Math.Max(
+                    0,
+                    requirement.Quantity - hq - nq),
 
-            _ => 0
+            _ =>
+                0
         };
     }
 
     private static bool IsSourceAccessible(
         ulong currentCharacterId,
-        InventorySource source) =>
-        source.Storage switch
+        InventorySource source)
+    {
+        return source.Storage switch
         {
             StorageType.CharacterInventory =>
                 source.OwnerId == currentCharacterId,
@@ -316,8 +568,10 @@ public sealed class GlobalTransferPlanner
             StorageType.FreeCompanyChest =>
                 true,
 
-            _ => false
+            _ =>
+                false
         };
+    }
 
     private static InventorySource? GetDestination(
         PlannerState state,
@@ -354,24 +608,30 @@ public sealed class GlobalTransferPlanner
 
     private static InventorySource? FindCharacterInventory(
         ResolutionPolicy resolutionPolicy,
-        ulong characterId) =>
-        resolutionPolicy.Sources
+        ulong characterId)
+    {
+        return resolutionPolicy.Sources
             .Where(source =>
                 source.Storage == StorageType.CharacterInventory &&
                 source.OwnerId == characterId)
-            .OrderBy(source => source.Container)
+            .OrderBy(source =>
+                source.Container)
             .FirstOrDefault();
+    }
 
     private static InventorySource? FindFreeCompany(
         ResolutionPolicy resolutionPolicy,
-        ulong characterId) =>
-        resolutionPolicy.Sources
+        ulong characterId)
+    {
+        return resolutionPolicy.Sources
             .Where(source =>
                 source.Storage == StorageType.FreeCompanyChest &&
                 (source.ParentCharacterId == characterId ||
                  source.ParentCharacterId == 0))
-            .OrderBy(source => source.Container)
+            .OrderBy(source =>
+                source.Container)
             .FirstOrDefault();
+    }
 
     private static IEnumerable<ulong> GetSwitchTargets(
         RequirementSet requirements,
@@ -395,8 +655,11 @@ public sealed class GlobalTransferPlanner
                      .Distinct()
                      .OrderBy(id => id))
         {
-            if (state.HasVisitedCharacter(characterId))
+            if (state.HasVisitedCharacter(
+                    characterId))
+            {
                 continue;
+            }
 
             if (HasUsefulMaterialForCharacter(
                     requirements,
@@ -420,19 +683,24 @@ public sealed class GlobalTransferPlanner
             if (GetCharacterId(source) != characterId)
                 continue;
 
-            if (source.Storage == StorageType.FreeCompanyChest)
+            if (source.Storage ==
+                StorageType.FreeCompanyChest)
+            {
                 continue;
+            }
 
             foreach (var requirement in requirements.Requirements)
             {
-                if (source.Storage == StorageType.CharacterInventory &&
+                if (source.Storage ==
+                        StorageType.CharacterInventory &&
                     source.OwnerId == characterId &&
                     source.OwnerId == state.MainCharacterId)
                 {
                     continue;
                 }
 
-                if (GetAllowedQualities(requirement)
+                if (GetAllowedQualities(
+                        requirement)
                     .Any(isHq =>
                         state.GetQuantity(
                             requirement.BaseItemId,
@@ -452,7 +720,8 @@ public sealed class GlobalTransferPlanner
         PlannerState state)
     {
         return requirements.Requirements.Any(requirement =>
-            GetAllowedQualities(requirement)
+            GetAllowedQualities(
+                    requirement)
                 .Any(isHq =>
                     state.GetFreeCompanyQuantity(
                         requirement.BaseItemId,
@@ -464,17 +733,27 @@ public sealed class GlobalTransferPlanner
     {
         return requirement.QualityPolicy switch
         {
-            RequirementQualityPolicy.HqOnly => new[] { true },
-            RequirementQualityPolicy.NqOnly => new[] { false },
-            RequirementQualityPolicy.HqFirst => new[] { true, false },
-            RequirementQualityPolicy.NqFirst => new[] { false, true },
-            _ => new[] { false, true }
+            RequirementQualityPolicy.HqOnly =>
+                new[] { true },
+
+            RequirementQualityPolicy.NqOnly =>
+                new[] { false },
+
+            RequirementQualityPolicy.HqFirst =>
+                new[] { true, false },
+
+            RequirementQualityPolicy.NqFirst =>
+                new[] { false, true },
+
+            _ =>
+                new[] { false, true }
         };
     }
 
     private static ulong GetCharacterId(
-        InventorySource source) =>
-        source.Storage switch
+        InventorySource source)
+    {
+        return source.Storage switch
         {
             StorageType.CharacterInventory =>
                 source.OwnerId,
@@ -485,13 +764,16 @@ public sealed class GlobalTransferPlanner
             StorageType.FreeCompanyChest =>
                 source.ParentCharacterId,
 
-            _ => 0
+            _ =>
+                0
         };
+    }
 
     private static PlannerState Apply(
         PlannerState state,
-        PlannerAction action) =>
-        action.Type switch
+        PlannerAction action)
+    {
+        return action.Type switch
         {
             PlannerActionType.Move =>
                 state.Move(
@@ -505,32 +787,38 @@ public sealed class GlobalTransferPlanner
                 state.WithCurrentCharacter(
                     action.ToCharacterId),
 
-            _ => throw new InvalidOperationException(
-                "Unknown planner action.")
+            _ =>
+                throw new InvalidOperationException(
+                    "Unknown planner action.")
         };
+    }
 
     private static int CalculateMissing(
         RequirementSet requirements,
-        PlannerState state) =>
-        requirements.Requirements.Sum(requirement =>
+        PlannerState state)
+    {
+        return requirements.Requirements.Sum(requirement =>
             Math.Max(
                 0,
                 requirement.Quantity -
                 GetSatisfiedMainQuantity(
                     requirement,
                     state)));
+    }
 
     private static int GetSatisfiedMainQuantity(
         Requirement requirement,
         PlannerState state)
     {
-        var hq = state.GetMainInventoryQuantity(
-            requirement.BaseItemId,
-            true);
+        var hq =
+            state.GetMainInventoryQuantity(
+                requirement.BaseItemId,
+                true);
 
-        var nq = state.GetMainInventoryQuantity(
-            requirement.BaseItemId,
-            false);
+        var nq =
+            state.GetMainInventoryQuantity(
+                requirement.BaseItemId,
+                false);
 
         return requirement.QualityPolicy switch
         {
@@ -541,15 +829,23 @@ public sealed class GlobalTransferPlanner
                 nq,
 
             RequirementQualityPolicy.HqFirst =>
-                Math.Min(requirement.Quantity, hq) +
                 Math.Min(
-                    Math.Max(0, requirement.Quantity - hq),
+                    requirement.Quantity,
+                    hq) +
+                Math.Min(
+                    Math.Max(
+                        0,
+                        requirement.Quantity - hq),
                     nq),
 
             RequirementQualityPolicy.NqFirst =>
-                Math.Min(requirement.Quantity, nq) +
                 Math.Min(
-                    Math.Max(0, requirement.Quantity - nq),
+                    requirement.Quantity,
+                    nq) +
+                Math.Min(
+                    Math.Max(
+                        0,
+                        requirement.Quantity - nq),
                     hq),
 
             RequirementQualityPolicy.Any =>
@@ -557,29 +853,81 @@ public sealed class GlobalTransferPlanner
                     requirement.Quantity,
                     hq + nq),
 
-            _ => 0
+            _ =>
+                0
         };
     }
 
-    private static string BuildStateKey(PlannerState state)
+    private static string BuildStateKey(
+        PlannerState state)
     {
-        var itemKey = string.Join(
-            ";",
-            state.Items
-                .OrderBy(item => item.Storage)
-                .ThenBy(item => item.OwnerId)
-                .ThenBy(item => item.Container)
-                .ThenBy(item => item.Slot)
-                .ThenBy(item => item.BaseItemId)
-                .ThenBy(item => item.IsHq)
-                .Select(item =>
-                    $"{item.Storage}:{item.OwnerId}:{item.Container}:{item.Slot}:" +
-                    $"{item.BaseItemId}:{item.IsHq}:{item.Quantity}"));
+        var itemKey =
+            string.Join(
+                ";",
+                state.Items
+                    .OrderBy(item =>
+                        item.Storage)
+                    .ThenBy(item =>
+                        item.OwnerId)
+                    .ThenBy(item =>
+                        item.Container)
+                    .ThenBy(item =>
+                        item.Slot)
+                    .ThenBy(item =>
+                        item.BaseItemId)
+                    .ThenBy(item =>
+                        item.IsHq)
+                    .Select(item =>
+                        $"{item.Storage}:{item.OwnerId}:{item.Container}:{item.Slot}:" +
+                        $"{item.BaseItemId}:{item.IsHq}:{item.Quantity}"));
 
-        var visitedKey = string.Join(
-            ",",
-            state.VisitedCharacters.OrderBy(id => id));
+        var visitedKey =
+            string.Join(
+                ",",
+                state.VisitedCharacters
+                    .OrderBy(id => id));
 
-        return $"{state.MainCharacterId}|{state.CurrentCharacterId}|{visitedKey}|{itemKey}";
+        return
+            $"{state.MainCharacterId}|" +
+            $"{state.CurrentCharacterId}|" +
+            $"{visitedKey}|" +
+            $"{itemKey}";
+    }
+
+    private sealed class MemoEntry
+    {
+        public int CharacterSwitches { get; }
+        public int SourcePriority { get; }
+        public DateTime Freshness { get; }
+        public string Alphabetical { get; }
+        public HashSet<string> RetainerAccesses { get; }
+        public HashSet<string> TransferHops { get; }
+
+        public MemoEntry(
+            int characterSwitches,
+            int sourcePriority,
+            DateTime freshness,
+            string alphabetical,
+            HashSet<string> retainerAccesses,
+            HashSet<string> transferHops)
+        {
+            CharacterSwitches =
+                characterSwitches;
+
+            SourcePriority =
+                sourcePriority;
+
+            Freshness =
+                freshness;
+
+            Alphabetical =
+                alphabetical;
+
+            RetainerAccesses =
+                retainerAccesses;
+
+            TransferHops =
+                transferHops;
+        }
     }
 }

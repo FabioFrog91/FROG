@@ -192,7 +192,8 @@ public class MainWindow : Window, IDisposable
             return;
         }
 
-        var indexItems = plugin.InventoryIndex.Items;
+        var indexItems =
+            plugin.InventoryIndex.Items;
 
         if (indexItems.Count == 0)
         {
@@ -202,15 +203,28 @@ public class MainWindow : Window, IDisposable
             return;
         }
 
-        var sources = indexItems
-            .Select(CreateSource)
-            .Distinct()
-            .ToList();
+        var currentCharacterId =
+            Plugin.PlayerState.IsLoaded
+                ? Plugin.PlayerState.ContentId
+                : 0;
+
+        if (currentCharacterId == 0)
+        {
+            ImGui.Text(
+                "Personaggio principale non disponibile.");
+
+            return;
+        }
+
+        var sources =
+            BuildPlannerSources(
+                indexItems,
+                currentCharacterId);
 
         if (sources.Count == 0)
         {
             ImGui.Text(
-                "Nessuna InventorySource disponibile nell'Index.");
+                "Nessuna InventorySource disponibile per il planner.");
 
             return;
         }
@@ -226,11 +240,6 @@ public class MainWindow : Window, IDisposable
                     Read: true,
                     Use: true));
         }
-
-        var currentCharacterId =
-            Plugin.PlayerState.IsLoaded
-                ? Plugin.PlayerState.ContentId
-                : 0;
 
         var resolutionPolicy =
             new ResolutionPolicy(
@@ -524,7 +533,7 @@ public class MainWindow : Window, IDisposable
             {
                 lines.Add(
                     string.Join(
-                        "	",
+                        "\t",
                         actionIndex,
                         "SWITCH",
                         GetCharacterName(action.FromCharacterId),
@@ -544,7 +553,7 @@ public class MainWindow : Window, IDisposable
 
             lines.Add(
                 string.Join(
-                    "	",
+                    "\t",
                     actionIndex,
                     "MOVE",
                     GetItemName(action.BaseItemId),
@@ -747,7 +756,7 @@ public class MainWindow : Window, IDisposable
         if (searchItemId <= 0)
         {
             ImGui.TextWrapped(
-                "Inserisci il Base Item ID nella sezione "RICERCA NELL'INDICE" per visualizzare la tabella di debug.");
+                "Inserisci il Base Item ID nella sezione \"RICERCA NELL'INDICE\" per visualizzare la tabella di debug.");
 
             return;
         }
@@ -933,7 +942,7 @@ public class MainWindow : Window, IDisposable
                 $"LastSyncUtc={plugin.LastSyncAtUtc:O}",
                 $"CharacterId={plugin.LastSyncCharacterId}",
                 string.Empty,
-                "SOURCE	STORAGE	OWNER	OWNER_ID	CONTAINER	SLOT	RAW_ID	BASE_ID	QTY	HQ	VERIFIED"
+                "SOURCE\tSTORAGE\tOWNER\tOWNER_ID\tCONTAINER\tSLOT\tRAW_ID\tBASE_ID\tQTY\tHQ\tVERIFIED"
             };
 
         foreach (var snapshot in liveSnapshots)
@@ -962,7 +971,7 @@ public class MainWindow : Window, IDisposable
         InventoryItemSnapshot snapshot)
     {
         return string.Join(
-            "	",
+            "\t",
             sourceName,
             snapshot.Storage,
             GetOwnerName(snapshot),
@@ -983,31 +992,31 @@ public class MainWindow : Window, IDisposable
         TransferPlan plan)
     {
         var lines =
-        new List<string>
-        {
-            "FROG DEBUG | RESOLVER / TRANSFER PLAN",
-            $"GeneratedUtc={DateTime.UtcNow:O}",
-            $"MainCharacterId={(Plugin.PlayerState.IsLoaded ? Plugin.PlayerState.ContentId : 0)}",
-            $"Requirements={requirementSet.Requirements.Count}",
-            $"Sources={resolutionPolicy.Sources.Count}",
-            $"Resolutions={plan.Resolutions.Count}",
-            $"Intents={plan.Intents.Count}",
-            $"Missing={plan.Missing}",
-            $"Complete={plan.IsComplete}",
-            string.Empty,
-            "===== ORDINE PRIORITÀ =====",
-            BuildPriorityClipboardText(
-                resolutionPolicy,
-                sourceCatalog),
-            string.Empty,
-            "===== RESOLUTION =====",
-            BuildResolutionClipboardText(
-                requirementSet,
-                plan),
-            string.Empty,
-            "===== TRANSFER INTENTS =====",
-            BuildTransferIntentsClipboardText(plan)
-        };
+            new List<string>
+            {
+                "FROG DEBUG | RESOLVER / TRANSFER PLAN",
+                $"GeneratedUtc={DateTime.UtcNow:O}",
+                $"MainCharacterId={(Plugin.PlayerState.IsLoaded ? Plugin.PlayerState.ContentId : 0)}",
+                $"Requirements={requirementSet.Requirements.Count}",
+                $"Sources={resolutionPolicy.Sources.Count}",
+                $"Resolutions={plan.Resolutions.Count}",
+                $"Intents={plan.Intents.Count}",
+                $"Missing={plan.Missing}",
+                $"Complete={plan.IsComplete}",
+                string.Empty,
+                "===== ORDINE PRIORITÀ =====",
+                BuildPriorityClipboardText(
+                    resolutionPolicy,
+                    sourceCatalog),
+                string.Empty,
+                "===== RESOLUTION =====",
+                BuildResolutionClipboardText(
+                    requirementSet,
+                    plan),
+                string.Empty,
+                "===== TRANSFER INTENTS =====",
+                BuildTransferIntentsClipboardText(plan)
+            };
 
         return string.Join(
             Environment.NewLine,
@@ -1019,14 +1028,14 @@ public class MainWindow : Window, IDisposable
         InventorySourceCatalog sourceCatalog)
     {
         var lines =
-        new List<string>
-        {
-            "FROG DEBUG | ORDINE PRIORITÀ",
-            $"GeneratedUtc={DateTime.UtcNow:O}",
-            $"MainCharacterId={(Plugin.PlayerState.IsLoaded ? Plugin.PlayerState.ContentId : 0)}",
-            string.Empty,
-            "PRIORITY	STORAGE	SOURCE	OWNER_ID	CONTAINER	READ	USE"
-        };
+            new List<string>
+            {
+                "FROG DEBUG | ORDINE PRIORITÀ",
+                $"GeneratedUtc={DateTime.UtcNow:O}",
+                $"MainCharacterId={(Plugin.PlayerState.IsLoaded ? Plugin.PlayerState.ContentId : 0)}",
+                string.Empty,
+                "PRIORITY\tSTORAGE\tSOURCE\tOWNER_ID\tCONTAINER\tREAD\tUSE"
+            };
 
         for (var i = 0;
              i < resolutionPolicy.Sources.Count;
@@ -1041,14 +1050,14 @@ public class MainWindow : Window, IDisposable
 
             lines.Add(
                 string.Join(
-                    "	",
+                    "\t",
                     i + 1,
                     source.Storage,
                     GetSourceName(source),
                     source.OwnerId,
                     source.Container,
-                    (sourcePolicy?.Read == true ? "YES" : "NO"),
-                    (sourcePolicy?.Use == true ? "YES" : "NO")));
+                    sourcePolicy?.Read == true ? "YES" : "NO",
+                    sourcePolicy?.Use == true ? "YES" : "NO"));
         }
 
         return string.Join(
@@ -1068,7 +1077,7 @@ public class MainWindow : Window, IDisposable
                 $"Complete={plan.IsComplete}",
                 $"Missing={plan.Missing}",
                 string.Empty,
-                "ITEM	REQUIRED	AVAILABLE	MISSING	SOURCE	QUALITY	QTY"
+                "ITEM\tREQUIRED\tAVAILABLE\tMISSING\tSOURCE\tQUALITY\tQTY"
             };
 
         foreach (var resolution in plan.Resolutions)
@@ -1077,7 +1086,7 @@ public class MainWindow : Window, IDisposable
             {
                 lines.Add(
                     string.Join(
-                        "	",
+                        "\t",
                         GetItemName(resolution.Requirement.BaseItemId),
                         resolution.Requirement.Quantity,
                         resolution.Available,
@@ -1093,7 +1102,7 @@ public class MainWindow : Window, IDisposable
             {
                 lines.Add(
                     string.Join(
-                        "	",
+                        "\t",
                         GetItemName(resolution.Requirement.BaseItemId),
                         resolution.Requirement.Quantity,
                         resolution.Available,
@@ -1121,14 +1130,14 @@ public class MainWindow : Window, IDisposable
                 $"Complete={plan.IsComplete}",
                 $"Missing={plan.Missing}",
                 string.Empty,
-                "ITEM	BASE_ID	SOURCE	STORAGE	OWNER_ID	CONTAINER	QUALITY	QTY"
+                "ITEM\tBASE_ID\tSOURCE\tSTORAGE\tOWNER_ID\tCONTAINER\tQUALITY\tQTY"
             };
 
         foreach (var intent in plan.Intents)
         {
             lines.Add(
                 string.Join(
-                    "	",
+                    "\t",
                     GetItemName(intent.BaseItemId),
                     intent.BaseItemId,
                     GetSourceName(intent.Source),
@@ -1233,30 +1242,225 @@ public class MainWindow : Window, IDisposable
         return $"Unknown Item ({baseItemId})";
     }
 
+    private IReadOnlyList<InventorySource> BuildPlannerSources(
+        IReadOnlyList<InventoryItemSnapshot> indexItems,
+        ulong mainCharacterId)
+    {
+        var sources =
+            new List<InventorySource>();
+
+        var allowedCharacterIds =
+            GetPlannerCharacterIds(
+                    mainCharacterId)
+                .ToHashSet();
+
+        if (allowedCharacterIds.Count == 0)
+            allowedCharacterIds.Add(mainCharacterId);
+
+        var mainFreeCompanyId =
+            GetCharacterFreeCompanyId(
+                mainCharacterId);
+
+        foreach (var snapshot in indexItems)
+        {
+            var source =
+                CreateSource(snapshot);
+
+            if (!IsPlannerSourceAllowed(
+                    source,
+                    allowedCharacterIds,
+                    mainFreeCompanyId))
+            {
+                continue;
+            }
+
+            AddPlannerSource(
+                sources,
+                source);
+        }
+
+        foreach (var characterId in allowedCharacterIds)
+        {
+            AddCharacterInventoryDestination(
+                sources,
+                characterId);
+        }
+
+        if (mainFreeCompanyId != 0)
+        {
+            AddFreeCompanyHub(
+                sources,
+                mainFreeCompanyId);
+        }
+
+        return sources;
+    }
+
+    private IEnumerable<ulong> GetPlannerCharacterIds(
+        ulong mainCharacterId)
+    {
+        yield return mainCharacterId;
+
+        var mainFreeCompanyId =
+            GetCharacterFreeCompanyId(
+                mainCharacterId);
+
+        if (mainFreeCompanyId == 0)
+            yield break;
+
+        foreach (var identity in characterCatalog.Entries)
+        {
+            if (identity.Type != CharacterIdentityType.Character)
+                continue;
+
+            if (identity.CharacterId == 0 ||
+                identity.CharacterId == mainCharacterId)
+            {
+                continue;
+            }
+
+            if (identity.FreeCompanyId != mainFreeCompanyId)
+                continue;
+
+            yield return identity.CharacterId;
+        }
+    }
+
+    private ulong GetCharacterFreeCompanyId(
+        ulong characterId)
+    {
+        if (characterCatalog.TryGet(
+                characterId,
+                out var identity) &&
+            identity.Type == CharacterIdentityType.Character &&
+            identity.FreeCompanyId != 0)
+        {
+            return identity.FreeCompanyId;
+        }
+
+        return characterMonitor
+            .GetCharacterById(characterId)
+            ?.FreeCompanyId ?? 0;
+    }
+
+    private static bool IsPlannerSourceAllowed(
+        InventorySource source,
+        IReadOnlySet<ulong> allowedCharacterIds,
+        ulong mainFreeCompanyId)
+    {
+        return source.Storage switch
+        {
+            StorageType.CharacterInventory =>
+                allowedCharacterIds.Contains(
+                    source.OwnerId),
+
+            StorageType.Retainer =>
+                allowedCharacterIds.Contains(
+                    source.ParentCharacterId),
+
+            StorageType.FreeCompanyChest =>
+                mainFreeCompanyId != 0 &&
+                source.OwnerId == mainFreeCompanyId,
+
+            _ =>
+                false
+        };
+    }
+
+    private void AddCharacterInventoryDestination(
+        List<InventorySource> sources,
+        ulong characterId)
+    {
+        var ownerName =
+            GetCharacterName(characterId);
+
+        AddPlannerSource(
+            sources,
+            new InventorySource(
+                StorageType.CharacterInventory,
+                characterId,
+                (uint)GameInventoryType.Inventory1,
+                OwnerName: ownerName));
+    }
+
+    private void AddFreeCompanyHub(
+        List<InventorySource> sources,
+        ulong freeCompanyId)
+    {
+        var freeCompanyName =
+            characterCatalog.GetName(
+                freeCompanyId);
+
+        if (string.IsNullOrWhiteSpace(
+                freeCompanyName))
+        {
+            freeCompanyName =
+                GetFreeCompanyOwnerName(
+                    freeCompanyId);
+        }
+
+        AddPlannerSource(
+            sources,
+            new InventorySource(
+                StorageType.FreeCompanyChest,
+                freeCompanyId,
+                (uint)GameInventoryType.FreeCompanyPage1,
+                ParentCharacterId: 0,
+                OwnerName: freeCompanyName));
+    }
+
+    private static void AddPlannerSource(
+        List<InventorySource> sources,
+        InventorySource source)
+    {
+        var existingIndex =
+            sources.FindIndex(existing =>
+                existing.Storage == source.Storage &&
+                existing.OwnerId == source.OwnerId &&
+                existing.Container == source.Container &&
+                existing.ParentCharacterId == source.ParentCharacterId);
+
+        if (existingIndex < 0)
+        {
+            sources.Add(source);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(
+                sources[existingIndex].OwnerName) &&
+            !string.IsNullOrWhiteSpace(
+                source.OwnerName))
+        {
+            sources[existingIndex] = source;
+        }
+    }
+
     private InventorySource CreateSource(
         InventoryItemSnapshot snapshot)
     {
         var parentCharacterId =
             snapshot.ParentCharacterId;
 
-        if (parentCharacterId == 0 &&
-            snapshot.Storage == StorageType.Retainer)
+        if (snapshot.Storage == StorageType.FreeCompanyChest)
+        {
+            parentCharacterId = 0;
+        }
+        else if (parentCharacterId == 0 &&
+                 snapshot.Storage == StorageType.Retainer)
         {
             parentCharacterId =
                 characterCatalog.GetParentCharacterId(
                     snapshot.OwnerId);
         }
 
-        if (parentCharacterId == 0)
+        if (parentCharacterId == 0 &&
+            snapshot.Storage == StorageType.Retainer)
         {
             parentCharacterId =
-                snapshot.Storage == StorageType.Retainer
-                    ? characterMonitor.GetParentCharacterById(
-                        snapshot.OwnerId)?.CharacterId ?? 0
-                    : snapshot.Storage == StorageType.FreeCompanyChest
-                        ? characterMonitor.GetCharacterById(
-                            snapshot.OwnerId)?.CharacterId ?? 0
-                        : 0;
+                characterMonitor
+                    .GetParentCharacterById(
+                        snapshot.OwnerId)
+                    ?.CharacterId ?? 0;
         }
 
         var ownerName =
@@ -1320,7 +1524,9 @@ public class MainWindow : Window, IDisposable
                 GetCharacterName(source.ParentCharacterId);
 
             if (!string.IsNullOrWhiteSpace(parentName) &&
-                !parentName.StartsWith("Character ", StringComparison.Ordinal))
+                !parentName.StartsWith(
+                    "Character ",
+                    StringComparison.Ordinal))
             {
                 return $"{ownerName} ({parentName})";
             }
@@ -1357,7 +1563,8 @@ public class MainWindow : Window, IDisposable
                 source.OwnerId);
 
         if (retainer != null &&
-            !string.IsNullOrWhiteSpace(retainer.FormattedName))
+            !string.IsNullOrWhiteSpace(
+                retainer.FormattedName))
         {
             return retainer.FormattedName;
         }
@@ -1379,15 +1586,19 @@ public class MainWindow : Window, IDisposable
             characterMonitor.GetCharacterNameById(
                 source.OwnerId);
 
-        if (!string.IsNullOrWhiteSpace(freeCompanyName))
+        if (!string.IsNullOrWhiteSpace(
+                freeCompanyName))
+        {
             return freeCompanyName;
+        }
 
         var freeCompany =
             characterMonitor.GetCharacterById(
                 source.OwnerId);
 
         if (freeCompany != null &&
-            !string.IsNullOrWhiteSpace(freeCompany.FormattedName))
+            !string.IsNullOrWhiteSpace(
+                freeCompany.FormattedName))
         {
             return freeCompany.FormattedName;
         }
@@ -1436,16 +1647,19 @@ public class MainWindow : Window, IDisposable
             return catalogName;
 
         var retainerName =
-            characterMonitor.GetCharacterNameById(ownerId);
+            characterMonitor.GetCharacterNameById(
+                ownerId);
 
         if (!string.IsNullOrWhiteSpace(retainerName))
             return retainerName;
 
         var retainer =
-            characterMonitor.GetCharacterById(ownerId);
+            characterMonitor.GetCharacterById(
+                ownerId);
 
         if (retainer != null &&
-            !string.IsNullOrWhiteSpace(retainer.FormattedName))
+            !string.IsNullOrWhiteSpace(
+                retainer.FormattedName))
         {
             return retainer.FormattedName;
         }
@@ -1463,13 +1677,18 @@ public class MainWindow : Window, IDisposable
             return catalogName;
 
         var freeCompanyName =
-            characterMonitor.GetCharacterNameById(ownerId);
+            characterMonitor.GetCharacterNameById(
+                ownerId);
 
-        if (!string.IsNullOrWhiteSpace(freeCompanyName))
+        if (!string.IsNullOrWhiteSpace(
+                freeCompanyName))
+        {
             return freeCompanyName;
+        }
 
         var freeCompany =
-            characterMonitor.GetCharacterById(ownerId);
+            characterMonitor.GetCharacterById(
+                ownerId);
 
         var name =
             freeCompany?.Name.ToString();
@@ -1496,13 +1715,16 @@ public class MainWindow : Window, IDisposable
         return source.Storage switch
         {
             StorageType.CharacterInventory =>
-                GetCharacterContainerName(source.Container),
+                GetCharacterContainerName(
+                    source.Container),
 
             StorageType.Retainer =>
-                GetRetainerContainerName(source.Container),
+                GetRetainerContainerName(
+                    source.Container),
 
             StorageType.FreeCompanyChest =>
-                GetFreeCompanyContainerName(source.Container),
+                GetFreeCompanyContainerName(
+                    source.Container),
 
             _ =>
                 $"Container {source.Container}"
