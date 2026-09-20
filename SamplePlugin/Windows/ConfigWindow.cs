@@ -17,7 +17,7 @@ public class ConfigWindow : Window, IDisposable
         Flags = ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoScrollbar |
                 ImGuiWindowFlags.NoScrollWithMouse;
 
-        Size = new Vector2(232, 90);
+        Size = new Vector2(380, 180);
         SizeCondition = ImGuiCond.Always;
 
         configuration = plugin.Configuration;
@@ -53,6 +53,35 @@ public class ConfigWindow : Window, IDisposable
         if (ImGui.Checkbox("Movable Config Window", ref movable))
         {
             configuration.IsConfigWindowMovable = movable;
+            configuration.Save();
+        }
+
+        ImGui.Separator();
+        ImGui.Text("Execution Highlight");
+
+        var enableRetainerHighlight =
+            configuration.EnableRetainerRowHighlight;
+
+        if (ImGui.Checkbox(
+                "Highlight retainer row",
+                ref enableRetainerHighlight))
+        {
+            configuration.EnableRetainerRowHighlight =
+                enableRetainerHighlight;
+
+            configuration.Save();
+        }
+
+        var retainerHighlightColor =
+            configuration.RetainerRowHighlightColor;
+
+        if (ImGui.ColorEdit4(
+                "Retainer row color",
+                ref retainerHighlightColor))
+        {
+            configuration.RetainerRowHighlightColor =
+                retainerHighlightColor;
+
             configuration.Save();
         }
     }
