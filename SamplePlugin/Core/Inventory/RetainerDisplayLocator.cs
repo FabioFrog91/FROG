@@ -89,23 +89,37 @@ public sealed class RetainerDisplayLocator
         if (coordinates.Count == 0)
             return RetainerDisplayLocation.Unavailable;
 
-        var state =
-            BuildStateBeforeAction(
-                plan,
-                actionIndex);
+        var previouslyPlannedFromSameSource =
+            plan.Actions
+                .Take(actionIndex)
+                .Where(previous =>
+                    previous.Type == PlannerActionType.Move &&
+                    previous.Source is not null &&
+                    IsSamePhysicalSource(
+                        previous.Source,
+                        source) &&
+                    previous.BaseItemId == action.BaseItemId &&
+                    previous.IsHq == action.IsHq)
+                .Sum(previous =>
+                    previous.Quantity);
 
         var matchingStacks =
-            state.Find(source)
+            plan.InitialState.Items
                 .Where(item =>
+                    item.Storage == source.Storage &&
+                    item.OwnerId == source.OwnerId &&
+                    item.Container == source.Container &&
                     item.BaseItemId == action.BaseItemId &&
                     item.IsHq == action.IsHq &&
                     item.Quantity > 0)
                 .OrderBy(item =>
-                    item.Slot)
-                .ToList();
+                    item.Slot);
 
         var remaining =
             action.Quantity;
+
+        var quantityToSkip =
+            previouslyPlannedFromSameSource;
 
         var positions =
             new List<RetainerDisplayPosition>();
@@ -120,10 +134,30 @@ public sealed class RetainerDisplayLocator
             if (remaining <= 0)
                 break;
 
+            var available =
+                stack.Quantity;
+
+            if (quantityToSkip > 0)
+            {
+                var skipped =
+                    Math.Min(
+                        quantityToSkip,
+                        available);
+
+                quantityToSkip -=
+                    skipped;
+
+                available -=
+                    skipped;
+            }
+
+            if (available <= 0)
+                continue;
+
             var moved =
                 Math.Min(
                     remaining,
-                    stack.Quantity);
+                    available);
 
             var displayIndex =
                 FindDisplayIndex(
@@ -187,42 +221,12 @@ public sealed class RetainerDisplayLocator
         return -1;
     }
 
-    private static PlannerState BuildStateBeforeAction(
-        PlannerPlan plan,
-        int actionIndex)
-    {
-        var state =
-            plan.InitialState;
+    private static bool IsSamePhysicalSource(
+        InventorySource left,
+        InventorySource right) =>
+        left.Storage == right.Storage &&
+        left.OwnerId == right.OwnerId &&
+        left.Container == right.Container &&
+        left.ParentCharacterId == right.ParentCharacterId;
 
-        for (var index = 0;
-             index < actionIndex;
-             index++)
-        {
-            var action =
-                plan.Actions[index];
-
-            state =
-                action.Type switch
-                {
-                    PlannerActionType.Move
-                        when action.Source is not null &&
-                             action.Destination is not null =>
-                        state.Move(
-                            action.Source,
-                            action.Destination,
-                            action.BaseItemId,
-                            action.IsHq,
-                            action.Quantity),
-
-                    PlannerActionType.SwitchCharacter =>
-                        state.WithCurrentCharacter(
-                            action.ToCharacterId),
-
-                    _ =>
-                        state
-                };
-        }
-
-        return state;
-    }
 }
