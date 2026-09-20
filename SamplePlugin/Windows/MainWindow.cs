@@ -784,6 +784,7 @@ public class MainWindow : Window, IDisposable
                 planExecutionSession.Reset();
                 planExecutionBaseline = null;
                 planExecutionVerificationResult = null;
+                planExecutionReconciliationResult = null;
             }
 
             return;
