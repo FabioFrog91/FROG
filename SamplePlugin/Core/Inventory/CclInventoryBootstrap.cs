@@ -39,6 +39,10 @@ public static class CclInventoryBootstrap
         builder.RegisterType<RetainerDisplayLocator>()
             .AsSelf()
             .SingleInstance();
+
+        builder.RegisterType<CharacterDisplayLocator>()
+            .AsSelf()
+            .SingleInstance();
     }
 }
 
