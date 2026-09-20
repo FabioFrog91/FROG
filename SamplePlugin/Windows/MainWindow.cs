@@ -834,23 +834,23 @@ public class MainWindow : Window, IDisposable
     private void DrawGlobalPlannerSearchDiagnostics(
         GlobalTransferPlannerDiagnosticsSnapshot diagnostics)
     {
-        ImGui.Text("DIAGNOSTICA RICERCA");
+        ImGui.Text("DIAGNOSTICA OPTIMIZER");
         ImGui.Separator();
 
         ImGui.Text(
-            $"Search calls: {diagnostics.SearchCalls:N0}");
+            $"Nodi allocazione visitati: {diagnostics.SearchCalls:N0}");
 
         ImGui.Text(
-            $"Stati unici: {diagnostics.UniqueStates:N0}");
+            $"Piani candidati compilati: {diagnostics.UniqueStates:N0}");
 
         ImGui.Text(
-            $"Stati dominati: {diagnostics.DominatedStates:N0}");
+            $"Piani candidati scartati: {diagnostics.DominatedStates:N0}");
 
         ImGui.Text(
-            $"Memo states: {diagnostics.MemoStates:N0}");
+            $"Candidati registrati: {diagnostics.MemoStates:N0}");
 
         ImGui.Text(
-            $"Memo entries: {diagnostics.MemoEntries:N0}");
+            $"Entry candidate: {diagnostics.MemoEntries:N0}");
 
         ImGui.Text(
             $"Azioni generate: {diagnostics.GeneratedActions:N0}");
@@ -863,42 +863,6 @@ public class MainWindow : Window, IDisposable
 
         ImGui.Text(
             $"SWITCH generati: {diagnostics.SwitchActionsGenerated:N0}");
-
-        ImGui.Text(
-            $"Stati espansi: {diagnostics.ExpandedStates:N0}");
-
-        ImGui.Text(
-            $"Cicli di path scartati: {diagnostics.PathCyclePrunes:N0}");
-
-        ImGui.Text(
-            $"Dead end: {diagnostics.DeadEnds:N0}");
-
-        var averageBranching =
-            diagnostics.ExpandedStates == 0
-                ? 0
-                : diagnostics.BranchingTotal /
-                  (double)diagnostics.ExpandedStates;
-
-        ImGui.Text(
-            $"Branching medio: {averageBranching:N2}");
-
-        ImGui.Text(
-            $"Branching massimo: {diagnostics.MaxBranching:N0}");
-
-        ImGui.Text(
-            $"Stati con 1 azione: {diagnostics.StatesWithOneAction:N0}");
-
-        ImGui.Text(
-            $"Stati con 2 azioni: {diagnostics.StatesWithTwoActions:N0}");
-
-        ImGui.Text(
-            $"Stati con 3-5 azioni: {diagnostics.StatesWithThreeToFiveActions:N0}");
-
-        ImGui.Text(
-            $"Stati con 6-10 azioni: {diagnostics.StatesWithSixToTenActions:N0}");
-
-        ImGui.Text(
-            $"Stati con >10 azioni: {diagnostics.StatesWithMoreThanTenActions:N0}");
 
         ImGui.Text(
             $"Profondità massima: {diagnostics.MaxDepth:N0}");
@@ -987,17 +951,6 @@ public class MainWindow : Window, IDisposable
                 $"AppliedActions={diagnostics.AppliedActions}",
                 $"MoveActionsGenerated={diagnostics.MoveActionsGenerated}",
                 $"SwitchActionsGenerated={diagnostics.SwitchActionsGenerated}",
-                $"ExpandedStates={diagnostics.ExpandedStates}",
-                $"PathCyclePrunes={diagnostics.PathCyclePrunes}",
-                $"DeadEnds={diagnostics.DeadEnds}",
-                $"BranchingTotal={diagnostics.BranchingTotal}",
-                $"AverageBranching={(diagnostics.ExpandedStates == 0 ? 0 : diagnostics.BranchingTotal / (double)diagnostics.ExpandedStates):F6}",
-                $"MaxBranching={diagnostics.MaxBranching}",
-                $"StatesWithOneAction={diagnostics.StatesWithOneAction}",
-                $"StatesWithTwoActions={diagnostics.StatesWithTwoActions}",
-                $"StatesWithThreeToFiveActions={diagnostics.StatesWithThreeToFiveActions}",
-                $"StatesWithSixToTenActions={diagnostics.StatesWithSixToTenActions}",
-                $"StatesWithMoreThanTenActions={diagnostics.StatesWithMoreThanTenActions}",
                 $"MaxDepth={diagnostics.MaxDepth}",
                 $"ElapsedMs={diagnostics.ElapsedMilliseconds}",
                 $"ManagedMemoryStartBytes={diagnostics.ManagedMemoryStartBytes}",
@@ -1134,17 +1087,6 @@ public class MainWindow : Window, IDisposable
             lines.Add($"AppliedActions={diagnostics.AppliedActions}");
             lines.Add($"MoveActionsGenerated={diagnostics.MoveActionsGenerated}");
             lines.Add($"SwitchActionsGenerated={diagnostics.SwitchActionsGenerated}");
-            lines.Add($"ExpandedStates={diagnostics.ExpandedStates}");
-            lines.Add($"PathCyclePrunes={diagnostics.PathCyclePrunes}");
-            lines.Add($"DeadEnds={diagnostics.DeadEnds}");
-            lines.Add($"BranchingTotal={diagnostics.BranchingTotal}");
-            lines.Add($"AverageBranching={(diagnostics.ExpandedStates == 0 ? 0 : diagnostics.BranchingTotal / (double)diagnostics.ExpandedStates):F6}");
-            lines.Add($"MaxBranching={diagnostics.MaxBranching}");
-            lines.Add($"StatesWithOneAction={diagnostics.StatesWithOneAction}");
-            lines.Add($"StatesWithTwoActions={diagnostics.StatesWithTwoActions}");
-            lines.Add($"StatesWithThreeToFiveActions={diagnostics.StatesWithThreeToFiveActions}");
-            lines.Add($"StatesWithSixToTenActions={diagnostics.StatesWithSixToTenActions}");
-            lines.Add($"StatesWithMoreThanTenActions={diagnostics.StatesWithMoreThanTenActions}");
             lines.Add($"MaxDepth={diagnostics.MaxDepth}");
             lines.Add($"ElapsedMs={diagnostics.ElapsedMilliseconds}");
             lines.Add($"ManagedMemoryStartBytes={diagnostics.ManagedMemoryStartBytes}");
