@@ -62,6 +62,11 @@ public sealed class Plugin : HostedPlugin
 
     private CancellationTokenSource? loginSyncCancellation;
 
+    private readonly object freeCompanySyncDiagnosticsLock = new();
+    private bool isFreeCompanyChestOpen;
+    private FreeCompanySyncDiagnosticsSnapshot freeCompanySyncDiagnostics =
+        FreeCompanySyncDiagnosticsSnapshot.Empty;
+
     private readonly PlayerInventoryAPI playerInventory;
 
     private CharacterCatalogSync? characterCatalogSync;
@@ -96,6 +101,17 @@ public sealed class Plugin : HostedPlugin
 
     internal IReadOnlyList<InventoryItemSnapshot> LastSyncIndexSnapshots { get; private set; }
         = Array.Empty<InventoryItemSnapshot>();
+
+    internal FreeCompanySyncDiagnosticsSnapshot GetFreeCompanySyncDiagnostics()
+    {
+        lock (freeCompanySyncDiagnosticsLock)
+        {
+            return freeCompanySyncDiagnostics with
+            {
+                Pages = freeCompanySyncDiagnostics.Pages.ToArray()
+            };
+        }
+    }
 
     public Plugin(IDalamudPluginInterface pluginInterface)
         : base(pluginInterface)
@@ -483,10 +499,19 @@ public sealed class Plugin : HostedPlugin
             }
         }
 
-        if (storageReader.TryReadActiveFreeCompany(
+        var chestOpen =
+            isFreeCompanyChestOpen;
+
+        var freeCompanyReadSucceeded =
+            storageReader.TryReadActiveFreeCompany(
                 observedAtUtc,
                 out var freeCompanySources,
-                out var freeCompanySnapshots))
+                out var freeCompanySnapshots);
+
+        var pageDiagnostics =
+            new List<FreeCompanyPageSyncDiagnostic>();
+
+        if (freeCompanyReadSucceeded)
         {
             foreach (var source in freeCompanySources)
             {
@@ -497,10 +522,50 @@ public sealed class Plugin : HostedPlugin
                         x.Container == source.Container)
                     .ToList();
 
+                var beforeSnapshots =
+                    InventoryIndex.Items
+                        .Where(x =>
+                            x.Storage == source.Storage &&
+                            x.OwnerId == source.OwnerId &&
+                            x.Container == source.Container)
+                        .ToList();
+
                 InventoryIndex.ReplaceSource(
                     source,
                     sourceSnapshots);
+
+                var afterSnapshots =
+                    InventoryIndex.Items
+                        .Where(x =>
+                            x.Storage == source.Storage &&
+                            x.OwnerId == source.OwnerId &&
+                            x.Container == source.Container)
+                        .ToList();
+
+                pageDiagnostics.Add(
+                    new FreeCompanyPageSyncDiagnostic(
+                        source.OwnerId,
+                        source.Container,
+                        beforeSnapshots.Count,
+                        beforeSnapshots.Sum(x => x.Quantity),
+                        sourceSnapshots.Count,
+                        sourceSnapshots.Sum(x => x.Quantity),
+                        afterSnapshots.Count,
+                        afterSnapshots.Sum(x => x.Quantity)));
             }
+        }
+
+        lock (freeCompanySyncDiagnosticsLock)
+        {
+            freeCompanySyncDiagnostics =
+                new FreeCompanySyncDiagnosticsSnapshot(
+                    observedAtUtc,
+                    chestOpen,
+                    freeCompanyReadSucceeded,
+                    freeCompanySources.Count,
+                    freeCompanySnapshots.Count,
+                    freeCompanySnapshots.Sum(x => x.Quantity),
+                    pageDiagnostics);
         }
     }
 
@@ -522,6 +587,8 @@ public sealed class Plugin : HostedPlugin
         AddonEvent type,
         AddonArgs args)
     {
+        isFreeCompanyChestOpen = true;
+
         SaveInventoryIndex();
     }
 
@@ -529,6 +596,8 @@ public sealed class Plugin : HostedPlugin
         AddonEvent type,
         AddonArgs args)
     {
+        isFreeCompanyChestOpen = false;
+
         SaveInventoryIndex();
     }
 
@@ -552,6 +621,36 @@ public sealed class Plugin : HostedPlugin
                 $"Catalogo personaggi salvato: {CharacterCatalogFilePath} ({CharacterCatalog.Entries.Count} identità)");
         }
     }
+}
+
+internal sealed record FreeCompanyPageSyncDiagnostic(
+    ulong FreeCompanyId,
+    uint Container,
+    int BeforeSnapshotCount,
+    int BeforeQuantity,
+    int ReadSnapshotCount,
+    int ReadQuantity,
+    int AfterSnapshotCount,
+    int AfterQuantity);
+
+internal sealed record FreeCompanySyncDiagnosticsSnapshot(
+    DateTime? ObservedAtUtc,
+    bool ChestOpen,
+    bool ReadSucceeded,
+    int SourceCount,
+    int SnapshotCount,
+    int TotalQuantity,
+    IReadOnlyList<FreeCompanyPageSyncDiagnostic> Pages)
+{
+    public static FreeCompanySyncDiagnosticsSnapshot Empty { get; } =
+        new(
+            null,
+            false,
+            false,
+            0,
+            0,
+            0,
+            Array.Empty<FreeCompanyPageSyncDiagnostic>());
 }
 
 internal sealed class FrogInventoryStartup : IHostedService
