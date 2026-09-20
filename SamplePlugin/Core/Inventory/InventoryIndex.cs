@@ -285,6 +285,44 @@ public sealed class InventoryIndex
         }
     }
 
+    public DateTime? GetCharacterInventoryObservedAtUtc(
+        ulong characterId)
+    {
+        lock (syncLock)
+        {
+            var observations =
+                sourceObservedAtUtc
+                    .Where(entry =>
+                        entry.Key.Storage == StorageType.CharacterInventory &&
+                        entry.Key.OwnerId == characterId)
+                    .Select(entry =>
+                        entry.Value)
+                    .ToList();
+
+            return observations.Count == 0
+                ? null
+                : observations.Max();
+        }
+    }
+
+    public int GetCharacterInventoryQuantity(
+        ulong characterId,
+        uint baseItemId,
+        bool isHq)
+    {
+        lock (syncLock)
+        {
+            return items
+                .Where(item =>
+                    item.BaseItemId == baseItemId &&
+                    item.IsHq == isHq &&
+                    item.Storage == StorageType.CharacterInventory &&
+                    item.OwnerId == characterId)
+                .Sum(item =>
+                    item.Quantity);
+        }
+    }
+
     public int GetQuantity(
         uint baseItemId,
         bool isHq,
