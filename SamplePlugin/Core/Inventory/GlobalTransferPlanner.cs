@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
+using System.Threading;
 
 namespace FROG.Core.Inventory;
 
@@ -9,12 +11,17 @@ public sealed class GlobalTransferPlanner
     private readonly PlannerActionValidator actionValidator = new();
     private readonly PlannerPlanEvaluator planEvaluator = new();
 
+    public GlobalTransferPlannerDiagnostics Diagnostics { get; } = new();
+
     public PlannerPlan Plan(
         RequirementSet requirements,
         PlannerState initialState,
         ResolutionPolicy resolutionPolicy,
         OptimizationSettings optimizationSettings)
     {
+        Diagnostics.Reset();
+        Diagnostics.Start();
+
         var initialMissing =
             CalculateMissing(
                 requirements,
@@ -39,26 +46,37 @@ public sealed class GlobalTransferPlanner
         var memo =
             new Dictionary<string, List<MemoEntry>>();
 
-        Search(
-            requirements,
-            resolutionPolicy,
-            optimizationSettings,
-            initialState,
-            initialPlan,
-            pathStates,
-            memo,
-            ref bestPlan);
-
-        var missing =
-            CalculateMissing(
+        try
+        {
+            Search(
                 requirements,
-                bestPlan.FinalState);
+                resolutionPolicy,
+                optimizationSettings,
+                initialState,
+                initialPlan,
+                pathStates,
+                memo,
+                0,
+                ref bestPlan);
 
-        return bestPlan.WithResult(
-            missing == 0
-                ? PlannerPlanResult.Completed
-                : PlannerPlanResult.CompletedWithMissing,
-            missing);
+            var missing =
+                CalculateMissing(
+                    requirements,
+                    bestPlan.FinalState);
+
+            return bestPlan.WithResult(
+                missing == 0
+                    ? PlannerPlanResult.Completed
+                    : PlannerPlanResult.CompletedWithMissing,
+                missing);
+        }
+        finally
+        {
+            Diagnostics.Complete(
+                memo.Count,
+                memo.Sum(pair =>
+                    pair.Value.Count));
+        }
     }
 
     private void Search(
@@ -69,8 +87,11 @@ public sealed class GlobalTransferPlanner
         PlannerPlan plan,
         HashSet<string> pathStates,
         Dictionary<string, List<MemoEntry>> memo,
+        int depth,
         ref PlannerPlan bestPlan)
     {
+        Diagnostics.RecordSearch(depth);
+
         var stateKey =
             BuildStateKey(state);
 
@@ -95,13 +116,20 @@ public sealed class GlobalTransferPlanner
                     memoEntry,
                     memo))
             {
+                Diagnostics.RecordDominatedState();
                 return;
             }
 
             RegisterMemoEntry(
                 stateKey,
                 memoEntry,
-                memo);
+                memo,
+                out var newMemoState,
+                out var memoEntryDelta);
+
+            Diagnostics.RecordMemoRegistration(
+                newMemoState,
+                memoEntryDelta);
 
             var currentMissing =
                 CalculateMissing(
@@ -151,6 +179,8 @@ public sealed class GlobalTransferPlanner
                          state,
                          resolutionPolicy))
             {
+                Diagnostics.RecordGeneratedAction();
+
                 if (!actionValidator.CanApply(
                         state,
                         action,
@@ -173,6 +203,8 @@ public sealed class GlobalTransferPlanner
                     continue;
                 }
 
+                Diagnostics.RecordAppliedAction();
+
                 var nextPlan =
                     plan.Append(
                         action,
@@ -186,6 +218,7 @@ public sealed class GlobalTransferPlanner
                     nextPlan,
                     pathStates,
                     memo,
+                    depth + 1,
                     ref bestPlan);
             }
         }
@@ -250,22 +283,31 @@ public sealed class GlobalTransferPlanner
     private static void RegisterMemoEntry(
         string stateKey,
         MemoEntry candidate,
-        Dictionary<string, List<MemoEntry>> memo)
+        Dictionary<string, List<MemoEntry>> memo,
+        out bool newMemoState,
+        out int memoEntryDelta)
     {
-        if (!memo.TryGetValue(
+        newMemoState =
+            !memo.TryGetValue(
                 stateKey,
-                out var entries))
+                out var entries);
+
+        if (newMemoState)
         {
             entries = new List<MemoEntry>();
             memo[stateKey] = entries;
         }
 
-        entries.RemoveAll(existing =>
-            Dominates(
-                candidate,
-                existing));
+        var removed =
+            entries!.RemoveAll(existing =>
+                Dominates(
+                    candidate,
+                    existing));
 
         entries.Add(candidate);
+
+        memoEntryDelta =
+            1 - removed;
     }
 
     private static bool Dominates(
@@ -931,3 +973,281 @@ public sealed class GlobalTransferPlanner
         }
     }
 }
+
+
+public sealed class GlobalTransferPlannerDiagnostics
+{
+    private const long MemorySampleInterval = 4096;
+
+    private readonly Stopwatch stopwatch = new();
+
+    private long searchCalls;
+    private long uniqueStates;
+    private long dominatedStates;
+    private long memoStates;
+    private long memoEntries;
+    private long generatedActions;
+    private long appliedActions;
+    private long maxDepth;
+    private long elapsedMilliseconds;
+    private long managedMemoryBytes;
+    private long peakManagedMemoryBytes;
+    private long allocatedBytes;
+    private long startAllocatedBytes;
+
+    internal void Reset()
+    {
+        stopwatch.Reset();
+
+        Interlocked.Exchange(
+            ref searchCalls,
+            0);
+
+        Interlocked.Exchange(
+            ref uniqueStates,
+            0);
+
+        Interlocked.Exchange(
+            ref dominatedStates,
+            0);
+
+        Interlocked.Exchange(
+            ref memoStates,
+            0);
+
+        Interlocked.Exchange(
+            ref memoEntries,
+            0);
+
+        Interlocked.Exchange(
+            ref generatedActions,
+            0);
+
+        Interlocked.Exchange(
+            ref appliedActions,
+            0);
+
+        Interlocked.Exchange(
+            ref maxDepth,
+            0);
+
+        Interlocked.Exchange(
+            ref elapsedMilliseconds,
+            0);
+
+        Interlocked.Exchange(
+            ref managedMemoryBytes,
+            0);
+
+        Interlocked.Exchange(
+            ref peakManagedMemoryBytes,
+            0);
+
+        Interlocked.Exchange(
+            ref allocatedBytes,
+            0);
+
+        Interlocked.Exchange(
+            ref startAllocatedBytes,
+            0);
+    }
+
+    internal void Start()
+    {
+        Interlocked.Exchange(
+            ref startAllocatedBytes,
+            GC.GetAllocatedBytesForCurrentThread());
+
+        stopwatch.Restart();
+
+        ObserveRuntime();
+    }
+
+    internal void RecordSearch(
+        int depth)
+    {
+        var calls =
+            Interlocked.Increment(
+                ref searchCalls);
+
+        UpdateMaximum(
+            ref maxDepth,
+            depth);
+
+        if (calls % MemorySampleInterval == 0)
+        {
+            ObserveRuntime();
+        }
+    }
+
+    internal void RecordDominatedState()
+    {
+        Interlocked.Increment(
+            ref dominatedStates);
+    }
+
+    internal void RecordMemoRegistration(
+        bool newMemoState,
+        int memoEntryDelta)
+    {
+        if (newMemoState)
+        {
+            Interlocked.Increment(
+                ref uniqueStates);
+
+            Interlocked.Increment(
+                ref memoStates);
+        }
+
+        Interlocked.Add(
+            ref memoEntries,
+            memoEntryDelta);
+    }
+
+    internal void RecordGeneratedAction()
+    {
+        Interlocked.Increment(
+            ref generatedActions);
+    }
+
+    internal void RecordAppliedAction()
+    {
+        Interlocked.Increment(
+            ref appliedActions);
+    }
+
+    internal void Complete(
+        int finalMemoStates,
+        int finalMemoEntries)
+    {
+        ObserveRuntime();
+
+        stopwatch.Stop();
+
+        Interlocked.Exchange(
+            ref elapsedMilliseconds,
+            stopwatch.ElapsedMilliseconds);
+
+        Interlocked.Exchange(
+            ref memoStates,
+            finalMemoStates);
+
+        Interlocked.Exchange(
+            ref uniqueStates,
+            finalMemoStates);
+
+        Interlocked.Exchange(
+            ref memoEntries,
+            finalMemoEntries);
+    }
+
+    public GlobalTransferPlannerDiagnosticsSnapshot Snapshot()
+    {
+        return new GlobalTransferPlannerDiagnosticsSnapshot(
+            SearchCalls:
+                Interlocked.Read(
+                    ref searchCalls),
+            UniqueStates:
+                Interlocked.Read(
+                    ref uniqueStates),
+            DominatedStates:
+                Interlocked.Read(
+                    ref dominatedStates),
+            MemoStates:
+                Interlocked.Read(
+                    ref memoStates),
+            MemoEntries:
+                Interlocked.Read(
+                    ref memoEntries),
+            GeneratedActions:
+                Interlocked.Read(
+                    ref generatedActions),
+            AppliedActions:
+                Interlocked.Read(
+                    ref appliedActions),
+            MaxDepth:
+                Interlocked.Read(
+                    ref maxDepth),
+            ElapsedMilliseconds:
+                Interlocked.Read(
+                    ref elapsedMilliseconds),
+            ManagedMemoryBytes:
+                Interlocked.Read(
+                    ref managedMemoryBytes),
+            PeakManagedMemoryBytes:
+                Interlocked.Read(
+                    ref peakManagedMemoryBytes),
+            AllocatedBytes:
+                Interlocked.Read(
+                    ref allocatedBytes));
+    }
+
+    private void ObserveRuntime()
+    {
+        Interlocked.Exchange(
+            ref elapsedMilliseconds,
+            stopwatch.ElapsedMilliseconds);
+
+        var managedMemory =
+            GC.GetTotalMemory(
+                forceFullCollection: false);
+
+        Interlocked.Exchange(
+            ref managedMemoryBytes,
+            managedMemory);
+
+        UpdateMaximum(
+            ref peakManagedMemoryBytes,
+            managedMemory);
+
+        var startAllocated =
+            Interlocked.Read(
+                ref startAllocatedBytes);
+
+        var currentAllocated =
+            GC.GetAllocatedBytesForCurrentThread();
+
+        Interlocked.Exchange(
+            ref allocatedBytes,
+            Math.Max(
+                0,
+                currentAllocated - startAllocated));
+    }
+
+    private static void UpdateMaximum(
+        ref long target,
+        long candidate)
+    {
+        while (true)
+        {
+            var current =
+                Interlocked.Read(
+                    ref target);
+
+            if (candidate <= current)
+                return;
+
+            if (Interlocked.CompareExchange(
+                    ref target,
+                    candidate,
+                    current) == current)
+            {
+                return;
+            }
+        }
+    }
+}
+
+public sealed record GlobalTransferPlannerDiagnosticsSnapshot(
+    long SearchCalls,
+    long UniqueStates,
+    long DominatedStates,
+    long MemoStates,
+    long MemoEntries,
+    long GeneratedActions,
+    long AppliedActions,
+    long MaxDepth,
+    long ElapsedMilliseconds,
+    long ManagedMemoryBytes,
+    long PeakManagedMemoryBytes,
+    long AllocatedBytes);
