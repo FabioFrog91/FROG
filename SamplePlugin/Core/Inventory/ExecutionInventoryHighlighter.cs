@@ -9,6 +9,12 @@ using System.Numerics;
 
 namespace FROG.Core.Inventory;
 
+public readonly record struct ExecutionQuantityBadgeAnchor(
+    string AddonName,
+    uint NodeId,
+    nint AddonAddress,
+    int Quantity);
+
 /// <summary>
 /// Passive execution highlighting for inventory tabs and slots.
 /// Resolves UI nodes fresh, changes presentation fields only, and restores the
@@ -29,7 +35,11 @@ public sealed unsafe class ExecutionInventoryHighlighter
     private HighlightTarget? cachedTarget;
 
     private readonly List<NodeBinding> activeBindings = new();
+    private readonly List<ExecutionQuantityBadgeAnchor> quantityBadgeAnchors = new();
     private string activeVisualKey = string.Empty;
+
+    public IReadOnlyList<ExecutionQuantityBadgeAnchor> QuantityBadgeAnchors =>
+        quantityBadgeAnchors;
 
     public ExecutionInventoryHighlighter(
         IGameGui gameGui,
@@ -116,6 +126,7 @@ public sealed unsafe class ExecutionInventoryHighlighter
         }
 
         activeBindings.Clear();
+        quantityBadgeAnchors.Clear();
         activeVisualKey = string.Empty;
     }
 
@@ -258,10 +269,11 @@ public sealed unsafe class ExecutionInventoryHighlighter
                             continue;
                         }
 
-                        AddBinding(
+                        AddSlotBinding(
                             $"RetainerGrid{position.Page - 1}",
                             GetSlotNodeId(
-                                position.Slot));
+                                position.Slot),
+                            position.Quantity);
                     }
                 });
 
@@ -306,10 +318,11 @@ public sealed unsafe class ExecutionInventoryHighlighter
                             continue;
                         }
 
-                        AddBinding(
+                        AddSlotBinding(
                             "RetainerGrid",
                             GetSlotNodeId(
-                                position.Slot));
+                                position.Slot),
+                            position.Quantity);
                     }
                 });
 
@@ -337,10 +350,11 @@ public sealed unsafe class ExecutionInventoryHighlighter
                 {
                     foreach (var position in target.Positions)
                     {
-                        AddBinding(
+                        AddSlotBinding(
                             $"InventoryGrid{position.Page - 1}E",
                             GetSlotNodeId(
-                                position.Slot));
+                                position.Slot),
+                            position.Quantity);
                     }
                 });
 
@@ -391,10 +405,11 @@ public sealed unsafe class ExecutionInventoryHighlighter
                                 ? "InventoryGrid0"
                                 : "InventoryGrid1";
 
-                        AddBinding(
+                        AddSlotBinding(
                             grid,
                             GetSlotNodeId(
-                                position.Slot));
+                                position.Slot),
+                            position.Quantity);
                     }
                 });
 
@@ -439,10 +454,11 @@ public sealed unsafe class ExecutionInventoryHighlighter
                             continue;
                         }
 
-                        AddBinding(
+                        AddSlotBinding(
                             "InventoryGrid",
                             GetSlotNodeId(
-                                position.Slot));
+                                position.Slot),
+                            position.Quantity);
                     }
                 });
 
@@ -478,7 +494,7 @@ public sealed unsafe class ExecutionInventoryHighlighter
         rebuild();
     }
 
-    private void AddBinding(
+    private bool AddBinding(
         string addonName,
         uint nodeId)
     {
@@ -488,11 +504,11 @@ public sealed unsafe class ExecutionInventoryHighlighter
                 out var addonAddress,
                 out var node))
         {
-            return;
+            return false;
         }
 
         if ((ushort)node->Type < 1000)
-            return;
+            return false;
 
         activeBindings.Add(
             new NodeBinding(
@@ -501,6 +517,28 @@ public sealed unsafe class ExecutionInventoryHighlighter
                 addonAddress,
                 NodeVisualState.Capture(
                     node)));
+
+        return true;
+    }
+
+    private void AddSlotBinding(
+        string addonName,
+        uint nodeId,
+        int quantity)
+    {
+        if (!AddBinding(
+                addonName,
+                nodeId))
+        {
+            return;
+        }
+
+        quantityBadgeAnchors.Add(
+            new ExecutionQuantityBadgeAnchor(
+                addonName,
+                nodeId,
+                activeBindings[^1].AddonAddress,
+                quantity));
     }
 
     private void ApplyConfiguredColour()
