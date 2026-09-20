@@ -19,6 +19,7 @@ public class MainWindow : Window, IDisposable
 {
     private readonly Plugin plugin;
     private readonly ICharacterMonitor characterMonitor;
+    private readonly CharacterCatalog characterCatalog;
 
     private RequirementSet? importedRequirementSet;
     private PlannerPlan? globalPlannerPlan;
@@ -28,11 +29,13 @@ public class MainWindow : Window, IDisposable
 
     public MainWindow(
         Plugin plugin,
-        ICharacterMonitor characterMonitor)
+        ICharacterMonitor characterMonitor,
+        CharacterCatalog characterCatalog)
         : base("FROG")
     {
         this.plugin = plugin;
         this.characterMonitor = characterMonitor;
+        this.characterCatalog = characterCatalog;
 
         SizeConstraints = new WindowSizeConstraints
         {
@@ -521,7 +524,7 @@ public class MainWindow : Window, IDisposable
             {
                 lines.Add(
                     string.Join(
-                        "\t",
+                        "	",
                         actionIndex,
                         "SWITCH",
                         GetCharacterName(action.FromCharacterId),
@@ -541,7 +544,7 @@ public class MainWindow : Window, IDisposable
 
             lines.Add(
                 string.Join(
-                    "\t",
+                    "	",
                     actionIndex,
                     "MOVE",
                     GetItemName(action.BaseItemId),
@@ -572,6 +575,12 @@ public class MainWindow : Window, IDisposable
     {
         if (characterId == 0)
             return "Unknown";
+
+        var catalogName =
+            characterCatalog.GetName(characterId);
+
+        if (!string.IsNullOrWhiteSpace(catalogName))
+            return catalogName;
 
         if (Plugin.PlayerState.IsLoaded &&
             Plugin.PlayerState.ContentId == characterId)
@@ -738,7 +747,7 @@ public class MainWindow : Window, IDisposable
         if (searchItemId <= 0)
         {
             ImGui.TextWrapped(
-                "Inserisci il Base Item ID nella sezione \"RICERCA NELL'INDICE\" per visualizzare la tabella di debug.");
+                "Inserisci il Base Item ID nella sezione "RICERCA NELL'INDICE" per visualizzare la tabella di debug.");
 
             return;
         }
@@ -924,7 +933,7 @@ public class MainWindow : Window, IDisposable
                 $"LastSyncUtc={plugin.LastSyncAtUtc:O}",
                 $"CharacterId={plugin.LastSyncCharacterId}",
                 string.Empty,
-                "SOURCE\tSTORAGE\tOWNER\tOWNER_ID\tCONTAINER\tSLOT\tRAW_ID\tBASE_ID\tQTY\tHQ\tVERIFIED"
+                "SOURCE	STORAGE	OWNER	OWNER_ID	CONTAINER	SLOT	RAW_ID	BASE_ID	QTY	HQ	VERIFIED"
             };
 
         foreach (var snapshot in liveSnapshots)
@@ -953,7 +962,7 @@ public class MainWindow : Window, IDisposable
         InventoryItemSnapshot snapshot)
     {
         return string.Join(
-            "\t",
+            "	",
             sourceName,
             snapshot.Storage,
             GetOwnerName(snapshot),
@@ -1016,7 +1025,7 @@ public class MainWindow : Window, IDisposable
             $"GeneratedUtc={DateTime.UtcNow:O}",
             $"MainCharacterId={(Plugin.PlayerState.IsLoaded ? Plugin.PlayerState.ContentId : 0)}",
             string.Empty,
-            "PRIORITY\tSTORAGE\tSOURCE\tOWNER_ID\tCONTAINER\tREAD\tUSE"
+            "PRIORITY	STORAGE	SOURCE	OWNER_ID	CONTAINER	READ	USE"
         };
 
         for (var i = 0;
@@ -1032,7 +1041,7 @@ public class MainWindow : Window, IDisposable
 
             lines.Add(
                 string.Join(
-                    "\t",
+                    "	",
                     i + 1,
                     source.Storage,
                     GetSourceName(source),
@@ -1059,7 +1068,7 @@ public class MainWindow : Window, IDisposable
                 $"Complete={plan.IsComplete}",
                 $"Missing={plan.Missing}",
                 string.Empty,
-                "ITEM\tREQUIRED\tAVAILABLE\tMISSING\tSOURCE\tQUALITY\tQTY"
+                "ITEM	REQUIRED	AVAILABLE	MISSING	SOURCE	QUALITY	QTY"
             };
 
         foreach (var resolution in plan.Resolutions)
@@ -1068,7 +1077,7 @@ public class MainWindow : Window, IDisposable
             {
                 lines.Add(
                     string.Join(
-                        "\t",
+                        "	",
                         GetItemName(resolution.Requirement.BaseItemId),
                         resolution.Requirement.Quantity,
                         resolution.Available,
@@ -1084,7 +1093,7 @@ public class MainWindow : Window, IDisposable
             {
                 lines.Add(
                     string.Join(
-                        "\t",
+                        "	",
                         GetItemName(resolution.Requirement.BaseItemId),
                         resolution.Requirement.Quantity,
                         resolution.Available,
@@ -1112,14 +1121,14 @@ public class MainWindow : Window, IDisposable
                 $"Complete={plan.IsComplete}",
                 $"Missing={plan.Missing}",
                 string.Empty,
-                "ITEM\tBASE_ID\tSOURCE\tSTORAGE\tOWNER_ID\tCONTAINER\tQUALITY\tQTY"
+                "ITEM	BASE_ID	SOURCE	STORAGE	OWNER_ID	CONTAINER	QUALITY	QTY"
             };
 
         foreach (var intent in plan.Intents)
         {
             lines.Add(
                 string.Join(
-                    "\t",
+                    "	",
                     GetItemName(intent.BaseItemId),
                     intent.BaseItemId,
                     GetSourceName(intent.Source),
@@ -1230,6 +1239,14 @@ public class MainWindow : Window, IDisposable
         var parentCharacterId =
             snapshot.ParentCharacterId;
 
+        if (parentCharacterId == 0 &&
+            snapshot.Storage == StorageType.Retainer)
+        {
+            parentCharacterId =
+                characterCatalog.GetParentCharacterId(
+                    snapshot.OwnerId);
+        }
+
         if (parentCharacterId == 0)
         {
             parentCharacterId =
@@ -1321,6 +1338,13 @@ public class MainWindow : Window, IDisposable
     private string GetRetainerSourceName(
         InventorySource source)
     {
+        var catalogName =
+            characterCatalog.GetName(
+                source.OwnerId);
+
+        if (!string.IsNullOrWhiteSpace(catalogName))
+            return catalogName;
+
         var retainerName =
             characterMonitor.GetCharacterNameById(
                 source.OwnerId);
@@ -1344,6 +1368,13 @@ public class MainWindow : Window, IDisposable
     private string GetFreeCompanySourceName(
         InventorySource source)
     {
+        var catalogName =
+            characterCatalog.GetName(
+                source.OwnerId);
+
+        if (!string.IsNullOrWhiteSpace(catalogName))
+            return catalogName;
+
         var freeCompanyName =
             characterMonitor.GetCharacterNameById(
                 source.OwnerId);
@@ -1398,6 +1429,12 @@ public class MainWindow : Window, IDisposable
     private string GetRetainerOwnerName(
         ulong ownerId)
     {
+        var catalogName =
+            characterCatalog.GetName(ownerId);
+
+        if (!string.IsNullOrWhiteSpace(catalogName))
+            return catalogName;
+
         var retainerName =
             characterMonitor.GetCharacterNameById(ownerId);
 
@@ -1419,6 +1456,12 @@ public class MainWindow : Window, IDisposable
     private string GetFreeCompanyOwnerName(
         ulong ownerId)
     {
+        var catalogName =
+            characterCatalog.GetName(ownerId);
+
+        if (!string.IsNullOrWhiteSpace(catalogName))
+            return catalogName;
+
         var freeCompanyName =
             characterMonitor.GetCharacterNameById(ownerId);
 
