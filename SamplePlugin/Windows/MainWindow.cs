@@ -23,10 +23,11 @@ public class MainWindow : Window, IDisposable
     private readonly CharacterCatalog characterCatalog;
     private readonly PlannerSourceBuilder plannerSourceBuilder;
     private readonly RetainerDisplayLocator retainerDisplayLocator;
+    private readonly GlobalPlannerCoordinator globalPlannerCoordinator;
+    private readonly PlanExecutionRuntime executionRuntime;
+    private readonly ExecutionWindow executionWindow;
 
     private RequirementSet? importedRequirementSet;
-    private readonly GlobalPlannerCoordinator globalPlannerCoordinator = new();
-    private readonly PlanExecutionCoordinator planExecutionCoordinator = new();
     private readonly OptimizationSettings optimizationSettings = new();
 
     private RequirementSet? resolverCachedRequirementSet;
@@ -49,13 +50,19 @@ public class MainWindow : Window, IDisposable
         Plugin plugin,
         ICharacterMonitor characterMonitor,
         CharacterCatalog characterCatalog,
-        RetainerDisplayLocator retainerDisplayLocator)
+        RetainerDisplayLocator retainerDisplayLocator,
+        GlobalPlannerCoordinator globalPlannerCoordinator,
+        PlanExecutionRuntime executionRuntime,
+        ExecutionWindow executionWindow)
         : base("FROG")
     {
         this.plugin = plugin;
         this.characterMonitor = characterMonitor;
         this.characterCatalog = characterCatalog;
         this.retainerDisplayLocator = retainerDisplayLocator;
+        this.globalPlannerCoordinator = globalPlannerCoordinator;
+        this.executionRuntime = executionRuntime;
+        this.executionWindow = executionWindow;
         plannerSourceBuilder =
             new PlannerSourceBuilder(
                 characterCatalog,
@@ -586,8 +593,6 @@ public class MainWindow : Window, IDisposable
         RequirementSet requirementSet,
         ResolutionPolicy resolutionPolicy)
     {
-        ApplyGlobalPlannerCompletion();
-
         var plannerState =
             globalPlannerCoordinator.Snapshot;
 
@@ -761,11 +766,14 @@ public class MainWindow : Window, IDisposable
         PlannerPlan plan,
         RequirementSet requirementSet)
     {
-        ImGui.Text("ESECUZIONE MANUALE");
+        ImGui.Text("ESECUZIONE AUTOMATICA");
         ImGui.Separator();
 
+        var execution =
+            executionRuntime.Snapshot;
+
         var session =
-            planExecutionCoordinator.Session;
+            execution.Session;
 
         if (session == null ||
             !ReferenceEquals(
@@ -773,35 +781,20 @@ public class MainWindow : Window, IDisposable
                 plan))
         {
             ImGui.TextWrapped(
-                "Avvia una sessione per seguire il piano. Executed e Verified restano separati: FROG avanza solo dopo aver osservato il risultato reale nell'InventoryIndex.");
+                "Avvia l'esecuzione guidata. FROG osserverà automaticamente inventario, retainer, FC e cambi personaggio e passerà all'azione successiva senza conferme manuali.");
 
             if (ImGui.Button("AVVIA ESECUZIONE"))
             {
-                planExecutionCoordinator.Start(
-                    plan);
+                executionRuntime.Start(
+                    plan,
+                    requirementSet,
+                    optimizationSettings);
+
+                executionWindow.IsOpen = true;
             }
 
             return;
         }
-
-        var currentCharacterId =
-            Plugin.PlayerState.IsLoaded
-                ? Plugin.PlayerState.ContentId
-                : 0;
-
-        var execution =
-            planExecutionCoordinator.Update(
-                plugin.InventoryIndex,
-                currentCharacterId);
-
-        session =
-            execution.Session;
-
-        if (session == null)
-            return;
-
-        ImGui.Text(
-            $"Eseguite: {session.ExecutedActionCount}/{session.TotalActionCount}");
 
         ImGui.Text(
             $"Verificate: {session.VerifiedActionCount}/{session.TotalActionCount}");
@@ -809,187 +802,42 @@ public class MainWindow : Window, IDisposable
         ImGui.Text(
             $"Rimanenti: {session.RemainingActionCount}");
 
-        if (execution.Status ==
-            PlanExecutionCoordinatorStatus.ReplanRequired)
+        if (execution.IsReplanning)
         {
-            if (execution.Reconciliation != null)
-            {
-                StartExecutionReplanTask(
-                    requirementSet,
-                    plan,
-                    execution.Reconciliation);
-            }
-
-            return;
+            ImGui.TextWrapped(
+                "Varianza osservata: FROG sta ricalcolando automaticamente il piano residuo.");
         }
-
-        if (execution.Status ==
-            PlanExecutionCoordinatorStatus.Verified)
+        else if (session.IsComplete)
         {
             ImGui.Text(
-                "Azione verificata. Passaggio alla successiva.");
-
-            return;
-        }
-
-        if (session.IsComplete)
-        {
-            ImGui.Text(
-                "Tutte le azioni pianificate sono state eseguite e verificate.");
-
-            if (ImGui.Button("RESET PROGRESSO"))
-            {
-                planExecutionCoordinator.Reset();
-            }
-
-            return;
-        }
-
-        var action =
-            session.CurrentAction;
-
-        if (action == null)
-            return;
-
-        ImGui.Spacing();
-
-        ImGui.Text(
-            $"AZIONE CORRENTE #{session.CurrentActionIndex}");
-
-        if (action.Type == PlannerActionType.SwitchCharacter)
-        {
-            ImGui.TextWrapped(
-                $"SWITCH {GetCharacterName(action.FromCharacterId)} -> {GetCharacterName(action.ToCharacterId)}");
-        }
-        else if (action.Source is not null &&
-                 action.Destination is not null)
-        {
-            ImGui.TextWrapped(
-                $"{GetItemName(action.BaseItemId)} | " +
-                $"{(action.IsHq ? "HQ" : "NQ")} | " +
-                $"Qty {action.Quantity}");
-
-            ImGui.TextWrapped(
-                $"DA: {GetSourceName(action.Source)} | " +
-                GetActionSourceLocationText(
-                    plan,
-                    session.CurrentActionIndex - 1,
-                    action));
-
-            ImGui.TextWrapped(
-                $"A: {GetSourceName(action.Destination)} | {GetContainerName(action.Destination)}");
-        }
-
-        if (!session.IsCurrentActionExecuted)
-        {
-            if (ImGui.Button("SEGNA AZIONE ESEGUITA"))
-            {
-                planExecutionCoordinator.TryMarkCurrentExecuted(
-                    out _);
-            }
+                "Esecuzione completata.");
         }
         else
         {
-            ImGui.Text(
-                "Stato: EXECUTED, in attesa di verifica.");
+            ImGui.TextWrapped(
+                "La guida di esecuzione è attiva e si aggiorna automaticamente.");
+        }
 
-            if (execution.Verification != null)
-            {
-                ImGui.TextWrapped(
-                    $"Verifica: {execution.Verification.Status} | " +
-                    execution.Verification.Message);
-            }
+        ImGui.Spacing();
 
-            if (execution.Reconciliation != null)
-            {
-                ImGui.TextWrapped(
-                    $"Riconciliazione: {execution.Reconciliation.Status} | " +
-                    $"Confermate {execution.Reconciliation.ReconciledQuantity}/{execution.Reconciliation.PlannedQuantity} | " +
-                    $"Rimanenti {execution.Reconciliation.RemainingQuantity}");
-
-                ImGui.TextWrapped(
-                    $"Delta osservati: source -{execution.Reconciliation.SourceDecrease}, " +
-                    $"destination +{execution.Reconciliation.DestinationIncrease}");
-
-                ImGui.TextWrapped(
-                    execution.Reconciliation.Message);
-            }
+        if (ImGui.Button("APRI GUIDA ESECUZIONE"))
+        {
+            executionWindow.IsOpen = true;
         }
 
         ImGui.SameLine();
 
-        if (ImGui.Button("RESET PROGRESSO"))
+        if (ImGui.Button("INTERROMPI ESECUZIONE"))
         {
-            planExecutionCoordinator.Reset();
+            executionRuntime.Clear();
+            executionWindow.IsOpen = false;
         }
     }
 
     private void ResetPlanExecutionSession()
     {
-        planExecutionCoordinator.Clear();
-    }
-
-    private void StartExecutionReplanTask(
-        RequirementSet requirementSet,
-        PlannerPlan previousPlan,
-        PlanExecutionReconciliationResult reconciliation)
-    {
-        if (globalPlannerCoordinator.Snapshot.IsRunning)
-            return;
-
-        var currentCharacterId =
-            Plugin.PlayerState.IsLoaded
-                ? Plugin.PlayerState.ContentId
-                : 0;
-
-        var mainCharacterId =
-            previousPlan.InitialState.MainCharacterId;
-
-        if (currentCharacterId == 0 ||
-            mainCharacterId == 0)
-        {
-            return;
-        }
-
-        var currentItems =
-            plugin.InventoryIndex.Items;
-
-        var sources =
-            plannerSourceBuilder.Build(
-                currentItems,
-                mainCharacterId);
-
-        var resolutionPolicy =
-            new ResolutionPolicy(
-                sources,
-                mainCharacterId);
-
-        var variance =
-            reconciliation.VarianceQuantity;
-
-        var varianceText =
-            variance switch
-            {
-                > 0 => $"+{variance}",
-                < 0 => variance.ToString(),
-                _ => "0"
-            };
-
-        var replanMessage =
-            $"REPLAN ESECUZIONE: previsto {reconciliation.PlannedQuantity}, " +
-            $"trasferimento confermato {reconciliation.ObservedTransferredQuantity} " +
-            $"(varianza {varianceText}), " +
-            $"delta source -{reconciliation.SourceDecrease}, " +
-            $"delta destination +{reconciliation.DestinationIncrease}. " +
-            $"Piano residuo ricalcolato dallo stato reale.";
-
-        StartGlobalPlannerTask(
-            requirementSet,
-            resolutionPolicy,
-            mainCharacterId,
-            currentCharacterId,
-            replanMessage,
-            autoStartExecution: true);
+        executionRuntime.Clear();
+        executionWindow.IsOpen = false;
     }
 
     private void StartGlobalPlannerTask(
@@ -1040,24 +888,6 @@ public class MainWindow : Window, IDisposable
             return;
 
         ResetPlanExecutionSession();
-    }
-
-    private void ApplyGlobalPlannerCompletion()
-    {
-        if (!globalPlannerCoordinator.TryConsumeCompletion(
-                out var completion))
-        {
-            return;
-        }
-
-        ResetPlanExecutionSession();
-
-        if (completion.AutoStartExecution &&
-            completion.Plan != null)
-        {
-            planExecutionCoordinator.Start(
-                completion.Plan);
-        }
     }
 
     private void DrawGlobalPlannerSearchDiagnostics(
