@@ -13,10 +13,19 @@ public sealed record PlanExecutionReconciliationResult(
     PlanExecutionReconciliationStatus Status,
     int PlannedQuantity,
     int ReconciledQuantity,
+    int ObservedTransferredQuantity,
     int RemainingQuantity,
     int SourceDecrease,
     int DestinationIncrease,
-    string Message);
+    string Message)
+{
+    public int VarianceQuantity =>
+        ObservedTransferredQuantity - PlannedQuantity;
+
+    public bool HasVariance =>
+        SourceDecrease != PlannedQuantity ||
+        DestinationIncrease != PlannedQuantity;
+}
 
 /// <summary>
 /// Explains an observed MOVE mismatch without mutating the immutable plan.
@@ -39,6 +48,7 @@ public sealed class PlanExecutionReconciler
                 PlanExecutionReconciliationStatus.NotSatisfied,
                 action.Quantity,
                 0,
+                0,
                 Math.Max(0, action.Quantity),
                 0,
                 0,
@@ -57,12 +67,15 @@ public sealed class PlanExecutionReconciler
                 observation.DestinationQuantity -
                 baseline.DestinationQuantity);
 
+        var observedTransferredQuantity =
+            Math.Min(
+                sourceDecrease,
+                destinationIncrease);
+
         var reconciledQuantity =
             Math.Min(
                 action.Quantity,
-                Math.Min(
-                    sourceDecrease,
-                    destinationIncrease));
+                observedTransferredQuantity);
 
         var remainingQuantity =
             Math.Max(
@@ -76,6 +89,7 @@ public sealed class PlanExecutionReconciler
                 PlanExecutionReconciliationStatus.Satisfied,
                 action.Quantity,
                 reconciledQuantity,
+                observedTransferredQuantity,
                 0,
                 sourceDecrease,
                 destinationIncrease,
@@ -88,6 +102,7 @@ public sealed class PlanExecutionReconciler
                 PlanExecutionReconciliationStatus.PartiallySatisfied,
                 action.Quantity,
                 reconciledQuantity,
+                observedTransferredQuantity,
                 remainingQuantity,
                 sourceDecrease,
                 destinationIncrease,
@@ -98,6 +113,7 @@ public sealed class PlanExecutionReconciler
             PlanExecutionReconciliationStatus.NotSatisfied,
             action.Quantity,
             0,
+            observedTransferredQuantity,
             action.Quantity,
             sourceDecrease,
             destinationIncrease,
