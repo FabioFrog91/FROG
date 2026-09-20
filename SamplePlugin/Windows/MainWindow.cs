@@ -9,6 +9,7 @@ using FROG.Core.Inventory.Providers;
 using Lumina.Excel.Sheets;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Numerics;
@@ -28,6 +29,12 @@ public class MainWindow : Window, IDisposable
     private GlobalTransferPlannerDiagnostics? globalPlannerDiagnostics;
     private string? globalPlannerError;
     private readonly OptimizationSettings optimizationSettings = new();
+
+    private long resolverComputeCalls;
+    private double resolverLastElapsedMilliseconds;
+    private long resolverLastAllocatedBytes;
+    private long resolverTotalAllocatedBytes;
+    private long resolverPeakAllocatedBytes;
 
     private int searchItemId;
 
@@ -222,6 +229,12 @@ public class MainWindow : Window, IDisposable
             return;
         }
 
+        var resolverAllocatedBefore =
+            GC.GetAllocatedBytesForCurrentThread();
+
+        var resolverStopwatch =
+            Stopwatch.StartNew();
+
         var sources =
             BuildPlannerSources(
                 indexItems,
@@ -263,6 +276,27 @@ public class MainWindow : Window, IDisposable
                 sourceCatalog,
                 resolutionPolicy);
 
+        resolverStopwatch.Stop();
+
+        resolverComputeCalls++;
+
+        resolverLastElapsedMilliseconds =
+            resolverStopwatch.Elapsed.TotalMilliseconds;
+
+        resolverLastAllocatedBytes =
+            Math.Max(
+                0,
+                GC.GetAllocatedBytesForCurrentThread() -
+                resolverAllocatedBefore);
+
+        resolverTotalAllocatedBytes +=
+            resolverLastAllocatedBytes;
+
+        resolverPeakAllocatedBytes =
+            Math.Max(
+                resolverPeakAllocatedBytes,
+                resolverLastAllocatedBytes);
+
         ImGui.Text(
             $"Source disponibili: {sources.Count}");
 
@@ -277,6 +311,36 @@ public class MainWindow : Window, IDisposable
 
         ImGui.Text(
             $"Piano completo: {(plan.IsComplete ? "SI" : "NO")}");
+
+        ImGui.Spacing();
+
+        ImGui.Text("DIAGNOSTICA RESOLVER PER-FRAME");
+        ImGui.Separator();
+
+        ImGui.Text(
+            $"Chiamate compute: {resolverComputeCalls:N0}");
+
+        ImGui.Text(
+            $"Ultimo compute: {resolverLastElapsedMilliseconds:N3} ms");
+
+        ImGui.Text(
+            $"Allocato ultimo compute: {FormatMegabytes(resolverLastAllocatedBytes):N3} MB");
+
+        ImGui.Text(
+            $"Picco allocato per compute: {FormatMegabytes(resolverPeakAllocatedBytes):N3} MB");
+
+        ImGui.Text(
+            $"Allocato cumulativo resolver: {FormatMegabytes(resolverTotalAllocatedBytes):N1} MB");
+
+        ImGui.Spacing();
+
+        if (ImGui.Button("COPIA DIAGNOSTICA RESOLVER"))
+        {
+            ImGui.SetClipboardText(
+                BuildResolverRuntimeDiagnosticsClipboardText(
+                    importedRequirementSet,
+                    resolutionPolicy));
+        }
 
         ImGui.Spacing();
 
@@ -663,13 +727,31 @@ public class MainWindow : Window, IDisposable
             $"Tempo: {diagnostics.ElapsedMilliseconds:N0} ms");
 
         ImGui.Text(
-            $"Managed memory: {FormatMegabytes(diagnostics.ManagedMemoryBytes):N1} MB");
+            $"Managed heap start (processo): {FormatMegabytes(diagnostics.ManagedMemoryStartBytes):N1} MB");
 
         ImGui.Text(
-            $"Picco managed memory: {FormatMegabytes(diagnostics.PeakManagedMemoryBytes):N1} MB");
+            $"Managed heap corrente (processo): {FormatMegabytes(diagnostics.ManagedMemoryBytes):N1} MB");
 
         ImGui.Text(
-            $"Allocato dal thread planner: {FormatMegabytes(diagnostics.AllocatedBytes):N1} MB");
+            $"Delta managed corrente: {FormatSignedMegabytes(diagnostics.ManagedMemoryBytes - diagnostics.ManagedMemoryStartBytes)}");
+
+        ImGui.Text(
+            $"Picco managed heap (processo): {FormatMegabytes(diagnostics.PeakManagedMemoryBytes):N1} MB");
+
+        ImGui.Text(
+            $"Delta picco managed: {FormatSignedMegabytes(diagnostics.PeakManagedMemoryBytes - diagnostics.ManagedMemoryStartBytes)}");
+
+        if (diagnostics.ManagedMemoryEndBytes > 0)
+        {
+            ImGui.Text(
+                $"Managed heap fine (processo): {FormatMegabytes(diagnostics.ManagedMemoryEndBytes):N1} MB");
+
+            ImGui.Text(
+                $"Delta managed finale: {FormatSignedMegabytes(diagnostics.ManagedMemoryEndBytes - diagnostics.ManagedMemoryStartBytes)}");
+        }
+
+        ImGui.Text(
+            $"Allocato cumulativo dal thread planner: {FormatMegabytes(diagnostics.AllocatedBytes):N1} MB");
     }
 
     private string BuildGlobalPlannerDiagnosticsClipboardText(
@@ -692,9 +774,37 @@ public class MainWindow : Window, IDisposable
                 $"AppliedActions={diagnostics.AppliedActions}",
                 $"MaxDepth={diagnostics.MaxDepth}",
                 $"ElapsedMs={diagnostics.ElapsedMilliseconds}",
+                $"ManagedMemoryStartBytes={diagnostics.ManagedMemoryStartBytes}",
                 $"ManagedMemoryBytes={diagnostics.ManagedMemoryBytes}",
+                $"ManagedMemoryDeltaBytes={diagnostics.ManagedMemoryBytes - diagnostics.ManagedMemoryStartBytes}",
                 $"PeakManagedMemoryBytes={diagnostics.PeakManagedMemoryBytes}",
+                $"PeakManagedMemoryDeltaBytes={diagnostics.PeakManagedMemoryBytes - diagnostics.ManagedMemoryStartBytes}",
+                $"ManagedMemoryEndBytes={diagnostics.ManagedMemoryEndBytes}",
+                $"ManagedMemoryEndDeltaBytes={(diagnostics.ManagedMemoryEndBytes > 0 ? diagnostics.ManagedMemoryEndBytes - diagnostics.ManagedMemoryStartBytes : 0)}",
                 $"PlannerThreadAllocatedBytes={diagnostics.AllocatedBytes}"
+            };
+
+        return string.Join(
+            Environment.NewLine,
+            lines);
+    }
+
+    private string BuildResolverRuntimeDiagnosticsClipboardText(
+        RequirementSet requirementSet,
+        ResolutionPolicy resolutionPolicy)
+    {
+        var lines =
+            new List<string>
+            {
+                "FROG DEBUG | RESOLVER PER-FRAME DIAGNOSTICS",
+                $"GeneratedUtc={DateTime.UtcNow:O}",
+                $"Requirements={requirementSet.Requirements.Count}",
+                $"Sources={resolutionPolicy.Sources.Count}",
+                $"ComputeCalls={resolverComputeCalls}",
+                $"LastElapsedMs={resolverLastElapsedMilliseconds:F6}",
+                $"LastAllocatedBytes={resolverLastAllocatedBytes}",
+                $"PeakAllocatedBytes={resolverPeakAllocatedBytes}",
+                $"TotalAllocatedBytes={resolverTotalAllocatedBytes}"
             };
 
         return string.Join(
@@ -707,6 +817,15 @@ public class MainWindow : Window, IDisposable
     {
         return bytes /
                (1024d * 1024d);
+    }
+
+    private static string FormatSignedMegabytes(
+        long bytes)
+    {
+        var megabytes =
+            FormatMegabytes(bytes);
+
+        return $"{megabytes:+0.0;-0.0;0.0} MB";
     }
 
     private string BuildGlobalPlannerClipboardText(
@@ -744,8 +863,13 @@ public class MainWindow : Window, IDisposable
             lines.Add($"AppliedActions={diagnostics.AppliedActions}");
             lines.Add($"MaxDepth={diagnostics.MaxDepth}");
             lines.Add($"ElapsedMs={diagnostics.ElapsedMilliseconds}");
+            lines.Add($"ManagedMemoryStartBytes={diagnostics.ManagedMemoryStartBytes}");
             lines.Add($"ManagedMemoryBytes={diagnostics.ManagedMemoryBytes}");
+            lines.Add($"ManagedMemoryDeltaBytes={diagnostics.ManagedMemoryBytes - diagnostics.ManagedMemoryStartBytes}");
             lines.Add($"PeakManagedMemoryBytes={diagnostics.PeakManagedMemoryBytes}");
+            lines.Add($"PeakManagedMemoryDeltaBytes={diagnostics.PeakManagedMemoryBytes - diagnostics.ManagedMemoryStartBytes}");
+            lines.Add($"ManagedMemoryEndBytes={diagnostics.ManagedMemoryEndBytes}");
+            lines.Add($"ManagedMemoryEndDeltaBytes={(diagnostics.ManagedMemoryEndBytes > 0 ? diagnostics.ManagedMemoryEndBytes - diagnostics.ManagedMemoryStartBytes : 0)}");
             lines.Add($"PlannerThreadAllocatedBytes={diagnostics.AllocatedBytes}");
         }
 
