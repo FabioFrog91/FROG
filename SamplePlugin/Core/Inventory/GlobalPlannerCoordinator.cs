@@ -28,7 +28,8 @@ public sealed class GlobalPlannerCoordinator
 {
     private readonly object syncLock = new();
 
-    private Task? runningTask;
+    private Task<PlannerPlan>? runningTask;
+    private long generation;
     private PlannerPlan? plan;
     private GlobalTransferPlannerDiagnostics? diagnostics;
     private string? error;
@@ -127,14 +128,25 @@ public sealed class GlobalPlannerCoordinator
                 inventorySyncAtUtc;
             pendingCompletion = null;
 
+            var runGeneration =
+                ++generation;
+
+            var plannerTask =
+                Task.Run(
+                    () =>
+                        planner.Plan(
+                            requirementSetSnapshot,
+                            stateSnapshot,
+                            resolutionPolicySnapshot,
+                            optimizationSettingsSnapshot));
+
             runningTask =
-                RunPlannerAsync(
-                    planner,
-                    requirementSetSnapshot,
-                    stateSnapshot,
-                    resolutionPolicySnapshot,
-                    optimizationSettingsSnapshot,
-                    autoStartExecution);
+                plannerTask;
+
+            _ = CompletePlannerAsync(
+                plannerTask,
+                runGeneration,
+                autoStartExecution);
         }
 
         return true;
@@ -161,6 +173,8 @@ public sealed class GlobalPlannerCoordinator
     {
         lock (syncLock)
         {
+            generation++;
+
             plan = null;
             error = null;
             replanMessage = null;
@@ -173,12 +187,9 @@ public sealed class GlobalPlannerCoordinator
         }
     }
 
-    private async Task RunPlannerAsync(
-        GlobalTransferPlanner planner,
-        RequirementSet requirementSet,
-        PlannerState state,
-        ResolutionPolicy resolutionPolicy,
-        OptimizationSettings optimizationSettings,
+    private async Task CompletePlannerAsync(
+        Task<PlannerPlan> plannerTask,
+        long runGeneration,
         bool autoStartExecution)
     {
         PlannerPlan? completedPlan = null;
@@ -187,13 +198,7 @@ public sealed class GlobalPlannerCoordinator
         try
         {
             completedPlan =
-                await Task.Run(
-                    () =>
-                        planner.Plan(
-                            requirementSet,
-                            state,
-                            resolutionPolicy,
-                            optimizationSettings));
+                await plannerTask;
         }
         catch (Exception ex)
         {
@@ -203,6 +208,18 @@ public sealed class GlobalPlannerCoordinator
 
         lock (syncLock)
         {
+            if (!ReferenceEquals(
+                    runningTask,
+                    plannerTask))
+            {
+                return;
+            }
+
+            runningTask = null;
+
+            if (runGeneration != generation)
+                return;
+
             plan = completedPlan;
             error = completedError;
             pendingCompletion =
@@ -210,7 +227,6 @@ public sealed class GlobalPlannerCoordinator
                     completedPlan,
                     completedError,
                     autoStartExecution);
-            runningTask = null;
         }
     }
 
