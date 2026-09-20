@@ -17,7 +17,7 @@ public class ConfigWindow : Window, IDisposable
         Flags = ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoScrollbar |
                 ImGuiWindowFlags.NoScrollWithMouse;
 
-        Size = new Vector2(380, 180);
+        Size = new Vector2(410, 210);
         SizeCondition = ImGuiCond.Always;
 
         configuration = plugin.Configuration;
@@ -72,11 +72,24 @@ public class ConfigWindow : Window, IDisposable
             configuration.Save();
         }
 
+        var enableInventoryHighlight =
+            configuration.EnableInventoryExecutionHighlight;
+
+        if (ImGui.Checkbox(
+                "Highlight inventory tabs and slots",
+                ref enableInventoryHighlight))
+        {
+            configuration.EnableInventoryExecutionHighlight =
+                enableInventoryHighlight;
+
+            configuration.Save();
+        }
+
         var retainerHighlightColor =
             configuration.RetainerRowHighlightColor;
 
         if (ImGui.ColorEdit4(
-                "Retainer row color",
+                "Execution highlight color",
                 ref retainerHighlightColor))
         {
             configuration.RetainerRowHighlightColor =
