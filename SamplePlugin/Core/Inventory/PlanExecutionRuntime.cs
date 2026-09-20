@@ -21,8 +21,6 @@ public readonly record struct PlanExecutionRuntimeSnapshot(
 /// </summary>
 public sealed class PlanExecutionRuntime
 {
-    private const int PlanValidityCheckIntervalMilliseconds = 200;
-
     private readonly Plugin plugin;
     private readonly PlannerSourceBuilder plannerSourceBuilder;
     private readonly GlobalPlannerCoordinator globalPlannerCoordinator;
@@ -33,7 +31,6 @@ public sealed class PlanExecutionRuntime
     private OptimizationSettings? optimizationSettings;
     private bool isReplanning;
     private string? error;
-    private long lastPlanValidityCheckAtMs;
 
     private PlanExecutionRuntimeSnapshot snapshot =
         new(
@@ -77,7 +74,6 @@ public sealed class PlanExecutionRuntime
 
         isReplanning = false;
         error = null;
-        lastPlanValidityCheckAtMs = 0;
 
         var currentCharacterId =
             Plugin.PlayerState.IsLoaded
@@ -131,7 +127,6 @@ public sealed class PlanExecutionRuntime
         optimizationSettings = null;
         isReplanning = false;
         error = null;
-        lastPlanValidityCheckAtMs = 0;
 
         snapshot =
             new PlanExecutionRuntimeSnapshot(
@@ -149,7 +144,6 @@ public sealed class PlanExecutionRuntime
         executionCoordinator.Reset();
         isReplanning = false;
         error = null;
-        lastPlanValidityCheckAtMs = 0;
 
         RefreshSnapshot(
             executionCoordinator.Session is null
@@ -208,7 +202,7 @@ public sealed class PlanExecutionRuntime
         }
 
         if (execution.Status ==
-            PlanExecutionCoordinatorStatus.Pending)
+            PlanExecutionCoordinatorStatus.Verified)
         {
             TryInvalidateStaleRemainingPlan(
                 execution.Session,
@@ -228,7 +222,6 @@ public sealed class PlanExecutionRuntime
             return;
 
         isReplanning = false;
-        lastPlanValidityCheckAtMs = 0;
 
         if (completion.Plan is null)
         {
@@ -263,18 +256,6 @@ public sealed class PlanExecutionRuntime
         {
             return;
         }
-
-        var nowMs =
-            Environment.TickCount64;
-
-        if (nowMs - lastPlanValidityCheckAtMs <
-            PlanValidityCheckIntervalMilliseconds)
-        {
-            return;
-        }
-
-        lastPlanValidityCheckAtMs =
-            nowMs;
 
         var firstActionIndex =
             Math.Max(
