@@ -1334,23 +1334,27 @@ public class MainWindow : Window, IDisposable
         lines.Add(string.Empty);
         lines.Add("===== ACTIONS =====");
 
-        var actionIndex = 1;
-
-        foreach (var action in plan.Actions)
+        for (var actionIndex = 0;
+             actionIndex < plan.Actions.Count;
+             actionIndex++)
         {
+            var action =
+                plan.Actions[actionIndex];
+
+            var actionNumber =
+                actionIndex + 1;
             if (action.Type == PlannerActionType.SwitchCharacter)
             {
                 lines.Add(
                     string.Join(
                         "\t",
-                        actionIndex,
+                        actionNumber,
                         "SWITCH",
                         GetCharacterName(action.FromCharacterId),
                         action.FromCharacterId,
                         GetCharacterName(action.ToCharacterId),
                         action.ToCharacterId));
 
-                actionIndex++;
                 continue;
             }
 
@@ -1363,7 +1367,7 @@ public class MainWindow : Window, IDisposable
             lines.Add(
                 string.Join(
                     "\t",
-                    actionIndex,
+                    actionNumber,
                     "MOVE",
                     GetItemName(action.BaseItemId),
                     action.BaseItemId,
@@ -1375,7 +1379,7 @@ public class MainWindow : Window, IDisposable
                     action.Source.ParentCharacterId,
                     GetActionSourceLocationText(
                         plan,
-                        actionIndex - 1,
+                        actionIndex,
                         action),
                     GetSourceName(action.Destination),
                     action.Destination.Storage,
@@ -1383,7 +1387,6 @@ public class MainWindow : Window, IDisposable
                     action.Destination.ParentCharacterId,
                     GetContainerName(action.Destination)));
 
-            actionIndex++;
         }
 
         return string.Join(
@@ -2295,7 +2298,7 @@ public class MainWindow : Window, IDisposable
                 ", ",
                 displayLocation.Positions
                     .Select(position =>
-                        $"Pagina {position.Page}, slot {position.Slot} x{position.Quantity}"));
+                        $"Pagina visibile {position.Page}, slot {position.Slot} x{position.Quantity}"));
 
         return
             $"{visiblePositions} | {internalContainer}";
