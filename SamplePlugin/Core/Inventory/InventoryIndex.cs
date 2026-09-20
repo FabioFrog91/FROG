@@ -7,8 +7,11 @@ namespace FROG.Core.Inventory;
 
 public sealed class InventoryIndex
 {
+    private const int AuditHistoryLimit = 50;
+
     private readonly object syncLock = new();
     private readonly List<InventoryItemSnapshot> items = new();
+    private readonly List<InventoryIndexAuditEntry> auditHistory = new();
 
     public IReadOnlyList<InventoryItemSnapshot> Items
     {
@@ -34,6 +37,23 @@ public sealed class InventoryIndex
 
     private bool isDirty;
 
+    public IReadOnlyList<InventoryIndexAuditEntry> AuditHistory
+    {
+        get
+        {
+            lock (syncLock)
+            {
+                return auditHistory
+                    .Select(entry =>
+                        entry with
+                        {
+                            FreeCompanyPages = entry.FreeCompanyPages.ToArray()
+                        })
+                    .ToList();
+            }
+        }
+    }
+
     public bool ReplaceSource(
         InventorySource source,
         IEnumerable<InventoryItemSnapshot> snapshots)
@@ -47,6 +67,9 @@ public sealed class InventoryIndex
 
         lock (syncLock)
         {
+            var beforeFreeCompanyPages =
+                BuildFreeCompanyPageAudit();
+
             // The provider has just observed this source.
             // Treat that observation as the source of truth and replace
             // the complete contents of the source, exactly as we do for
@@ -62,6 +85,10 @@ public sealed class InventoryIndex
             items.AddRange(newSnapshots);
 
             isDirty = true;
+
+            AddAuditEntry(
+                $"REPLACE_SOURCE {source.Storage} owner={source.OwnerId} container={source.Container}",
+                beforeFreeCompanyPages);
 
             return true;
         }
@@ -115,6 +142,10 @@ public sealed class InventoryIndex
 
         lock (syncLock)
         {
+            AddAuditEntry(
+                "SAVE_TO_DISK",
+                BuildFreeCompanyPageAudit());
+
             snapshots = items.ToList();
         }
 
@@ -153,9 +184,60 @@ public sealed class InventoryIndex
 
         lock (syncLock)
         {
+            var beforeFreeCompanyPages =
+                BuildFreeCompanyPageAudit();
+
             items.Clear();
             items.AddRange(snapshots);
             isDirty = false;
+
+            AddAuditEntry(
+                "LOAD_FROM_DISK",
+                beforeFreeCompanyPages);
+        }
+    }
+
+    private IReadOnlyList<InventoryIndexFreeCompanyPageAudit> BuildFreeCompanyPageAudit() =>
+        items
+            .Where(item =>
+                item.Storage == StorageType.FreeCompanyChest)
+            .GroupBy(item =>
+                new
+                {
+                    item.OwnerId,
+                    item.Container
+                })
+            .OrderBy(group =>
+                group.Key.OwnerId)
+            .ThenBy(group =>
+                group.Key.Container)
+            .Select(group =>
+                new InventoryIndexFreeCompanyPageAudit(
+                    group.Key.OwnerId,
+                    group.Key.Container,
+                    group.Count(),
+                    group.Sum(item => item.Quantity)))
+            .ToArray();
+
+    private void AddAuditEntry(
+        string operation,
+        IReadOnlyList<InventoryIndexFreeCompanyPageAudit> beforeFreeCompanyPages)
+    {
+        var afterFreeCompanyPages =
+            BuildFreeCompanyPageAudit();
+
+        auditHistory.Add(
+            new InventoryIndexAuditEntry(
+                System.DateTime.UtcNow,
+                operation,
+                beforeFreeCompanyPages.ToArray(),
+                afterFreeCompanyPages.ToArray()));
+
+        if (auditHistory.Count > AuditHistoryLimit)
+        {
+            auditHistory.RemoveRange(
+                0,
+                auditHistory.Count - AuditHistoryLimit);
         }
     }
 
@@ -309,3 +391,16 @@ public sealed class InventoryIndex
             item.Slot);
     }
 }
+
+
+public sealed record InventoryIndexFreeCompanyPageAudit(
+    ulong FreeCompanyId,
+    uint Container,
+    int SnapshotCount,
+    int Quantity);
+
+public sealed record InventoryIndexAuditEntry(
+    System.DateTime AtUtc,
+    string Operation,
+    IReadOnlyList<InventoryIndexFreeCompanyPageAudit> BeforeFreeCompanyPages,
+    IReadOnlyList<InventoryIndexFreeCompanyPageAudit> FreeCompanyPages);
