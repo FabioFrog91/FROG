@@ -105,7 +105,20 @@ public sealed class CharacterDisplayLocator
                     item.IsHq == action.IsHq &&
                     item.Quantity > 0)
                 .OrderBy(item =>
-                    item.Slot);
+                {
+                    var displayIndex =
+                        FindDisplayIndex(
+                            coordinates,
+                            physicalContainerIndex,
+                            item.Slot);
+
+                    return displayIndex >= 0
+                        ? displayIndex
+                        : int.MaxValue;
+                })
+                .ThenBy(item =>
+                    item.Slot)
+                .ToList();
 
         var remaining =
             action.Quantity;
