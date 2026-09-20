@@ -30,6 +30,14 @@ public class MainWindow : Window, IDisposable
     private string? globalPlannerError;
     private readonly OptimizationSettings optimizationSettings = new();
 
+    private RequirementSet? resolverCachedRequirementSet;
+    private IReadOnlyList<InventorySource>? resolverCachedSources;
+    private InventorySourceCatalog? resolverCachedSourceCatalog;
+    private ResolutionPolicy? resolverCachedResolutionPolicy;
+    private TransferPlan? resolverCachedPlan;
+    private DateTime? resolverCachedSyncAtUtc;
+    private ulong resolverCachedCharacterId;
+
     private long resolverComputeCalls;
     private double resolverLastElapsedMilliseconds;
     private long resolverLastAllocatedBytes;
@@ -155,6 +163,9 @@ public class MainWindow : Window, IDisposable
             importedRequirementSet =
                 importer.Import(text);
 
+            InvalidateResolverCache(
+                resetDiagnostics: true);
+
             globalPlannerPlan = null;
             globalPlannerDiagnostics = null;
             globalPlannerError = null;
@@ -229,73 +240,33 @@ public class MainWindow : Window, IDisposable
             return;
         }
 
-        var resolverAllocatedBefore =
-            GC.GetAllocatedBytesForCurrentThread();
-
-        var resolverStopwatch =
-            Stopwatch.StartNew();
+        EnsureResolverCache(
+            importedRequirementSet,
+            indexItems,
+            currentCharacterId);
 
         var sources =
-            BuildPlannerSources(
-                indexItems,
-                currentCharacterId);
+            resolverCachedSources;
 
-        if (sources.Count == 0)
+        var sourceCatalog =
+            resolverCachedSourceCatalog;
+
+        var resolutionPolicy =
+            resolverCachedResolutionPolicy;
+
+        var plan =
+            resolverCachedPlan;
+
+        if (sources == null ||
+            sourceCatalog == null ||
+            resolutionPolicy == null ||
+            plan == null)
         {
             ImGui.Text(
                 "Nessuna InventorySource disponibile per il planner.");
 
             return;
         }
-
-        var sourceCatalog =
-            new InventorySourceCatalog();
-
-        foreach (var source in sources)
-        {
-            sourceCatalog.Add(
-                new SourcePolicy(
-                    source,
-                    Read: true,
-                    Use: true));
-        }
-
-        var resolutionPolicy =
-            new ResolutionPolicy(
-                sources,
-                currentCharacterId);
-
-        var planner =
-            new TransferPlanner(
-                new RequirementResolver());
-
-        var plan =
-            planner.Plan(
-                importedRequirementSet,
-                plugin.InventoryIndex,
-                sourceCatalog,
-                resolutionPolicy);
-
-        resolverStopwatch.Stop();
-
-        resolverComputeCalls++;
-
-        resolverLastElapsedMilliseconds =
-            resolverStopwatch.Elapsed.TotalMilliseconds;
-
-        resolverLastAllocatedBytes =
-            Math.Max(
-                0,
-                GC.GetAllocatedBytesForCurrentThread() -
-                resolverAllocatedBefore);
-
-        resolverTotalAllocatedBytes +=
-            resolverLastAllocatedBytes;
-
-        resolverPeakAllocatedBytes =
-            Math.Max(
-                resolverPeakAllocatedBytes,
-                resolverLastAllocatedBytes);
 
         ImGui.Text(
             $"Source disponibili: {sources.Count}");
@@ -314,11 +285,11 @@ public class MainWindow : Window, IDisposable
 
         ImGui.Spacing();
 
-        ImGui.Text("DIAGNOSTICA RESOLVER PER-FRAME");
+        ImGui.Text("DIAGNOSTICA RESOLVER CACHE");
         ImGui.Separator();
 
         ImGui.Text(
-            $"Chiamate compute: {resolverComputeCalls:N0}");
+            $"Chiamate compute reali: {resolverComputeCalls:N0}");
 
         ImGui.Text(
             $"Ultimo compute: {resolverLastElapsedMilliseconds:N3} ms");
@@ -474,6 +445,139 @@ public class MainWindow : Window, IDisposable
                 }
             }
         }
+    }
+
+    private void EnsureResolverCache(
+        RequirementSet requirementSet,
+        IReadOnlyList<InventoryItemSnapshot> indexItems,
+        ulong currentCharacterId)
+    {
+        var currentSyncAtUtc =
+            plugin.LastSyncAtUtc;
+
+        var cacheIsValid =
+            resolverCachedPlan != null &&
+            resolverCachedSources != null &&
+            resolverCachedSourceCatalog != null &&
+            resolverCachedResolutionPolicy != null &&
+            ReferenceEquals(
+                resolverCachedRequirementSet,
+                requirementSet) &&
+            resolverCachedSyncAtUtc == currentSyncAtUtc &&
+            resolverCachedCharacterId == currentCharacterId;
+
+        if (cacheIsValid)
+            return;
+
+        var resolverAllocatedBefore =
+            GC.GetAllocatedBytesForCurrentThread();
+
+        var resolverStopwatch =
+            Stopwatch.StartNew();
+
+        var sources =
+            BuildPlannerSources(
+                indexItems,
+                currentCharacterId);
+
+        if (sources.Count == 0)
+        {
+            InvalidateResolverCache(
+                resetDiagnostics: false);
+
+            return;
+        }
+
+        var sourceCatalog =
+            new InventorySourceCatalog();
+
+        foreach (var source in sources)
+        {
+            sourceCatalog.Add(
+                new SourcePolicy(
+                    source,
+                    Read: true,
+                    Use: true));
+        }
+
+        var resolutionPolicy =
+            new ResolutionPolicy(
+                sources,
+                currentCharacterId);
+
+        var planner =
+            new TransferPlanner(
+                new RequirementResolver());
+
+        var plan =
+            planner.Plan(
+                requirementSet,
+                plugin.InventoryIndex,
+                sourceCatalog,
+                resolutionPolicy);
+
+        resolverStopwatch.Stop();
+
+        resolverCachedRequirementSet =
+            requirementSet;
+
+        resolverCachedSources =
+            sources;
+
+        resolverCachedSourceCatalog =
+            sourceCatalog;
+
+        resolverCachedResolutionPolicy =
+            resolutionPolicy;
+
+        resolverCachedPlan =
+            plan;
+
+        resolverCachedSyncAtUtc =
+            currentSyncAtUtc;
+
+        resolverCachedCharacterId =
+            currentCharacterId;
+
+        resolverComputeCalls++;
+
+        resolverLastElapsedMilliseconds =
+            resolverStopwatch.Elapsed.TotalMilliseconds;
+
+        resolverLastAllocatedBytes =
+            Math.Max(
+                0,
+                GC.GetAllocatedBytesForCurrentThread() -
+                resolverAllocatedBefore);
+
+        resolverTotalAllocatedBytes +=
+            resolverLastAllocatedBytes;
+
+        resolverPeakAllocatedBytes =
+            Math.Max(
+                resolverPeakAllocatedBytes,
+                resolverLastAllocatedBytes);
+    }
+
+    private void InvalidateResolverCache(
+        bool resetDiagnostics)
+    {
+        resolverCachedRequirementSet = null;
+        resolverCachedSources = null;
+        resolverCachedSourceCatalog = null;
+        resolverCachedResolutionPolicy = null;
+        resolverCachedPlan = null;
+        resolverCachedSyncAtUtc = null;
+        resolverCachedCharacterId = 0;
+
+        if (!resetDiagnostics)
+            return;
+
+        resolverComputeCalls = 0;
+        resolverLastElapsedMilliseconds = 0;
+        resolverLastAllocatedBytes = 0;
+        resolverTotalAllocatedBytes = 0;
+        resolverPeakAllocatedBytes = 0;
     }
 
     private void DrawGlobalPlannerDiagnostics(
@@ -796,7 +900,7 @@ public class MainWindow : Window, IDisposable
         var lines =
             new List<string>
             {
-                "FROG DEBUG | RESOLVER PER-FRAME DIAGNOSTICS",
+                "FROG DEBUG | RESOLVER CACHE DIAGNOSTICS",
                 $"GeneratedUtc={DateTime.UtcNow:O}",
                 $"Requirements={requirementSet.Requirements.Count}",
                 $"Sources={resolutionPolicy.Sources.Count}",
