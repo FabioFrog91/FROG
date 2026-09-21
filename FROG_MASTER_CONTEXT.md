@@ -307,7 +307,12 @@ Ogni nuovo event handler, hook, timer, task o `CancellationTokenSource` deve ave
 
 ## 12. Stack, merge e capacità
 
-Stato: `BUILD VERIFICATA` tramite `b ok` dell'utente il 2026-09-21; test runtime specifici ancora da eseguire.
+Stato: `BUILD VERIFICATA` tramite `b ok` dell'utente il 2026-09-21.
+
+Verifica runtime progressiva:
+
+- merge semplice NQ verso uno stack compatibile già presente nella destinazione: `RUNTIME VERIFICATO` dall'utente il 2026-09-21;
+- overflow con split, separazione HQ/NQ, slot di riserva, capacità parziale e FC multipagina: ancora da testare.
 
 Decisioni confermate:
 
@@ -408,7 +413,7 @@ Riferimenti studiati e decisioni derivate:
 
 Stack/capacità ha superato la build locale. Prossimo checkpoint obbligatorio:
 
-1. testare nel gioco merge, split, HQ/NQ, zero slot, unico slot riservato, FC multipagina e trasferimento parziale;
+1. continuare i test nel gioco con overflow/split, HQ/NQ, zero slot, unico slot riservato, FC multipagina e trasferimento parziale; il merge semplice NQ è già verificato;
 2. verificare che l'esecuzione manuale e il replan continuino a comportarsi come prima;
 3. controllare diagnostica allocazioni/memoria per verificare che lo snapshot compatto resti leggero;
 4. correggere eventuali problemi senza ampliare il refactor;
