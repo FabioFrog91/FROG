@@ -21,6 +21,8 @@ public readonly record struct PlanExecutionRuntimeSnapshot(
 /// </summary>
 public sealed class PlanExecutionRuntime
 {
+    private const int CapacityPollIntervalMs = 250;
+
     private readonly Plugin plugin;
     private readonly PlannerSourceBuilder plannerSourceBuilder;
     private readonly GlobalPlannerCoordinator globalPlannerCoordinator;
@@ -31,6 +33,7 @@ public sealed class PlanExecutionRuntime
     private OptimizationSettings? optimizationSettings;
     private bool isReplanning;
     private string? error;
+    private long lastCapacityPollAtMs;
 
     private PlanExecutionRuntimeSnapshot snapshot =
         new(
@@ -74,6 +77,7 @@ public sealed class PlanExecutionRuntime
 
         isReplanning = false;
         error = null;
+        lastCapacityPollAtMs = 0;
 
         var currentCharacterId =
             Plugin.PlayerState.IsLoaded
@@ -115,7 +119,8 @@ public sealed class PlanExecutionRuntime
             plan);
 
         RefreshSnapshot(
-            PlanExecutionCoordinatorStatus.Pending);
+            GetInitialStatus(
+                plan));
 
         SessionStarted?.Invoke();
     }
@@ -127,6 +132,7 @@ public sealed class PlanExecutionRuntime
         optimizationSettings = null;
         isReplanning = false;
         error = null;
+        lastCapacityPollAtMs = 0;
 
         snapshot =
             new PlanExecutionRuntimeSnapshot(
@@ -144,11 +150,13 @@ public sealed class PlanExecutionRuntime
         executionCoordinator.Reset();
         isReplanning = false;
         error = null;
+        lastCapacityPollAtMs = 0;
 
         RefreshSnapshot(
             executionCoordinator.Session is null
                 ? PlanExecutionCoordinatorStatus.Idle
-                : PlanExecutionCoordinatorStatus.Pending);
+                : GetInitialStatus(
+                    executionCoordinator.Session.Plan));
     }
 
     public void Update(
@@ -202,6 +210,16 @@ public sealed class PlanExecutionRuntime
         }
 
         if (execution.Status ==
+            PlanExecutionCoordinatorStatus.WaitingForCapacity)
+        {
+            TryStartCapacityReplan(
+                execution.Session,
+                currentCharacterId);
+
+            return;
+        }
+
+        if (execution.Status ==
             PlanExecutionCoordinatorStatus.Verified)
         {
             TryInvalidateStaleRemainingPlan(
@@ -236,14 +254,71 @@ public sealed class PlanExecutionRuntime
         }
 
         error = null;
+        lastCapacityPollAtMs = 0;
 
         executionCoordinator.Start(
             completion.Plan);
 
         RefreshSnapshot(
-            PlanExecutionCoordinatorStatus.Pending);
+            GetInitialStatus(
+                completion.Plan));
 
         SessionStarted?.Invoke();
+    }
+
+    private void TryStartCapacityReplan(
+        PlanExecutionSession? session,
+        ulong currentCharacterId)
+    {
+        if (session is null ||
+            currentCharacterId == 0)
+        {
+            return;
+        }
+
+        var plan =
+            session.Plan;
+
+        var capacityBlock =
+            plan.NextCapacityBlock;
+
+        if (capacityBlock is null)
+            return;
+
+        var nowMs =
+            Environment.TickCount64;
+
+        if (lastCapacityPollAtMs != 0 &&
+            nowMs - lastCapacityPollAtMs <
+            CapacityPollIntervalMs)
+        {
+            return;
+        }
+
+        lastCapacityPollAtMs =
+            nowMs;
+
+        var currentCapacity =
+            plan.FinalState.Capacity.Rebase(
+                plugin.InventoryIndex.Items);
+
+        var acceptableQuantity =
+            currentCapacity.GetAcceptableQuantity(
+                capacityBlock.Destination,
+                capacityBlock.BaseItemId,
+                capacityBlock.IsHq,
+                capacityBlock.Quantity);
+
+        if (acceptableQuantity <
+            capacityBlock.Quantity)
+        {
+            return;
+        }
+
+        TryStartPlanRefresh(
+            plan,
+            currentCharacterId,
+            $"REPLAN ESECUZIONE: lo spazio osservato ora consente il prossimo movimento bloccato ({capacityBlock.Quantity} unità). Piano ricalcolato dallo stato reale.");
     }
 
     private void TryInvalidateStaleRemainingPlan(
@@ -391,6 +466,13 @@ public sealed class PlanExecutionRuntime
                 isReplanning,
                 error);
     }
+
+    private static PlanExecutionCoordinatorStatus GetInitialStatus(
+        PlannerPlan plan) =>
+        plan.Actions.Count == 0 &&
+        plan.CapacityBlocked > 0
+            ? PlanExecutionCoordinatorStatus.WaitingForCapacity
+            : PlanExecutionCoordinatorStatus.Pending;
 
     private static RequirementSet CloneRequirements(
         RequirementSet source)

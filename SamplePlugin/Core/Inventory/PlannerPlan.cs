@@ -10,9 +10,27 @@ public enum PlannerPlanResult
     CompletedWithMissing
 }
 
+public sealed record PlannerCapacityBlock(
+    InventorySource Source,
+    InventorySource Destination,
+    uint BaseItemId,
+    bool IsHq,
+    int Quantity,
+    int MaximumStack)
+{
+    public int MinimumAdditionalSlots =>
+        Quantity <= 0 || MaximumStack <= 0
+            ? 0
+            : checked((int)Math.Min(
+                int.MaxValue,
+                ((long)Quantity + MaximumStack - 1) /
+                MaximumStack));
+}
+
 public sealed class PlannerPlan
 {
     private readonly List<PlannerAction> actions;
+    private readonly List<PlannerCapacityBlock> capacityBlocks;
 
     public PlannerState InitialState { get; }
     public PlannerState FinalState { get; }
@@ -20,6 +38,10 @@ public sealed class PlannerPlan
     public PlannerPlanResult Result { get; }
     public int Missing { get; }
     public int CapacityBlocked { get; }
+    public IReadOnlyList<PlannerCapacityBlock> CapacityBlocks =>
+        capacityBlocks;
+    public PlannerCapacityBlock? NextCapacityBlock =>
+        capacityBlocks.FirstOrDefault();
 
     public int CharacterSwitches =>
         actions.Count(action =>
@@ -54,14 +76,17 @@ public sealed class PlannerPlan
         IEnumerable<PlannerAction> actions,
         PlannerPlanResult result,
         int missing,
-        int capacityBlocked = 0)
+        int capacityBlocked = 0,
+        IEnumerable<PlannerCapacityBlock>? capacityBlocks = null)
         : this(
             initialState,
             finalState,
             actions.ToList(),
             result,
             missing,
-            capacityBlocked)
+            capacityBlocked,
+            capacityBlocks?.ToList() ??
+            new List<PlannerCapacityBlock>())
     {
     }
 
@@ -71,7 +96,8 @@ public sealed class PlannerPlan
         List<PlannerAction> actions,
         PlannerPlanResult result,
         int missing,
-        int capacityBlocked)
+        int capacityBlocked,
+        List<PlannerCapacityBlock> capacityBlocks)
     {
         InitialState = initialState;
         FinalState = finalState;
@@ -82,6 +108,8 @@ public sealed class PlannerPlan
             capacityBlocked,
             0,
             missing);
+        this.capacityBlocks =
+            capacityBlocks.ToList();
     }
 
     public PlannerPlan Append(
@@ -101,7 +129,8 @@ public sealed class PlannerPlan
             updatedActions,
             Result,
             Missing,
-            CapacityBlocked);
+            CapacityBlocked,
+            capacityBlocks);
     }
 
     public PlannerPlan WithResult(
@@ -115,7 +144,8 @@ public sealed class PlannerPlan
             missing,
             Math.Min(
                 CapacityBlocked,
-                missing));
+                missing),
+            capacityBlocks);
 
     public PlannerPlan WithActions(
         IEnumerable<PlannerAction> reorderedActions) =>
@@ -125,5 +155,6 @@ public sealed class PlannerPlan
             reorderedActions,
             Result,
             Missing,
-            CapacityBlocked);
+            CapacityBlocked,
+            capacityBlocks);
 }

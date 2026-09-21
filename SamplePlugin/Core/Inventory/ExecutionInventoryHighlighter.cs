@@ -76,6 +76,7 @@ public sealed unsafe class ExecutionInventoryHighlighter
 
         if (!plugin.Configuration.EnableInventoryExecutionHighlight ||
             runtime.IsReplanning ||
+            runtime.Status == PlanExecutionCoordinatorStatus.WaitingForCapacity ||
             runtime.Status == PlanExecutionCoordinatorStatus.Complete ||
             runtime.Session is null ||
             runtime.CurrentAction is null)

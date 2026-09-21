@@ -10,6 +10,7 @@ public enum PlanExecutionCoordinatorStatus
     WaitingForObservation,
     Verified,
     ReplanRequired,
+    WaitingForCapacity,
     Complete
 }
 
@@ -101,7 +102,7 @@ public sealed class PlanExecutionCoordinator
         if (session.IsComplete)
         {
             return Snapshot(
-                PlanExecutionCoordinatorStatus.Complete);
+                GetCompletedStatus());
         }
 
         var action =
@@ -110,7 +111,7 @@ public sealed class PlanExecutionCoordinator
         if (action is null)
         {
             return Snapshot(
-                PlanExecutionCoordinatorStatus.Complete);
+                GetCompletedStatus());
         }
 
         EnsureBaseline(
@@ -238,7 +239,7 @@ public sealed class PlanExecutionCoordinator
 
             return Snapshot(
                 session.IsComplete
-                    ? PlanExecutionCoordinatorStatus.Complete
+                    ? GetCompletedStatus()
                     : PlanExecutionCoordinatorStatus.Verified);
         }
 
@@ -248,6 +249,11 @@ public sealed class PlanExecutionCoordinator
                 ? PlanExecutionCoordinatorStatus.WaitingForObservation
                 : PlanExecutionCoordinatorStatus.Executed);
     }
+
+    private PlanExecutionCoordinatorStatus GetCompletedStatus() =>
+        session?.Plan.CapacityBlocked > 0
+            ? PlanExecutionCoordinatorStatus.WaitingForCapacity
+            : PlanExecutionCoordinatorStatus.Complete;
 
     private void EnsureBaseline(
         PlannerAction action,

@@ -978,6 +978,9 @@ internal sealed class GlobalAllocationPlanner
         var actions =
             new List<PlannerAction>();
 
+        var capacityBlocks =
+            new List<PlannerCapacityBlock>();
+
         var state =
             initialState;
 
@@ -1006,6 +1009,7 @@ internal sealed class GlobalAllocationPlanner
             !AppendGroupedMoves(
                 ref state,
                 actions,
+                capacityBlocks,
                 mainRetainerAllocations,
                 _ =>
                     mainCharacterInventory))
@@ -1080,6 +1084,7 @@ internal sealed class GlobalAllocationPlanner
             if (!AppendGroupedMoves(
                     ref state,
                     actions,
+                    capacityBlocks,
                     retainerAllocations,
                     _ =>
                         characterInventory))
@@ -1159,6 +1164,7 @@ internal sealed class GlobalAllocationPlanner
             if (!AppendMoves(
                     ref state,
                     actions,
+                    capacityBlocks,
                     inventoryOneBridge))
             {
                 return null;
@@ -1175,6 +1181,7 @@ internal sealed class GlobalAllocationPlanner
             if (!AppendGroupedMoves(
                     ref state,
                     actions,
+                    capacityBlocks,
                     otherInventory,
                     _ =>
                         freeCompany))
@@ -1218,6 +1225,7 @@ internal sealed class GlobalAllocationPlanner
             !AppendGroupedMoves(
                 ref state,
                 actions,
+                capacityBlocks,
                 mainRetainerAllocations,
                 _ =>
                     mainCharacterInventory))
@@ -1235,6 +1243,7 @@ internal sealed class GlobalAllocationPlanner
         if (!AppendMoves(
                 ref state,
                 actions,
+                capacityBlocks,
                 freeCompanyMoves))
         {
             return null;
@@ -1272,12 +1281,14 @@ internal sealed class GlobalAllocationPlanner
             missing,
             Math.Max(
                 0,
-                missing - expectedMissing));
+                missing - expectedMissing),
+            capacityBlocks);
     }
 
     private bool AppendGroupedMoves(
         ref PlannerState state,
         List<PlannerAction> actions,
+        List<PlannerCapacityBlock> capacityBlocks,
         IReadOnlyList<AllocationPick> picks,
         Func<InventorySource, InventorySource?> destinationSelector)
     {
@@ -1322,12 +1333,14 @@ internal sealed class GlobalAllocationPlanner
         return AppendMoves(
             ref state,
             actions,
+            capacityBlocks,
             moves);
     }
 
     private bool AppendMoves(
         ref PlannerState state,
         List<PlannerAction> actions,
+        List<PlannerCapacityBlock> capacityBlocks,
         IEnumerable<GroupedMove> moves)
     {
         foreach (var move in moves
@@ -1349,32 +1362,69 @@ internal sealed class GlobalAllocationPlanner
             if (move.Destination is null)
                 return false;
 
+            var sourceQuantity =
+                state.GetQuantity(
+                    move.BaseItemId,
+                    move.IsHq,
+                    move.Source);
+
+            var sourceLimitedQuantity =
+                Math.Min(
+                    move.Quantity,
+                    sourceQuantity);
+
+            if (sourceLimitedQuantity <= 0)
+                continue;
+
             var movableQuantity =
                 state.GetMaximumMovableQuantity(
                     move.Source,
                     move.Destination,
                     move.BaseItemId,
                     move.IsHq,
-                    move.Quantity);
+                    sourceLimitedQuantity);
 
-            if (movableQuantity <= 0)
+            if (movableQuantity > 0)
+            {
+                var action =
+                    PlannerAction.Move(
+                        move.Source,
+                        move.Destination,
+                        move.BaseItemId,
+                        move.IsHq,
+                        movableQuantity);
+
+                if (!AppendAction(
+                        ref state,
+                        actions,
+                        action))
+                {
+                    return false;
+                }
+            }
+
+            var blockedQuantity =
+                sourceLimitedQuantity -
+                movableQuantity;
+
+            if (blockedQuantity <= 0)
                 continue;
 
-            var action =
-                PlannerAction.Move(
+            if (!state.Capacity.TryGetMaximumStack(
+                    move.BaseItemId,
+                    out var maximumStack))
+            {
+                return false;
+            }
+
+            capacityBlocks.Add(
+                new PlannerCapacityBlock(
                     move.Source,
                     move.Destination,
                     move.BaseItemId,
                     move.IsHq,
-                    movableQuantity);
-
-            if (!AppendAction(
-                    ref state,
-                    actions,
-                    action))
-            {
-                return false;
-            }
+                    blockedQuantity,
+                    maximumStack));
         }
 
         return true;

@@ -522,7 +522,16 @@ public class MainWindow : Window, IDisposable
         if (plan.CapacityBlocked > 0)
         {
             ImGui.TextWrapped(
-                $"Spazio insufficiente: {plan.CapacityBlocked} unità disponibili non possono essere trasferite. Libera almeno uno slot nella destinazione del piano.");
+                $"Spazio insufficiente: {plan.CapacityBlocked} unità disponibili non possono essere trasferite.");
+
+            var capacityBlock =
+                plan.NextCapacityBlock;
+
+            if (capacityBlock is not null)
+            {
+                ImGui.TextWrapped(
+                    $"Consiglio corrente: libera almeno {capacityBlock.MinimumAdditionalSlots} slot in {GetSourceName(capacityBlock.Destination)} ({GetContainerName(capacityBlock.Destination)}). Merge compatibili e slot di sicurezza sono già conteggiati.");
+            }
         }
 
         if (plannerState.ResolverMissingSnapshot.HasValue)
@@ -664,6 +673,12 @@ public class MainWindow : Window, IDisposable
         {
             ImGui.TextWrapped(
                 "Varianza osservata: FROG sta ricalcolando automaticamente il piano residuo.");
+        }
+        else if (execution.Status ==
+                 PlanExecutionCoordinatorStatus.WaitingForCapacity)
+        {
+            ImGui.TextWrapped(
+                "Esecuzione in attesa di spazio. FROG ricalcolerà automaticamente il piano quando il prossimo movimento potrà entrare nella destinazione.");
         }
         else if (session.IsComplete)
         {
@@ -984,6 +999,7 @@ public class MainWindow : Window, IDisposable
                 $"Result={plan.Result}",
                 $"Missing={plan.Missing}",
                 $"CapacityBlocked={plan.CapacityBlocked}",
+                $"CapacityBlocks={plan.CapacityBlocks.Count}",
                 $"ResolverMissingSnapshot={(plannerState.ResolverMissingSnapshot.HasValue ? plannerState.ResolverMissingSnapshot.Value : -1)}",
                 $"MissingDeltaVsResolver={(plannerState.ResolverMissingSnapshot.HasValue ? plan.Missing - plannerState.ResolverMissingSnapshot.Value : 0)}",
                 $"ResolverSyncSnapshotUtc={(plannerState.ResolverSyncSnapshot.HasValue ? plannerState.ResolverSyncSnapshot.Value.ToString("O") : "n/a")}",

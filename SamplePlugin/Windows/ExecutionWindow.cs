@@ -91,13 +91,17 @@ public sealed class ExecutionWindow : Window, IDisposable
         }
 
         ImGui.Text(
-            $"Azione {Math.Min(session.CurrentActionIndex, session.TotalActionCount)} / {session.TotalActionCount}");
+            session.TotalActionCount > 0
+                ? $"Azione {Math.Min(session.CurrentActionIndex, session.TotalActionCount)} / {session.TotalActionCount}"
+                : "Azioni attualmente eseguibili: 0");
 
         ImGui.ProgressBar(
             session.TotalActionCount > 0
                 ? (float)session.VerifiedActionCount /
                   session.TotalActionCount
-                : 0f,
+                : session.IsComplete
+                    ? 1f
+                    : 0f,
             new Vector2(-1, 0),
             $"{session.VerifiedActionCount}/{session.TotalActionCount}");
 
@@ -123,6 +127,17 @@ public sealed class ExecutionWindow : Window, IDisposable
         {
             ImGui.TextWrapped(
                 $"Errore esecuzione: {runtime.Error}");
+
+            DrawControls(
+                runtime);
+            return;
+        }
+
+        if (runtime.Status ==
+            PlanExecutionCoordinatorStatus.WaitingForCapacity)
+        {
+            DrawCapacityWait(
+                session.Plan);
 
             DrawControls(
                 runtime);
@@ -254,6 +269,11 @@ public sealed class ExecutionWindow : Window, IDisposable
                 ImGui.TextWrapped(
                     "Differenza rilevata. Preparazione del nuovo piano residuo.");
                 break;
+
+            case PlanExecutionCoordinatorStatus.WaitingForCapacity:
+                ImGui.TextWrapped(
+                    "In attesa di spazio sufficiente nella destinazione del prossimo movimento.");
+                break;
         }
 
         if (runtime.Verification is not null &&
@@ -319,6 +339,55 @@ public sealed class ExecutionWindow : Window, IDisposable
                 : "Piano completato. Tutte le azioni sono state osservate e verificate.");
     }
 
+    private void DrawCapacityWait(
+        PlannerPlan plan)
+    {
+        ImGui.TextWrapped(
+            "IN ATTESA DI SPAZIO");
+
+        var capacityBlock =
+            plan.NextCapacityBlock;
+
+        if (capacityBlock is null)
+        {
+            ImGui.TextWrapped(
+                $"Spazio insufficiente nelle destinazioni del piano. Quantità bloccata: {plan.CapacityBlocked}.");
+            ImGui.TextWrapped(
+                "Libera spazio e ricalcola il piano.");
+            return;
+        }
+
+        var slots =
+            capacityBlock.MinimumAdditionalSlots;
+
+        var slotText =
+            slots == 1
+                ? "1 slot"
+                : $"{slots} slot";
+
+        ImGui.TextWrapped(
+            $"Consiglio: libera almeno {slotText} in {GetSourceName(capacityBlock.Destination)} ({GetContainerName(capacityBlock.Destination)}). I merge compatibili già osservati e lo slot di sicurezza sono inclusi nel calcolo.");
+
+        ImGui.Spacing();
+
+        ImGui.TextWrapped(
+            "MOVIMENTO DA SBLOCCARE");
+
+        ImGui.TextWrapped(
+            $"{GetItemName(capacityBlock.BaseItemId)} | " +
+            $"{(capacityBlock.IsHq ? "HQ" : "NQ")} | " +
+            $"x{capacityBlock.Quantity}");
+
+        ImGui.TextWrapped(
+            $"PRENDI DA: {GetSourceName(capacityBlock.Source)}");
+
+        ImGui.TextWrapped(
+            $"PORTA A: {GetSourceName(capacityBlock.Destination)}");
+
+        ImGui.TextWrapped(
+            "Quando FROG osserverà spazio sufficiente, ricalcolerà automaticamente il piano dallo stato reale.");
+    }
+
     private void DrawControls(
         PlanExecutionRuntimeSnapshot runtime)
     {
@@ -374,6 +443,7 @@ public sealed class ExecutionWindow : Window, IDisposable
         lines.Add($"PlanResult={plan.Result}");
         lines.Add($"Missing={plan.Missing}");
         lines.Add($"CapacityBlocked={plan.CapacityBlocked}");
+        lines.Add($"CapacityBlocks={plan.CapacityBlocks.Count}");
         lines.Add($"UnavailableMissing={Math.Max(0, plan.Missing - plan.CapacityBlocked)}");
         lines.Add($"Actions={session.TotalActionCount}");
         lines.Add($"VerifiedActions={session.VerifiedActionCount}");
@@ -392,6 +462,36 @@ public sealed class ExecutionWindow : Window, IDisposable
             lines.Add($"SourceDecrease={runtime.Reconciliation.SourceDecrease}");
             lines.Add($"DestinationIncrease={runtime.Reconciliation.DestinationIncrease}");
             lines.Add($"ReconciledQuantity={runtime.Reconciliation.ReconciledQuantity}");
+        }
+
+        if (plan.CapacityBlocks.Count > 0)
+        {
+            lines.Add(string.Empty);
+            lines.Add("===== CAPACITY BLOCKS =====");
+
+            for (var blockIndex = 0;
+                 blockIndex < plan.CapacityBlocks.Count;
+                 blockIndex++)
+            {
+                var capacityBlock =
+                    plan.CapacityBlocks[blockIndex];
+
+                lines.Add(
+                    string.Join(
+                        "\t",
+                        blockIndex + 1,
+                        GetItemName(capacityBlock.BaseItemId),
+                        capacityBlock.BaseItemId,
+                        capacityBlock.IsHq ? "HQ" : "NQ",
+                        capacityBlock.Quantity,
+                        $"MaximumStack={capacityBlock.MaximumStack}",
+                        $"MinimumAdditionalSlots={capacityBlock.MinimumAdditionalSlots}",
+                        GetSourceName(capacityBlock.Source),
+                        capacityBlock.Source.Storage,
+                        GetSourceName(capacityBlock.Destination),
+                        capacityBlock.Destination.Storage,
+                        GetContainerName(capacityBlock.Destination)));
+            }
         }
 
         lines.Add(string.Empty);
