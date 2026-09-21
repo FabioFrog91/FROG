@@ -186,6 +186,33 @@ public sealed class PlannerCapacitySnapshot
                     totalCapacity)));
     }
 
+    public bool TryReserveDestination(
+        InventorySource destination,
+        uint baseItemId,
+        bool isHq,
+        int quantity,
+        out PlannerCapacitySnapshot updated)
+    {
+        if (GetAcceptableQuantity(
+                destination,
+                baseItemId,
+                isHq,
+                quantity) < quantity)
+        {
+            updated = this;
+            return false;
+        }
+
+        updated = Clone();
+        updated.ApplyDestinationChange(
+            destination,
+            baseItemId,
+            isHq,
+            quantity);
+
+        return true;
+    }
+
     public PlannerCapacitySnapshot ApplyMove(
         IReadOnlyList<SourceStackChange> sourceChanges,
         InventorySource destination,

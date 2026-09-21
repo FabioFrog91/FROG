@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 
 namespace FROG.Core.Inventory;
 
@@ -279,10 +280,7 @@ public sealed class PlanExecutionRuntime
         var plan =
             session.Plan;
 
-        var capacityBlock =
-            plan.NextCapacityBlock;
-
-        if (capacityBlock is null)
+        if (plan.CapacityBlocks.Count == 0)
             return;
 
         var nowMs =
@@ -298,27 +296,31 @@ public sealed class PlanExecutionRuntime
         lastCapacityPollAtMs =
             nowMs;
 
-        var currentCapacity =
+        var simulatedCapacity =
             plan.FinalState.Capacity.Rebase(
                 plugin.InventoryIndex.Items);
 
-        var acceptableQuantity =
-            currentCapacity.GetAcceptableQuantity(
-                capacityBlock.Destination,
-                capacityBlock.BaseItemId,
-                capacityBlock.IsHq,
-                capacityBlock.Quantity);
-
-        if (acceptableQuantity <
-            capacityBlock.Quantity)
+        foreach (var capacityBlock in plan.CapacityBlocks)
         {
-            return;
+            if (!simulatedCapacity.TryReserveDestination(
+                    capacityBlock.Destination,
+                    capacityBlock.BaseItemId,
+                    capacityBlock.IsHq,
+                    capacityBlock.Quantity,
+                    out simulatedCapacity))
+            {
+                return;
+            }
         }
+
+        var requiredSlots =
+            plan.CapacityAdvice.Sum(advice =>
+                advice.MinimumAdditionalSlots);
 
         TryStartPlanRefresh(
             plan,
             currentCharacterId,
-            $"REPLAN ESECUZIONE: lo spazio osservato ora consente il prossimo movimento bloccato ({capacityBlock.Quantity} unità). Piano ricalcolato dallo stato reale.");
+            $"REPLAN ESECUZIONE: lo spazio osservato ora consente tutti i movimenti bloccati noti ({plan.CapacityBlocked} unità, {requiredSlots} slot minimi). Piano ricalcolato dallo stato reale.");
     }
 
     private void TryInvalidateStaleRemainingPlan(

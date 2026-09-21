@@ -357,16 +357,19 @@ public sealed class ExecutionWindow : Window, IDisposable
             return;
         }
 
-        var slots =
-            capacityBlock.MinimumAdditionalSlots;
+        foreach (var advice in plan.CapacityAdvice)
+        {
+            var slotText =
+                advice.MinimumAdditionalSlots == 1
+                    ? "1 slot"
+                    : $"{advice.MinimumAdditionalSlots} slot";
 
-        var slotText =
-            slots == 1
-                ? "1 slot"
-                : $"{slots} slot";
+            ImGui.TextWrapped(
+                $"Consiglio: libera almeno {slotText} in {GetSourceName(advice.Destination)} ({GetContainerName(advice.Destination)}) per {advice.BlockedQuantity} unità bloccate.");
+        }
 
         ImGui.TextWrapped(
-            $"Consiglio: libera almeno {slotText} in {GetSourceName(capacityBlock.Destination)} ({GetContainerName(capacityBlock.Destination)}). I merge compatibili già osservati e lo slot di sicurezza sono inclusi nel calcolo.");
+            "I merge compatibili già osservati, HQ/NQ separati e lo slot di sicurezza sono inclusi nel calcolo.");
 
         ImGui.Spacing();
 
@@ -444,6 +447,7 @@ public sealed class ExecutionWindow : Window, IDisposable
         lines.Add($"Missing={plan.Missing}");
         lines.Add($"CapacityBlocked={plan.CapacityBlocked}");
         lines.Add($"CapacityBlocks={plan.CapacityBlocks.Count}");
+        lines.Add($"CapacityAdvice={plan.CapacityAdvice.Count}");
         lines.Add($"UnavailableMissing={Math.Max(0, plan.Missing - plan.CapacityBlocked)}");
         lines.Add($"Actions={session.TotalActionCount}");
         lines.Add($"VerifiedActions={session.VerifiedActionCount}");
@@ -466,6 +470,21 @@ public sealed class ExecutionWindow : Window, IDisposable
 
         if (plan.CapacityBlocks.Count > 0)
         {
+            lines.Add(string.Empty);
+            lines.Add("===== CAPACITY ADVICE =====");
+
+            foreach (var advice in plan.CapacityAdvice)
+            {
+                lines.Add(
+                    string.Join(
+                        "\t",
+                        GetSourceName(advice.Destination),
+                        advice.Destination.Storage,
+                        GetContainerName(advice.Destination),
+                        $"MinimumAdditionalSlots={advice.MinimumAdditionalSlots}",
+                        $"BlockedQuantity={advice.BlockedQuantity}"));
+            }
+
             lines.Add(string.Empty);
             lines.Add("===== CAPACITY BLOCKS =====");
 

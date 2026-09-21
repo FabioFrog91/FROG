@@ -27,10 +27,16 @@ public sealed record PlannerCapacityBlock(
                 MaximumStack));
 }
 
+public sealed record PlannerCapacityAdvice(
+    InventorySource Destination,
+    int MinimumAdditionalSlots,
+    int BlockedQuantity);
+
 public sealed class PlannerPlan
 {
     private readonly List<PlannerAction> actions;
     private readonly List<PlannerCapacityBlock> capacityBlocks;
+    private readonly List<PlannerCapacityAdvice> capacityAdvice;
 
     public PlannerState InitialState { get; }
     public PlannerState FinalState { get; }
@@ -40,6 +46,8 @@ public sealed class PlannerPlan
     public int CapacityBlocked { get; }
     public IReadOnlyList<PlannerCapacityBlock> CapacityBlocks =>
         capacityBlocks;
+    public IReadOnlyList<PlannerCapacityAdvice> CapacityAdvice =>
+        capacityAdvice;
     public PlannerCapacityBlock? NextCapacityBlock =>
         capacityBlocks.FirstOrDefault();
 
@@ -110,6 +118,9 @@ public sealed class PlannerPlan
             missing);
         this.capacityBlocks =
             capacityBlocks.ToList();
+        capacityAdvice =
+            BuildCapacityAdvice(
+                this.capacityBlocks);
     }
 
     public PlannerPlan Append(
@@ -157,4 +168,49 @@ public sealed class PlannerPlan
             Missing,
             CapacityBlocked,
             capacityBlocks);
+
+    private static List<PlannerCapacityAdvice> BuildCapacityAdvice(
+        IReadOnlyList<PlannerCapacityBlock> blocks) =>
+        blocks
+            .GroupBy(block =>
+                new
+                {
+                    block.Destination.Storage,
+                    block.Destination.OwnerId
+                })
+            .Select(destinationGroup =>
+            {
+                var minimumAdditionalSlots =
+                    destinationGroup
+                        .GroupBy(block =>
+                            new
+                            {
+                                block.BaseItemId,
+                                block.IsHq,
+                                block.MaximumStack
+                            })
+                        .Sum(stackGroup =>
+                        {
+                            var quantity =
+                                stackGroup.Sum(block =>
+                                    (long)block.Quantity);
+
+                            return (quantity + stackGroup.Key.MaximumStack - 1) /
+                                   stackGroup.Key.MaximumStack;
+                        });
+
+                var blockedQuantity =
+                    destinationGroup.Sum(block =>
+                        (long)block.Quantity);
+
+                return new PlannerCapacityAdvice(
+                    destinationGroup.First().Destination,
+                    checked((int)Math.Min(
+                        int.MaxValue,
+                        minimumAdditionalSlots)),
+                    checked((int)Math.Min(
+                        int.MaxValue,
+                        blockedQuantity)));
+            })
+            .ToList();
 }

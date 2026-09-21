@@ -524,14 +524,14 @@ public class MainWindow : Window, IDisposable
             ImGui.TextWrapped(
                 $"Spazio insufficiente: {plan.CapacityBlocked} unità disponibili non possono essere trasferite.");
 
-            var capacityBlock =
-                plan.NextCapacityBlock;
-
-            if (capacityBlock is not null)
+            foreach (var advice in plan.CapacityAdvice)
             {
                 ImGui.TextWrapped(
-                    $"Consiglio corrente: libera almeno {capacityBlock.MinimumAdditionalSlots} slot in {GetSourceName(capacityBlock.Destination)} ({GetContainerName(capacityBlock.Destination)}). Merge compatibili e slot di sicurezza sono già conteggiati.");
+                    $"Consiglio corrente: libera almeno {advice.MinimumAdditionalSlots} slot in {GetSourceName(advice.Destination)} ({GetContainerName(advice.Destination)}) per {advice.BlockedQuantity} unità bloccate.");
             }
+
+            ImGui.TextWrapped(
+                "Merge compatibili, HQ/NQ separati e slot di sicurezza sono già conteggiati.");
         }
 
         if (plannerState.ResolverMissingSnapshot.HasValue)
@@ -1000,6 +1000,7 @@ public class MainWindow : Window, IDisposable
                 $"Missing={plan.Missing}",
                 $"CapacityBlocked={plan.CapacityBlocked}",
                 $"CapacityBlocks={plan.CapacityBlocks.Count}",
+                $"CapacityAdvice={plan.CapacityAdvice.Count}",
                 $"ResolverMissingSnapshot={(plannerState.ResolverMissingSnapshot.HasValue ? plannerState.ResolverMissingSnapshot.Value : -1)}",
                 $"MissingDeltaVsResolver={(plannerState.ResolverMissingSnapshot.HasValue ? plan.Missing - plannerState.ResolverMissingSnapshot.Value : 0)}",
                 $"ResolverSyncSnapshotUtc={(plannerState.ResolverSyncSnapshot.HasValue ? plannerState.ResolverSyncSnapshot.Value.ToString("O") : "n/a")}",
