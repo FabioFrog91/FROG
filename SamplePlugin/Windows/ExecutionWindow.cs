@@ -5,6 +5,7 @@ using Dalamud.Interface.Windowing;
 using FROG.Core.Inventory;
 using Lumina.Excel.Sheets;
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 
@@ -67,7 +68,8 @@ public sealed class ExecutionWindow : Window, IDisposable
                 ImGui.TextWrapped(
                     "Il piano precedente non è più valido. FROG sta ricalcolando automaticamente il percorso dallo stato reale.");
 
-                DrawControls();
+                DrawControls(
+                    runtime);
                 return;
             }
 
@@ -77,7 +79,8 @@ public sealed class ExecutionWindow : Window, IDisposable
                 ImGui.TextWrapped(
                     $"Errore esecuzione: {runtime.Error}");
 
-                DrawControls();
+                DrawControls(
+                    runtime);
                 return;
             }
 
@@ -110,7 +113,8 @@ public sealed class ExecutionWindow : Window, IDisposable
             DrawReconciliation(
                 runtime.Reconciliation);
 
-            DrawControls();
+            DrawControls(
+                runtime);
             return;
         }
 
@@ -120,7 +124,8 @@ public sealed class ExecutionWindow : Window, IDisposable
             ImGui.TextWrapped(
                 $"Errore esecuzione: {runtime.Error}");
 
-            DrawControls();
+            DrawControls(
+                runtime);
             return;
         }
 
@@ -128,10 +133,11 @@ public sealed class ExecutionWindow : Window, IDisposable
                 PlanExecutionCoordinatorStatus.Complete ||
             session.IsComplete)
         {
-            ImGui.TextWrapped(
-                "Piano completato. Tutte le azioni sono state osservate e verificate.");
+            DrawCompletion(
+                session.Plan);
 
-            DrawControls();
+            DrawControls(
+                runtime);
             return;
         }
 
@@ -144,7 +150,8 @@ public sealed class ExecutionWindow : Window, IDisposable
             ImGui.TextWrapped(
                 "Nessuna azione corrente disponibile.");
 
-            DrawControls();
+            DrawControls(
+                runtime);
             return;
         }
 
@@ -167,7 +174,8 @@ public sealed class ExecutionWindow : Window, IDisposable
         DrawStatus(
             runtime);
 
-        DrawControls();
+        DrawControls(
+            runtime);
     }
 
     private void DrawSwitchAction(
@@ -272,17 +280,177 @@ public sealed class ExecutionWindow : Window, IDisposable
             $"Confermato {reconciliation.ReconciledQuantity}/{reconciliation.PlannedQuantity}.");
     }
 
-    private void DrawControls()
+    private static void DrawCompletion(
+        PlannerPlan plan)
+    {
+        if (plan.CapacityBlocked > 0)
+        {
+            ImGui.TextWrapped(
+                plan.Actions.Count == 0
+                    ? "Piano non eseguibile: lo spazio libero nelle destinazioni non è sufficiente."
+                    : "Tutte le azioni eseguibili sono state osservate e verificate, ma il piano non può essere completato per spazio insufficiente.");
+
+            ImGui.TextWrapped(
+                $"Libera almeno uno slot nell'inventario o deposito di destinazione e ricalcola il piano. Quantità bloccata: {plan.CapacityBlocked}.");
+
+            var unavailableMissing =
+                plan.Missing -
+                plan.CapacityBlocked;
+
+            if (unavailableMissing > 0)
+            {
+                ImGui.TextWrapped(
+                    $"Ulteriori unità non disponibili nelle sorgenti: {unavailableMissing}.");
+            }
+
+            return;
+        }
+
+        if (plan.Missing > 0)
+        {
+            ImGui.TextWrapped(
+                $"Tutte le azioni disponibili sono state osservate e verificate. Restano {plan.Missing} unità non disponibili nelle sorgenti.");
+            return;
+        }
+
+        ImGui.TextWrapped(
+            plan.Actions.Count == 0
+                ? "Nessuna azione necessaria: il fabbisogno è già soddisfatto."
+                : "Piano completato. Tutte le azioni sono state osservate e verificate.");
+    }
+
+    private void DrawControls(
+        PlanExecutionRuntimeSnapshot runtime)
     {
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();
+
+        if (ImGui.Button("COPIA DEBUG"))
+        {
+            ImGui.SetClipboardText(
+                BuildExecutionDebugClipboardText(
+                    runtime));
+        }
+
+        ImGui.SameLine();
 
         if (ImGui.Button("INTERROMPI ESECUZIONE"))
         {
             executionRuntime.Clear();
             IsOpen = false;
         }
+    }
+
+    private string BuildExecutionDebugClipboardText(
+        PlanExecutionRuntimeSnapshot runtime)
+    {
+        var lines =
+            new List<string>
+            {
+                "FROG DEBUG | EXECUTION",
+                $"GeneratedUtc={DateTime.UtcNow:O}",
+                $"Status={runtime.Status}",
+                $"IsReplanning={runtime.IsReplanning}",
+                $"Error={runtime.Error ?? "n/a"}"
+            };
+
+        var session =
+            runtime.Session;
+
+        if (session is null)
+        {
+            lines.Add("SessionActive=False");
+
+            return string.Join(
+                Environment.NewLine,
+                lines);
+        }
+
+        var plan =
+            session.Plan;
+
+        lines.Add("SessionActive=True");
+        lines.Add($"PlanResult={plan.Result}");
+        lines.Add($"Missing={plan.Missing}");
+        lines.Add($"CapacityBlocked={plan.CapacityBlocked}");
+        lines.Add($"UnavailableMissing={Math.Max(0, plan.Missing - plan.CapacityBlocked)}");
+        lines.Add($"Actions={session.TotalActionCount}");
+        lines.Add($"VerifiedActions={session.VerifiedActionCount}");
+        lines.Add($"RemainingActions={session.RemainingActionCount}");
+        lines.Add($"CurrentActionIndex={session.CurrentActionIndex}");
+
+        if (runtime.Verification is not null)
+        {
+            lines.Add($"VerificationStatus={runtime.Verification.Status}");
+            lines.Add($"VerificationMessage={runtime.Verification.Message}");
+        }
+
+        if (runtime.Reconciliation is not null)
+        {
+            lines.Add($"PlannedQuantity={runtime.Reconciliation.PlannedQuantity}");
+            lines.Add($"SourceDecrease={runtime.Reconciliation.SourceDecrease}");
+            lines.Add($"DestinationIncrease={runtime.Reconciliation.DestinationIncrease}");
+            lines.Add($"ReconciledQuantity={runtime.Reconciliation.ReconciledQuantity}");
+        }
+
+        lines.Add(string.Empty);
+        lines.Add("===== STEPS =====");
+
+        foreach (var step in session.Steps)
+        {
+            var action =
+                step.Action;
+
+            if (action.Type ==
+                PlannerActionType.SwitchCharacter)
+            {
+                lines.Add(
+                    string.Join(
+                        "\t",
+                        step.Index,
+                        step.Status,
+                        "SWITCH",
+                        GetCharacterName(action.FromCharacterId),
+                        action.FromCharacterId,
+                        GetCharacterName(action.ToCharacterId),
+                        action.ToCharacterId));
+
+                continue;
+            }
+
+            if (action.Source is null ||
+                action.Destination is null)
+            {
+                lines.Add(
+                    $"{step.Index}\t{step.Status}\tMOVE\tINVALID");
+                continue;
+            }
+
+            lines.Add(
+                string.Join(
+                    "\t",
+                    step.Index,
+                    step.Status,
+                    "MOVE",
+                    GetItemName(action.BaseItemId),
+                    action.BaseItemId,
+                    action.IsHq ? "HQ" : "NQ",
+                    action.Quantity,
+                    GetSourceName(action.Source),
+                    action.Source.Storage,
+                    GetSourceLocationText(
+                        plan,
+                        step.Index - 1,
+                        action.Source),
+                    GetSourceName(action.Destination),
+                    action.Destination.Storage,
+                    GetContainerName(action.Destination)));
+        }
+
+        return string.Join(
+            Environment.NewLine,
+            lines);
     }
 
     private void OnSessionStarted()

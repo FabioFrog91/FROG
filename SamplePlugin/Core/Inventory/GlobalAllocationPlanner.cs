@@ -1269,7 +1269,10 @@ internal sealed class GlobalAllocationPlanner
             missing == 0
                 ? PlannerPlanResult.Completed
                 : PlannerPlanResult.CompletedWithMissing,
-            missing);
+            missing,
+            Math.Max(
+                0,
+                missing - expectedMissing));
     }
 
     private bool AppendGroupedMoves(

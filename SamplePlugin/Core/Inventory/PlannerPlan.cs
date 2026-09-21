@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -18,6 +19,7 @@ public sealed class PlannerPlan
     public IReadOnlyList<PlannerAction> Actions => actions;
     public PlannerPlanResult Result { get; }
     public int Missing { get; }
+    public int CapacityBlocked { get; }
 
     public int CharacterSwitches =>
         actions.Count(action =>
@@ -51,13 +53,15 @@ public sealed class PlannerPlan
         PlannerState finalState,
         IEnumerable<PlannerAction> actions,
         PlannerPlanResult result,
-        int missing)
+        int missing,
+        int capacityBlocked = 0)
         : this(
             initialState,
             finalState,
             actions.ToList(),
             result,
-            missing)
+            missing,
+            capacityBlocked)
     {
     }
 
@@ -66,13 +70,18 @@ public sealed class PlannerPlan
         PlannerState finalState,
         List<PlannerAction> actions,
         PlannerPlanResult result,
-        int missing)
+        int missing,
+        int capacityBlocked)
     {
         InitialState = initialState;
         FinalState = finalState;
         this.actions = actions;
         Result = result;
         Missing = missing;
+        CapacityBlocked = Math.Clamp(
+            capacityBlocked,
+            0,
+            missing);
     }
 
     public PlannerPlan Append(
@@ -91,7 +100,8 @@ public sealed class PlannerPlan
             state,
             updatedActions,
             Result,
-            Missing);
+            Missing,
+            CapacityBlocked);
     }
 
     public PlannerPlan WithResult(
@@ -102,7 +112,10 @@ public sealed class PlannerPlan
             FinalState,
             actions,
             result,
-            missing);
+            missing,
+            Math.Min(
+                CapacityBlocked,
+                missing));
 
     public PlannerPlan WithActions(
         IEnumerable<PlannerAction> reorderedActions) =>
@@ -111,5 +124,6 @@ public sealed class PlannerPlan
             FinalState,
             reorderedActions,
             Result,
-            Missing);
+            Missing,
+            CapacityBlocked);
 }

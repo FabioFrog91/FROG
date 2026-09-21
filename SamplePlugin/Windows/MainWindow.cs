@@ -519,6 +519,12 @@ public class MainWindow : Window, IDisposable
         ImGui.Text(
             $"Mancante: {plan.Missing}");
 
+        if (plan.CapacityBlocked > 0)
+        {
+            ImGui.TextWrapped(
+                $"Spazio insufficiente: {plan.CapacityBlocked} unità disponibili non possono essere trasferite. Libera almeno uno slot nella destinazione del piano.");
+        }
+
         if (plannerState.ResolverMissingSnapshot.HasValue)
         {
             var delta =
@@ -977,6 +983,7 @@ public class MainWindow : Window, IDisposable
                 $"Requirements={requirementSet.Requirements.Count}",
                 $"Result={plan.Result}",
                 $"Missing={plan.Missing}",
+                $"CapacityBlocked={plan.CapacityBlocked}",
                 $"ResolverMissingSnapshot={(plannerState.ResolverMissingSnapshot.HasValue ? plannerState.ResolverMissingSnapshot.Value : -1)}",
                 $"MissingDeltaVsResolver={(plannerState.ResolverMissingSnapshot.HasValue ? plan.Missing - plannerState.ResolverMissingSnapshot.Value : 0)}",
                 $"ResolverSyncSnapshotUtc={(plannerState.ResolverSyncSnapshot.HasValue ? plannerState.ResolverSyncSnapshot.Value.ToString("O") : "n/a")}",
