@@ -86,9 +86,9 @@ Il CI GitHub storico non inizializza correttamente tutti i submodule e non è un
 
 Stato Git osservato in questo workspace al 2026-09-21:
 
-- ultimo checkpoint con build verificata: `1799b0a` — `Harden task cancellation and plugin shutdown`;
-- dopo quel checkpoint sono presenti aggiornamenti del contesto e l'implementazione stack/capacità ancora da buildare;
-- branch locale avanti rispetto a `origin/debug/retainer-row-inspector`; verificare il conteggio corrente con Git invece di considerarlo costante;
+- ultimo checkpoint di codice con build verificata: `52ece15` — `Add stack-aware planner capacity`; equivalente pubblicato dal connettore GitHub nel commit remoto `5884fb3` insieme al contesto aggiornato;
+- l'implementazione stack/capacità ha ricevuto `b ok` il 2026-09-21; i test runtime specifici restano da eseguire;
+- il riferimento locale `origin/debug/retainer-row-inspector` può restare indietro dopo una pubblicazione tramite connettore finché non viene eseguito `git fetch origin`; non dedurre da questo che il remoto non sia aggiornato;
 - checkpoint precedente: `d799ad1` — `Highlight FC execution pages and slots`;
 - backup tag/branch: `backup/pre-disposal-audit-20260920`;
 - submodule `CriticalCommonLib` pinned a `34d364ea938e585b4f7eeab5b36e4261fdd817d0`;
@@ -96,7 +96,7 @@ Stato Git osservato in questo workspace al 2026-09-21:
 - le stesse modifiche sono conservate in `patches/critical-common-lib-dispose-events.patch`;
 - non sovrascrivere o perdere queste modifiche.
 
-Questo workspace non dispone di `dotnet`, `csc` o `msbuild`. Il checkpoint funzionale `1799b0a` ha ricevuto un vero `b ok` nell'ambiente Windows dell'utente il 2026-09-21.
+Questo workspace non dispone di `dotnet`, `csc` o `msbuild`. Il checkpoint stack/capacità `52ece15`, pubblicato nel commit remoto `5884fb3`, ha ricevuto un vero `b ok` nell'ambiente Windows dell'utente il 2026-09-21.
 
 ## 4. Architettura fondamentale
 
@@ -307,7 +307,7 @@ Ogni nuovo event handler, hook, timer, task o `CancellationTokenSource` deve ave
 
 ## 12. Stack, merge e capacità
 
-Stato: `IMPLEMENTATO — DA BUILD/TESTARE`.
+Stato: `BUILD VERIFICATA` tramite `b ok` dell'utente il 2026-09-21; test runtime specifici ancora da eseguire.
 
 Decisioni confermate:
 
@@ -406,14 +406,13 @@ Riferimenti studiati e decisioni derivate:
 
 ## 15. Prossimo lavoro corretto
 
-Stack/capacità è ora implementato ma non verificato. Prossimo checkpoint obbligatorio:
+Stack/capacità ha superato la build locale. Prossimo checkpoint obbligatorio:
 
-1. eseguire la build locale;
-2. correggere eventuali errori senza ampliare il refactor;
-3. attendere `b ok` prima di promuovere lo stato;
-4. testare merge, split, HQ/NQ, zero slot, unico slot riservato, FC multipagina e trasferimento parziale;
-5. controllare diagnostica allocazioni/memoria per verificare che lo snapshot compatto resti leggero;
-6. aggiornare immediatamente questo file con gli esiti reali.
+1. testare nel gioco merge, split, HQ/NQ, zero slot, unico slot riservato, FC multipagina e trasferimento parziale;
+2. verificare che l'esecuzione manuale e il replan continuino a comportarsi come prima;
+3. controllare diagnostica allocazioni/memoria per verificare che lo snapshot compatto resti leggero;
+4. correggere eventuali problemi senza ampliare il refactor;
+5. aggiornare immediatamente questo file con gli esiti reali, promuovendo a `RUNTIME VERIFICATO` soltanto i casi realmente provati.
 
 Il riconoscimento discard deve restare un passaggio separato perché richiede una cattura runtime reale.
 
