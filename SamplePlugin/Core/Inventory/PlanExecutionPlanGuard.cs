@@ -66,7 +66,9 @@ public sealed class PlanExecutionPlanGuard
             new PlannerState(
                 plan.InitialState.MainCharacterId,
                 currentCharacterId,
-                plannerItems);
+                plannerItems,
+                plan.InitialState.Capacity.Rebase(
+                    currentItems));
 
         for (var index = firstActionIndex;
              index < plan.Actions.Count;

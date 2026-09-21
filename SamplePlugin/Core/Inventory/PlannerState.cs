@@ -8,16 +8,19 @@ public sealed class PlannerState
 {
     private readonly List<InventoryItemSnapshot> items;
     private readonly HashSet<ulong> visitedCharacters;
+    private readonly PlannerCapacitySnapshot capacity;
 
     public ulong MainCharacterId { get; }
     public ulong CurrentCharacterId { get; }
     public IReadOnlyList<InventoryItemSnapshot> Items => items;
     public IReadOnlyCollection<ulong> VisitedCharacters => visitedCharacters;
+    public PlannerCapacitySnapshot Capacity => capacity;
 
     public PlannerState(
         ulong mainCharacterId,
         ulong currentCharacterId,
-        IEnumerable<InventoryItemSnapshot> items)
+        IEnumerable<InventoryItemSnapshot> items,
+        PlannerCapacitySnapshot capacity)
     {
         if (mainCharacterId == 0)
             throw new ArgumentOutOfRangeException(nameof(mainCharacterId));
@@ -28,6 +31,7 @@ public sealed class PlannerState
         MainCharacterId = mainCharacterId;
         CurrentCharacterId = currentCharacterId;
         this.items = items.ToList();
+        this.capacity = capacity;
         visitedCharacters = new HashSet<ulong>();
 
         if (currentCharacterId != mainCharacterId)
@@ -38,12 +42,14 @@ public sealed class PlannerState
         ulong mainCharacterId,
         ulong currentCharacterId,
         List<InventoryItemSnapshot> items,
-        HashSet<ulong> visitedCharacters)
+        HashSet<ulong> visitedCharacters,
+        PlannerCapacitySnapshot capacity)
     {
         MainCharacterId = mainCharacterId;
         CurrentCharacterId = currentCharacterId;
         this.items = items;
         this.visitedCharacters = visitedCharacters;
+        this.capacity = capacity;
     }
 
     public bool HasVisitedCharacter(ulong characterId) =>
@@ -64,7 +70,8 @@ public sealed class PlannerState
             MainCharacterId,
             characterId,
             items,
-            updatedVisited);
+            updatedVisited,
+            capacity);
     }
 
     public PlannerState WithItems(IEnumerable<InventoryItemSnapshot> newItems) =>
@@ -72,7 +79,8 @@ public sealed class PlannerState
             MainCharacterId,
             CurrentCharacterId,
             newItems.ToList(),
-            visitedCharacters);
+            visitedCharacters,
+            capacity);
 
     public IReadOnlyList<InventoryItemSnapshot> Find(InventorySource source) =>
         items
@@ -156,6 +164,37 @@ public sealed class PlannerState
             item.OwnerId == source.OwnerId &&
             item.Container == source.Container);
 
+    public int GetMaximumMovableQuantity(
+        InventorySource source,
+        InventorySource destination,
+        uint baseItemId,
+        bool isHq,
+        int requestedQuantity)
+    {
+        if (requestedQuantity <= 0)
+            return 0;
+
+        var sourceQuantity =
+            GetQuantity(
+                baseItemId,
+                isHq,
+                source);
+
+        if (sourceQuantity <= 0)
+            return 0;
+
+        var destinationQuantity =
+            capacity.GetAcceptableQuantity(
+                destination,
+                baseItemId,
+                isHq,
+                requestedQuantity);
+
+        return Math.Min(
+            sourceQuantity,
+            destinationQuantity);
+    }
+
     public PlannerState Move(
         InventorySource source,
         InventorySource destination,
@@ -165,6 +204,25 @@ public sealed class PlannerState
     {
         if (quantity <= 0)
             throw new ArgumentOutOfRangeException(nameof(quantity));
+
+        if (GetMaximumMovableQuantity(
+                source,
+                destination,
+                baseItemId,
+                isHq,
+                quantity) < quantity)
+        {
+            throw new InvalidOperationException(
+                "The planner destination does not have enough logical capacity.");
+        }
+
+        if (!capacity.TryGetMaximumStack(
+                baseItemId,
+                out var maximumStack))
+        {
+            throw new InvalidOperationException(
+                "The planner does not know the maximum stack size for this item.");
+        }
 
         var matchingSourceItems = items
             .Where(item =>
@@ -184,6 +242,7 @@ public sealed class PlannerState
 
         var rawItemId = matchingSourceItems[0].RawItemId;
         var updatedItems = items.ToList();
+        var sourceChanges = new List<SourceStackChange>();
         var remaining = quantity;
 
         foreach (var sourceItem in matchingSourceItems)
@@ -201,6 +260,11 @@ public sealed class PlannerState
 
             var newQuantity = sourceItem.Quantity - moved;
 
+            sourceChanges.Add(
+                new SourceStackChange(
+                    sourceItem,
+                    newQuantity));
+
             if (newQuantity == 0)
                 updatedItems.RemoveAt(index);
             else
@@ -215,64 +279,100 @@ public sealed class PlannerState
                 "The planner state could not consume the requested quantity.");
         }
 
-        var destinationItemIndex =
-            destination.Storage == StorageType.CharacterInventory
-                ? updatedItems.FindIndex(item =>
-                    item.BaseItemId == baseItemId &&
-                    item.IsHq == isHq &&
-                    item.Storage == StorageType.CharacterInventory &&
-                    item.OwnerId == destination.OwnerId)
-                : updatedItems.FindIndex(item =>
-                    item.BaseItemId == baseItemId &&
-                    item.IsHq == isHq &&
-                    item.Storage == destination.Storage &&
-                    item.OwnerId == destination.OwnerId &&
-                    item.Container == destination.Container);
+        var destinationRemaining = quantity;
 
-        if (destinationItemIndex >= 0)
-        {
-            var destinationItem = updatedItems[destinationItemIndex];
-
-            updatedItems[destinationItemIndex] =
-                destinationItem with
-                {
-                    Quantity = destinationItem.Quantity + quantity
-                };
-        }
-        else
-        {
-            // CharacterInventory is a logical destination: the game may place
-            // or merge the item in any character bag. If no compatible stack
-            // exists yet, keep the planner's canonical destination container
-            // only as a deterministic simulation placeholder.
-            var nextSlot = updatedItems
+        var nextVirtualSlot =
+            updatedItems
                 .Where(item =>
                     item.Storage == destination.Storage &&
                     item.OwnerId == destination.OwnerId &&
-                    item.Container == destination.Container)
+                    item.Slot < 0)
                 .Select(item => item.Slot)
-                .DefaultIfEmpty(-1)
-                .Max() + 1;
+                .DefaultIfEmpty(0)
+                .Min() - 1;
+
+        var compatibleDestinationItems =
+            updatedItems
+                .Where(item =>
+                    item.BaseItemId == baseItemId &&
+                    item.IsHq == isHq &&
+                    item.Storage == destination.Storage &&
+                    item.OwnerId == destination.OwnerId &&
+                    item.Quantity < maximumStack)
+                .OrderBy(item => item.Container)
+                .ThenBy(item => item.Slot)
+                .ToList();
+
+        foreach (var destinationItem in compatibleDestinationItems)
+        {
+            if (destinationRemaining == 0)
+                break;
+
+            var index =
+                updatedItems.IndexOf(destinationItem);
+
+            if (index < 0)
+                continue;
+
+            var merged =
+                Math.Min(
+                    destinationRemaining,
+                    maximumStack - destinationItem.Quantity);
+
+            if (merged <= 0)
+                continue;
+
+            updatedItems[index] =
+                destinationItem with
+                {
+                    Quantity = destinationItem.Quantity + merged,
+                    Container = destination.Container,
+                    Slot = destinationItem.Container == destination.Container
+                        ? destinationItem.Slot
+                        : nextVirtualSlot--,
+                    ParentCharacterId = destination.ParentCharacterId
+                };
+
+            destinationRemaining -= merged;
+        }
+
+        while (destinationRemaining > 0)
+        {
+            var stacked =
+                Math.Min(
+                    destinationRemaining,
+                    maximumStack);
 
             updatedItems.Add(
                 new InventoryItemSnapshot(
                     baseItemId,
                     rawItemId,
-                    quantity,
+                    stacked,
                     isHq,
                     destination.Storage,
                     destination.OwnerId,
                     destination.Container,
-                    nextSlot,
+                    nextVirtualSlot--,
                     DateTime.UtcNow,
                     false,
                     destination.ParentCharacterId));
+
+            destinationRemaining -= stacked;
         }
+
+        var updatedCapacity =
+            capacity.ApplyMove(
+                sourceChanges,
+                destination,
+                baseItemId,
+                isHq,
+                quantity);
 
         return new PlannerState(
             MainCharacterId,
             CurrentCharacterId,
             updatedItems,
-            visitedCharacters);
+            visitedCharacters,
+            updatedCapacity);
     }
 }

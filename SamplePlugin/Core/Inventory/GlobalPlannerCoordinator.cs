@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Dalamud.Plugin.Services;
+using Lumina.Excel.Sheets;
 
 namespace FROG.Core.Inventory;
 
@@ -29,11 +31,14 @@ public sealed class GlobalPlannerCoordinator : IDisposable
 {
     private readonly object syncLock = new();
     private readonly ExecutionOrderCompiler executionOrderCompiler;
+    private readonly IDataManager dataManager;
 
     public GlobalPlannerCoordinator(
-        ExecutionOrderCompiler executionOrderCompiler)
+        ExecutionOrderCompiler executionOrderCompiler,
+        IDataManager dataManager)
     {
         this.executionOrderCompiler = executionOrderCompiler;
+        this.dataManager = dataManager;
     }
 
     private Task<PlannerPlan>? runningTask;
@@ -110,12 +115,6 @@ public sealed class GlobalPlannerCoordinator : IDisposable
                         item.BaseItemId))
                 .ToList();
 
-        var stateSnapshot =
-            new PlannerState(
-                mainCharacterId,
-                currentCharacterId,
-                plannerItems);
-
         var executionOrderSnapshot =
             executionOrderCompiler.Capture(
                 plannerItems);
@@ -124,6 +123,24 @@ public sealed class GlobalPlannerCoordinator : IDisposable
             new ResolutionPolicy(
                 resolutionPolicy.Sources.ToList(),
                 mainCharacterId);
+
+        var maximumStacks =
+            CaptureMaximumStacks(
+                requiredItemIds,
+                out var stackSizeError);
+
+        var capacitySnapshot =
+            PlannerCapacitySnapshot.Capture(
+                inventoryItems,
+                resolutionPolicySnapshot.Sources,
+                maximumStacks);
+
+        var stateSnapshot =
+            new PlannerState(
+                mainCharacterId,
+                currentCharacterId,
+                plannerItems,
+                capacitySnapshot);
 
         var optimizationSettingsSnapshot =
             new OptimizationSettings(
@@ -167,6 +184,12 @@ public sealed class GlobalPlannerCoordinator : IDisposable
                 Task.Run(
                     () =>
                     {
+                        if (stackSizeError is not null)
+                        {
+                            throw new InvalidOperationException(
+                                stackSizeError);
+                        }
+
                         var planned =
                             planner.Plan(
                                 requirementSetSnapshot,
@@ -196,6 +219,42 @@ public sealed class GlobalPlannerCoordinator : IDisposable
         }
 
         return true;
+    }
+
+    private IReadOnlyDictionary<uint, int> CaptureMaximumStacks(
+        IReadOnlySet<uint> requiredItemIds,
+        out string? error)
+    {
+        var result =
+            new Dictionary<uint, int>();
+
+        var missing =
+            new List<uint>();
+
+        var itemSheet =
+            dataManager.GetExcelSheet<Item>();
+
+        foreach (var itemId in requiredItemIds.OrderBy(value => value))
+        {
+            if (!itemSheet.TryGetRow(
+                    itemId,
+                    out var item) ||
+                item.StackSize == 0)
+            {
+                missing.Add(itemId);
+                continue;
+            }
+
+            result[itemId] =
+                checked((int)item.StackSize);
+        }
+
+        error =
+            missing.Count == 0
+                ? null
+                : $"Stack massimo non disponibile per gli item: {string.Join(", ", missing)}.";
+
+        return result;
     }
 
     public bool TryConsumeCompletion(

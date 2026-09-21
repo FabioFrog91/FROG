@@ -56,6 +56,18 @@ public sealed class PlannerActionValidator
             return Fail(out reason, "The source does not contain enough of the requested item.");
         }
 
+        if (state.GetMaximumMovableQuantity(
+                action.Source,
+                action.Destination,
+                action.BaseItemId,
+                action.IsHq,
+                action.Quantity) < action.Quantity)
+        {
+            return Fail(
+                out reason,
+                "The destination does not have enough logical stack capacity.");
+        }
+
         return true;
     }
 

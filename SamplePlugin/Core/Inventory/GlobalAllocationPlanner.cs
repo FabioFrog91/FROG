@@ -1245,11 +1245,11 @@ internal sealed class GlobalAllocationPlanner
                 requirements,
                 state);
 
-        // expectedMissing is calculated before search and should agree with
-        // the fully materialized state. Keep the state-derived value as the
-        // source of truth, but reject an allocation that unexpectedly loses
-        // satisfiable material.
-        if (missing > expectedMissing)
+        // Availability-derived missing is a lower bound. Destination capacity
+        // can legitimately increase it when only part of a requested route
+        // fits while preserving the single logical reserve slot. A lower
+        // materialized value would instead indicate an inconsistent plan.
+        if (missing < expectedMissing)
             return null;
 
         foreach (var action in actions)
@@ -1346,13 +1346,24 @@ internal sealed class GlobalAllocationPlanner
             if (move.Destination is null)
                 return false;
 
+            var movableQuantity =
+                state.GetMaximumMovableQuantity(
+                    move.Source,
+                    move.Destination,
+                    move.BaseItemId,
+                    move.IsHq,
+                    move.Quantity);
+
+            if (movableQuantity <= 0)
+                continue;
+
             var action =
                 PlannerAction.Move(
                     move.Source,
                     move.Destination,
                     move.BaseItemId,
                     move.IsHq,
-                    move.Quantity);
+                    movableQuantity);
 
             if (!AppendAction(
                     ref state,
