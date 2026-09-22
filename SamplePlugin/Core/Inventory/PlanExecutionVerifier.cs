@@ -149,8 +149,19 @@ public sealed class PlanExecutionVerifier
                 $"In attesa di una nuova osservazione di source e destination. {diagnostics}");
         }
 
-        if (observation.SourceQuantity == baseline.SourceQuantity &&
-            observation.LogicalSourceQuantity == baseline.LogicalSourceQuantity &&
+        var baselineTransferSourceQuantity =
+            GetTransferSourceQuantity(
+                action,
+                baseline.SourceQuantity,
+                baseline.LogicalSourceQuantity);
+
+        var observedTransferSourceQuantity =
+            GetTransferSourceQuantity(
+                action,
+                observation.SourceQuantity,
+                observation.LogicalSourceQuantity);
+
+        if (observedTransferSourceQuantity == baselineTransferSourceQuantity &&
             observation.DestinationQuantity == baseline.DestinationQuantity)
         {
             return new PlanExecutionVerificationResult(
@@ -161,12 +172,12 @@ public sealed class PlanExecutionVerifier
         var expectedSourceMaximum =
             Math.Max(
                 0,
-                baseline.SourceQuantity - action.Quantity);
+                baselineTransferSourceQuantity - action.Quantity);
 
         var expectedDestinationMinimum =
             baseline.DestinationQuantity + action.Quantity;
 
-        if (observation.SourceQuantity <= expectedSourceMaximum &&
+        if (observedTransferSourceQuantity <= expectedSourceMaximum &&
             observation.DestinationQuantity >= expectedDestinationMinimum)
         {
             return new PlanExecutionVerificationResult(
@@ -178,6 +189,15 @@ public sealed class PlanExecutionVerifier
             PlanExecutionVerificationStatus.Mismatch,
             $"Delta non coerente. {diagnostics}");
     }
+
+    private static int GetTransferSourceQuantity(
+        PlannerAction action,
+        int sourceQuantity,
+        int logicalSourceQuantity) =>
+        action.Source?.Storage == StorageType.CharacterInventory ||
+        action.Source?.Storage == StorageType.Retainer
+            ? logicalSourceQuantity
+            : sourceQuantity;
 
     private static string FormatMoveDiagnostics(
         PlannerAction action,
