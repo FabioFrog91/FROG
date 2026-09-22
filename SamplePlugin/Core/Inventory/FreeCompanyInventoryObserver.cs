@@ -1,3 +1,4 @@
+using CriticalCommonLib.Models;
 using CriticalCommonLib.Services;
 using FROG.Core.Inventory.Providers;
 using FFXIVClientStructs.FFXIV.Client.Game;
@@ -81,7 +82,7 @@ internal sealed class FreeCompanyInventoryObserver : IDisposable
     }
 
     private void OnBagsChanged(
-        List<InventoryScanner.BagChange> changes)
+        List<BagChange> changes)
     {
         // CCL has completed a scanner pass and changed at least one cached bag.
         // Syncing all already-observed FC pages is tiny (5 x 50 slots) and avoids
