@@ -109,11 +109,6 @@ public sealed class RetainerDisplayLocator
                 .Sum(previous =>
                     previous.Quantity);
 
-        var physicalContainerIndex =
-            checked(
-                (int)(source.Container -
-                      RetainerContainerFirst));
-
         var matchingStacks =
             executionOrderCompiler.OrderStacksForExecution(
                 source,
@@ -121,7 +116,10 @@ public sealed class RetainerDisplayLocator
                 .Where(item =>
                     item.Storage == source.Storage &&
                     item.OwnerId == source.OwnerId &&
-                    item.Container == source.Container &&
+                    (currentItems is not null ||
+                     item.Container == source.Container) &&
+                    item.Container >= RetainerContainerFirst &&
+                    item.Container <= RetainerContainerLast &&
                     item.BaseItemId == action.BaseItemId &&
                     item.IsHq == action.IsHq &&
                     item.Quantity > 0));
@@ -164,6 +162,17 @@ public sealed class RetainerDisplayLocator
                 Math.Min(
                     remaining,
                     available);
+
+            if (stack.Container < RetainerContainerFirst ||
+                stack.Container > RetainerContainerLast)
+            {
+                return RetainerDisplayLocation.Unavailable;
+            }
+
+            var physicalContainerIndex =
+                checked(
+                    (int)(stack.Container -
+                          RetainerContainerFirst));
 
             var displayIndex =
                 FindDisplayIndex(
