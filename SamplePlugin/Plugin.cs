@@ -67,12 +67,16 @@ public sealed class Plugin : HostedPlugin
 
     private const int LoginRetryIntervalMilliseconds = 500;
     private const int LoginRetryMaxAttempts = 10;
+    private const int FreeCompanyObservationStabilityMilliseconds = 100;
 
     private readonly object loginSyncLock = new();
     private CancellationTokenSource? loginSyncCancellation;
     private bool disposed;
 
     private bool isFreeCompanyChestOpen;
+    private uint? observedFreeCompanyContainer;
+    private long observedFreeCompanyContainerSinceMs;
+    private long freeCompanyObservationGeneration;
     private readonly Dictionary<(ulong OwnerId, uint Container), PendingFreeCompanyObservation>
         pendingFreeCompanyObservations = new();
 
@@ -767,9 +771,19 @@ public sealed class Plugin : HostedPlugin
     internal void SyncObservedFreeCompanyPage(
         StorageReaderAPI storageReader)
     {
-        if (!isFreeCompanyChestOpen ||
-            !TryGetObservedFreeCompanyPage(
-                out var observedFreeCompanyContainer))
+        if (!isFreeCompanyChestOpen)
+            return;
+
+        if (!TryGetObservedFreeCompanyPage(
+                out var observedContainer))
+        {
+            InvalidateFreeCompanyObservation();
+            return;
+        }
+
+        if (!TryGetStableFreeCompanyObservation(
+                observedContainer,
+                out var observationGeneration))
         {
             return;
         }
@@ -779,20 +793,32 @@ public sealed class Plugin : HostedPlugin
 
         if (!storageReader.TryReadActiveFreeCompanyPage(
                 observedAtUtc,
-                observedFreeCompanyContainer,
+                observedContainer,
                 out var freeCompanySource,
                 out var freeCompanySnapshots))
         {
             return;
         }
 
-        foreach (var pendingKey in pendingFreeCompanyObservations.Keys
-                     .Where(key =>
-                         key.Container != observedFreeCompanyContainer)
-                     .ToList())
+        if (!TryGetObservedFreeCompanyPage(
+                out var confirmedContainer))
         {
-            pendingFreeCompanyObservations.Remove(
-                pendingKey);
+            InvalidateFreeCompanyObservation();
+            return;
+        }
+
+        if (confirmedContainer != observedContainer)
+        {
+            TrackFreeCompanyObservation(
+                confirmedContainer);
+
+            return;
+        }
+
+        if (observedFreeCompanyContainer != observedContainer ||
+            freeCompanyObservationGeneration != observationGeneration)
+        {
+            return;
         }
 
         var knownSnapshots =
@@ -806,7 +832,8 @@ public sealed class Plugin : HostedPlugin
         if (!ShouldPromoteFreeCompanyObservation(
                 freeCompanySource,
                 knownSnapshots,
-                freeCompanySnapshots))
+                freeCompanySnapshots,
+                observationGeneration))
         {
             return;
         }
@@ -817,10 +844,61 @@ public sealed class Plugin : HostedPlugin
             observedAtUtc);
     }
 
+    private bool TryGetStableFreeCompanyObservation(
+        uint container,
+        out long generation)
+    {
+        TrackFreeCompanyObservation(
+            container);
+
+        generation =
+            freeCompanyObservationGeneration;
+
+        return Environment.TickCount64 -
+               observedFreeCompanyContainerSinceMs >=
+               FreeCompanyObservationStabilityMilliseconds;
+    }
+
+    private void TrackFreeCompanyObservation(
+        uint container)
+    {
+        if (observedFreeCompanyContainer == container)
+            return;
+
+        observedFreeCompanyContainer = container;
+        observedFreeCompanyContainerSinceMs =
+            Environment.TickCount64;
+        freeCompanyObservationGeneration++;
+        pendingFreeCompanyObservations.Clear();
+    }
+
+    private void InvalidateFreeCompanyObservation()
+    {
+        if (!observedFreeCompanyContainer.HasValue &&
+            pendingFreeCompanyObservations.Count == 0)
+        {
+            return;
+        }
+
+        observedFreeCompanyContainer = null;
+        observedFreeCompanyContainerSinceMs = 0;
+        freeCompanyObservationGeneration++;
+        pendingFreeCompanyObservations.Clear();
+    }
+
+    private void ResetFreeCompanyObservation()
+    {
+        observedFreeCompanyContainer = null;
+        observedFreeCompanyContainerSinceMs = 0;
+        freeCompanyObservationGeneration++;
+        pendingFreeCompanyObservations.Clear();
+    }
+
     private bool ShouldPromoteFreeCompanyObservation(
         InventorySource source,
         IReadOnlyList<InventoryItemSnapshot> knownSnapshots,
-        IReadOnlyList<InventoryItemSnapshot> observedSnapshots)
+        IReadOnlyList<InventoryItemSnapshot> observedSnapshots,
+        long observationGeneration)
     {
         var key =
             (source.OwnerId, source.Container);
@@ -845,6 +923,7 @@ public sealed class Plugin : HostedPlugin
         if (!pendingFreeCompanyObservations.TryGetValue(
                 key,
                 out var pending) ||
+            pending.Generation != observationGeneration ||
             !string.Equals(
                 pending.Fingerprint,
                 fingerprint,
@@ -853,7 +932,8 @@ public sealed class Plugin : HostedPlugin
             pendingFreeCompanyObservations[key] =
                 new PendingFreeCompanyObservation(
                     fingerprint,
-                    1);
+                    1,
+                    observationGeneration);
 
             return false;
         }
@@ -1016,7 +1096,7 @@ public sealed class Plugin : HostedPlugin
         AddonArgs args)
     {
         isFreeCompanyChestOpen = true;
-        pendingFreeCompanyObservations.Clear();
+        ResetFreeCompanyObservation();
 
         SaveInventoryIndex();
     }
@@ -1026,7 +1106,7 @@ public sealed class Plugin : HostedPlugin
         AddonArgs args)
     {
         isFreeCompanyChestOpen = false;
-        pendingFreeCompanyObservations.Clear();
+        ResetFreeCompanyObservation();
 
         SaveInventoryIndex();
     }
@@ -1055,7 +1135,8 @@ public sealed class Plugin : HostedPlugin
 
 internal sealed record PendingFreeCompanyObservation(
     string Fingerprint,
-    int ConfirmationCount);
+    int ConfirmationCount,
+    long Generation);
 
 internal sealed class FrogInventoryStartup : IHostedService
 {
