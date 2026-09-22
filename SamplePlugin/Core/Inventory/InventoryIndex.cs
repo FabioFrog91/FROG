@@ -435,7 +435,7 @@ public sealed class InventoryIndex
                 sourceObservedAtUtc.TryGetValue(
                     (source.Storage, source.OwnerId, source.Container),
                     out var observed)
-                    ? observed
+                    ? (DateTime?)observed
                     : null;
 
             return new InventorySourceItemObservation(
