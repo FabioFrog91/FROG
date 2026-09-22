@@ -475,11 +475,14 @@ public sealed class ExecutionOrderSnapshot
                 int.MaxValue);
         }
 
+        var displayIndex =
+            int.MaxValue;
+
         var hasVisibleOrder =
             hasCompleteVisibleOrder &&
             TryGetDisplayIndex(
                 firstConsumedStack,
-                out var displayIndex);
+                out displayIndex);
 
         return new ActionOrder(
             hasVisibleOrder,
