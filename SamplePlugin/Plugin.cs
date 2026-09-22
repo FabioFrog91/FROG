@@ -13,8 +13,6 @@ using Dalamud.Plugin.Services;
 using FROG.Core.Inventory;
 using FROG.Core.Inventory.Providers;
 using FROG.Windows;
-using FFXIVClientStructs.FFXIV.Client.Game;
-using FFXIVClientStructs.FFXIV.Component.GUI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using System;
@@ -67,19 +65,10 @@ public sealed class Plugin : HostedPlugin
 
     private const int LoginRetryIntervalMilliseconds = 500;
     private const int LoginRetryMaxAttempts = 10;
-    private const int FreeCompanyObservationStabilityMilliseconds = 100;
 
     private readonly object loginSyncLock = new();
     private CancellationTokenSource? loginSyncCancellation;
     private bool disposed;
-
-    private bool isFreeCompanyChestOpen;
-    private uint? observedFreeCompanyContainer;
-    private long observedFreeCompanyContainerSinceMs;
-    private long freeCompanyObservationGeneration;
-    private long lastLoggedFreeCompanyStableGeneration = -1;
-    private readonly Dictionary<(ulong OwnerId, uint Container), PendingFreeCompanyObservation>
-        pendingFreeCompanyObservations = new();
 
     private readonly PlayerInventoryAPI playerInventory;
 
@@ -117,9 +106,6 @@ public sealed class Plugin : HostedPlugin
 
     internal IReadOnlyList<InventoryItemSnapshot> LastSyncIndexSnapshots { get; private set; }
         = Array.Empty<InventoryItemSnapshot>();
-
-    internal bool IsFreeCompanyChestOpen =>
-        isFreeCompanyChestOpen;
 
     public Plugin(IDalamudPluginInterface pluginInterface)
         : base(pluginInterface)
@@ -764,408 +750,6 @@ public sealed class Plugin : HostedPlugin
                     observedAtUtc);
             }
         }
-
-        SyncObservedFreeCompanyPage(
-            storageReader);
-    }
-
-    internal void SyncObservedFreeCompanyPage(
-        StorageReaderAPI storageReader)
-    {
-        if (!isFreeCompanyChestOpen)
-            return;
-
-        if (!TryGetObservedFreeCompanyPage(
-                out var observedContainer))
-        {
-            InvalidateFreeCompanyObservation(
-                "selected-page-unavailable");
-            return;
-        }
-
-        if (!TryGetStableFreeCompanyObservation(
-                observedContainer,
-                out var observationGeneration))
-        {
-            return;
-        }
-
-        var observedAtUtc =
-            DateTime.UtcNow;
-
-        if (!storageReader.TryReadActiveFreeCompanyPage(
-                observedAtUtc,
-                observedContainer,
-                out var freeCompanySource,
-                out var freeCompanySnapshots))
-        {
-            FreeCompanyObservationDiagnostics.Add(
-                $"READ_FAIL page={FormatFreeCompanyContainer(observedContainer)} gen={observationGeneration}");
-
-            InvalidateFreeCompanyObservation(
-                "read-failed");
-            return;
-        }
-
-        if (!TryGetObservedFreeCompanyPage(
-                out var confirmedContainer))
-        {
-            FreeCompanyObservationDiagnostics.Add(
-                $"DISCARD page={FormatFreeCompanyContainer(observedContainer)} gen={observationGeneration} reason=selected-page-lost-after-read");
-
-            InvalidateFreeCompanyObservation(
-                "selected-page-lost-after-read");
-            return;
-        }
-
-        if (confirmedContainer != observedContainer)
-        {
-            FreeCompanyObservationDiagnostics.Add(
-                $"DISCARD page={FormatFreeCompanyContainer(observedContainer)} gen={observationGeneration} reason=page-changed-during-read next={FormatFreeCompanyContainer(confirmedContainer)}");
-
-            TrackFreeCompanyObservation(
-                confirmedContainer);
-
-            return;
-        }
-
-        if (observedFreeCompanyContainer != observedContainer ||
-            freeCompanyObservationGeneration != observationGeneration)
-        {
-            FreeCompanyObservationDiagnostics.Add(
-                $"DISCARD page={FormatFreeCompanyContainer(observedContainer)} gen={observationGeneration} reason=generation-changed currentGen={freeCompanyObservationGeneration}");
-
-            return;
-        }
-
-        var knownSnapshots =
-            InventoryIndex.Items
-                .Where(x =>
-                    x.Storage == freeCompanySource.Storage &&
-                    x.OwnerId == freeCompanySource.OwnerId &&
-                    x.Container == freeCompanySource.Container)
-                .ToList();
-
-        if (!ShouldPromoteFreeCompanyObservation(
-                freeCompanySource,
-                knownSnapshots,
-                freeCompanySnapshots,
-                observationGeneration))
-        {
-            return;
-        }
-
-        FreeCompanyObservationDiagnostics.Add(
-            $"PROMOTE page={FormatFreeCompanyContainer(freeCompanySource.Container)} gen={observationGeneration} owner={freeCompanySource.OwnerId} items={freeCompanySnapshots.Count} qty={freeCompanySnapshots.Sum(x => x.Quantity)}");
-
-        InventoryIndex.ReplaceSource(
-            freeCompanySource,
-            freeCompanySnapshots,
-            observedAtUtc);
-    }
-
-    private bool TryGetStableFreeCompanyObservation(
-        uint container,
-        out long generation)
-    {
-        TrackFreeCompanyObservation(
-            container);
-
-        generation =
-            freeCompanyObservationGeneration;
-
-        var stableMilliseconds =
-            Environment.TickCount64 -
-            observedFreeCompanyContainerSinceMs;
-
-        var isStable =
-            stableMilliseconds >=
-            FreeCompanyObservationStabilityMilliseconds;
-
-        if (isStable &&
-            lastLoggedFreeCompanyStableGeneration != generation)
-        {
-            lastLoggedFreeCompanyStableGeneration =
-                generation;
-
-            FreeCompanyObservationDiagnostics.Add(
-                $"STABLE page={FormatFreeCompanyContainer(container)} gen={generation} stableMs={stableMilliseconds}");
-        }
-
-        return isStable;
-    }
-
-    private void TrackFreeCompanyObservation(
-        uint container)
-    {
-        if (observedFreeCompanyContainer == container)
-            return;
-
-        var previousContainer =
-            observedFreeCompanyContainer;
-
-        observedFreeCompanyContainer = container;
-        observedFreeCompanyContainerSinceMs =
-            Environment.TickCount64;
-        freeCompanyObservationGeneration++;
-        lastLoggedFreeCompanyStableGeneration = -1;
-        pendingFreeCompanyObservations.Clear();
-
-        FreeCompanyObservationDiagnostics.Add(
-            $"PAGE previous={FormatFreeCompanyContainer(previousContainer)} current={FormatFreeCompanyContainer(container)} gen={freeCompanyObservationGeneration}");
-    }
-
-    private void InvalidateFreeCompanyObservation(
-        string reason)
-    {
-        if (!observedFreeCompanyContainer.HasValue &&
-            pendingFreeCompanyObservations.Count == 0)
-        {
-            return;
-        }
-
-        var previousContainer =
-            observedFreeCompanyContainer;
-
-        observedFreeCompanyContainer = null;
-        observedFreeCompanyContainerSinceMs = 0;
-        freeCompanyObservationGeneration++;
-        lastLoggedFreeCompanyStableGeneration = -1;
-        pendingFreeCompanyObservations.Clear();
-
-        FreeCompanyObservationDiagnostics.Add(
-            $"INVALIDATE reason={reason} previous={FormatFreeCompanyContainer(previousContainer)} newGen={freeCompanyObservationGeneration}");
-    }
-
-    private void ResetFreeCompanyObservation(
-        string reason)
-    {
-        observedFreeCompanyContainer = null;
-        observedFreeCompanyContainerSinceMs = 0;
-        freeCompanyObservationGeneration++;
-        lastLoggedFreeCompanyStableGeneration = -1;
-        pendingFreeCompanyObservations.Clear();
-
-        FreeCompanyObservationDiagnostics.Add(
-            $"RESET reason={reason} gen={freeCompanyObservationGeneration}");
-    }
-
-    private bool ShouldPromoteFreeCompanyObservation(
-        InventorySource source,
-        IReadOnlyList<InventoryItemSnapshot> knownSnapshots,
-        IReadOnlyList<InventoryItemSnapshot> observedSnapshots,
-        long observationGeneration)
-    {
-        var key =
-            (source.OwnerId, source.Container);
-
-        var fingerprint =
-            BuildFreeCompanyObservationFingerprint(
-                observedSnapshots);
-
-        var knownFingerprint =
-            BuildFreeCompanyObservationFingerprint(
-                knownSnapshots);
-
-        if (string.Equals(
-                knownFingerprint,
-                fingerprint,
-                StringComparison.Ordinal))
-        {
-            pendingFreeCompanyObservations.Remove(key);
-            return false;
-        }
-
-        if (!pendingFreeCompanyObservations.TryGetValue(
-                key,
-                out var pending) ||
-            pending.Generation != observationGeneration ||
-            !string.Equals(
-                pending.Fingerprint,
-                fingerprint,
-                StringComparison.Ordinal))
-        {
-            pendingFreeCompanyObservations[key] =
-                new PendingFreeCompanyObservation(
-                    fingerprint,
-                    1,
-                    observationGeneration);
-
-            FreeCompanyObservationDiagnostics.Add(
-                $"CANDIDATE page={FormatFreeCompanyContainer(source.Container)} gen={observationGeneration} owner={source.OwnerId} count=1 items={observedSnapshots.Count} qty={observedSnapshots.Sum(x => x.Quantity)} fp={BuildFreeCompanyDiagnosticFingerprintId(fingerprint)}");
-
-            return false;
-        }
-
-        var confirmationCount =
-            pending.ConfirmationCount + 1;
-
-        if (confirmationCount < 2)
-        {
-            pendingFreeCompanyObservations[key] =
-                pending with
-                {
-                    ConfirmationCount = confirmationCount
-                };
-
-            return false;
-        }
-
-        pendingFreeCompanyObservations.Remove(key);
-        return true;
-    }
-
-    private static string BuildFreeCompanyObservationFingerprint(
-        IReadOnlyList<InventoryItemSnapshot> snapshots) =>
-        string.Join(
-            "|",
-            snapshots
-                .OrderBy(item =>
-                    item.Container)
-                .ThenBy(item =>
-                    item.Slot)
-                .ThenBy(item =>
-                    item.BaseItemId)
-                .ThenBy(item =>
-                    item.IsHq)
-                .Select(item =>
-                    $"{item.Container}:{item.Slot}:{item.BaseItemId}:{item.IsHq}:{item.Quantity}"));
-
-    private static string BuildFreeCompanyDiagnosticFingerprintId(
-        string fingerprint)
-    {
-        unchecked
-        {
-            uint hash = 2166136261;
-
-            foreach (var character in fingerprint)
-            {
-                hash ^= character;
-                hash *= 16777619;
-            }
-
-            return hash.ToString("X8");
-        }
-    }
-
-    private static string FormatFreeCompanyContainer(
-        uint? container)
-    {
-        return container switch
-        {
-            (uint)InventoryType.FreeCompanyPage1 => "P1",
-            (uint)InventoryType.FreeCompanyPage2 => "P2",
-            (uint)InventoryType.FreeCompanyPage3 => "P3",
-            (uint)InventoryType.FreeCompanyPage4 => "P4",
-            (uint)InventoryType.FreeCompanyPage5 => "P5",
-            null => "none",
-            _ => container.Value.ToString()
-        };
-    }
-
-    private static unsafe bool TryGetObservedFreeCompanyPage(
-        out uint container)
-    {
-        container = 0;
-
-        var addon =
-            GameGui.GetAddonByName<AtkUnitBase>(
-                "FreeCompanyChest",
-                1);
-
-        if (addon == null ||
-            !addon->IsVisible)
-        {
-            return false;
-        }
-
-        if (IsFreeCompanyTabSelected(addon, 101))
-        {
-            container =
-                (uint)InventoryType.FreeCompanyPage1;
-
-            return true;
-        }
-
-        if (IsFreeCompanyTabSelected(addon, 100))
-        {
-            container =
-                (uint)InventoryType.FreeCompanyPage2;
-
-            return true;
-        }
-
-        if (IsFreeCompanyTabSelected(addon, 99))
-        {
-            container =
-                (uint)InventoryType.FreeCompanyPage3;
-
-            return true;
-        }
-
-        if (IsFreeCompanyTabSelected(addon, 98))
-        {
-            container =
-                (uint)InventoryType.FreeCompanyPage4;
-
-            return true;
-        }
-
-        if (IsFreeCompanyTabSelected(addon, 97))
-        {
-            container =
-                (uint)InventoryType.FreeCompanyPage5;
-
-            return true;
-        }
-
-        return false;
-    }
-
-    private static unsafe bool IsFreeCompanyTabSelected(
-        AtkUnitBase* addon,
-        uint nodeId)
-    {
-        if (nodeId >= addon->UldManager.NodeListCount)
-            return false;
-
-        var node =
-            addon->UldManager.NodeList[nodeId];
-
-        if (node == null ||
-            !node->IsVisible())
-        {
-            return false;
-        }
-
-        var componentNode =
-            node->GetAsAtkComponentNode();
-
-        if (componentNode == null ||
-            componentNode->Component == null)
-        {
-            return false;
-        }
-
-        var component =
-            componentNode->Component;
-
-        if (component->UldManager.NodeListCount > 2)
-        {
-            var checkMark =
-                component->UldManager.NodeList[2];
-
-            if (checkMark != null &&
-                checkMark->IsVisible())
-            {
-                return true;
-            }
-        }
-
-        var radioButton =
-            (AtkComponentRadioButton*)component;
-
-        return (radioButton->Flags & 0x40000) != 0;
     }
 
     private void OnRetainerListOpened(
@@ -1186,10 +770,6 @@ public sealed class Plugin : HostedPlugin
         AddonEvent type,
         AddonArgs args)
     {
-        isFreeCompanyChestOpen = true;
-        ResetFreeCompanyObservation(
-            "chest-open");
-
         FreeCompanyObservationDiagnostics.Add(
             "CHEST OPEN");
 
@@ -1202,10 +782,6 @@ public sealed class Plugin : HostedPlugin
     {
         FreeCompanyObservationDiagnostics.Add(
             "CHEST CLOSE");
-
-        isFreeCompanyChestOpen = false;
-        ResetFreeCompanyObservation(
-            "chest-close");
 
         SaveInventoryIndex();
     }
@@ -1232,11 +808,6 @@ public sealed class Plugin : HostedPlugin
     }
 }
 
-internal sealed record PendingFreeCompanyObservation(
-    string Fingerprint,
-    int ConfirmationCount,
-    long Generation);
-
 internal sealed class FrogInventoryStartup : IHostedService
 {
     private readonly IInventoryMonitor inventoryMonitor;
@@ -1246,7 +817,6 @@ internal sealed class FrogInventoryStartup : IHostedService
     private readonly PlanExecutionRuntime executionRuntime;
     private readonly RetainerListHighlighter retainerListHighlighter;
     private readonly ExecutionInventoryHighlighter executionInventoryHighlighter;
-    private long lastFreeCompanyPollAtMs;
 
     public FrogInventoryStartup(
         IInventoryMonitor inventoryMonitor,
@@ -1309,26 +879,6 @@ internal sealed class FrogInventoryStartup : IHostedService
 
         executionInventoryHighlighter.Update(
             currentCharacterId);
-
-        if (!plugin.IsFreeCompanyChestOpen)
-            return;
-
-        var nowMs =
-            Environment.TickCount64;
-
-        const int freeCompanyPollIntervalMs = 25;
-
-        if (nowMs - lastFreeCompanyPollAtMs <
-            freeCompanyPollIntervalMs)
-        {
-            return;
-        }
-
-        lastFreeCompanyPollAtMs =
-            nowMs;
-
-        plugin.SyncObservedFreeCompanyPage(
-            storageReader);
     }
 
     private void OnInventoryChanged(
