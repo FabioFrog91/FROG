@@ -21,11 +21,14 @@ public sealed class StorageReader
     };
 
     private readonly ICharacterMonitor characterMonitor;
+    private readonly IInventoryScanner inventoryScanner;
 
     public StorageReader(
-        ICharacterMonitor characterMonitor)
+        ICharacterMonitor characterMonitor,
+        IInventoryScanner inventoryScanner)
     {
         this.characterMonitor = characterMonitor;
+        this.inventoryScanner = inventoryScanner;
     }
 
     public unsafe bool TryReadActiveRetainer(
@@ -104,7 +107,7 @@ public sealed class StorageReader
         return true;
     }
 
-    public unsafe bool TryReadActiveFreeCompanyPage(
+    public bool TryReadActiveFreeCompanyPage(
         DateTime observedAtUtc,
         uint container,
         out InventorySource source,
@@ -125,20 +128,8 @@ public sealed class StorageReader
         var freeCompanyId =
             characterMonitor.ActiveFreeCompanyId;
 
-        if (freeCompanyId == 0)
-            return false;
-
-        var inventoryManager =
-            InventoryManager.Instance();
-
-        if (inventoryManager == null)
-            return false;
-
-        var inventoryContainer =
-            inventoryManager->GetInventoryContainer(containerType);
-
-        if (inventoryContainer == null ||
-            !inventoryContainer->IsLoaded)
+        if (freeCompanyId == 0 ||
+            !inventoryScanner.InMemory.Contains(containerType))
         {
             return false;
         }
@@ -153,12 +144,14 @@ public sealed class StorageReader
         var snapshotList =
             new List<InventoryItemSnapshot>();
 
+        var cachedItems =
+            inventoryScanner.GetInventoryByType(containerType);
+
         for (var slot = 0;
-             slot < inventoryContainer->Size;
+             slot < cachedItems.Length;
              slot++)
         {
-            var item =
-                inventoryContainer->Items[slot];
+            var item = cachedItems[slot];
 
             if (item.ItemId == 0)
                 continue;
@@ -189,5 +182,4 @@ public sealed class StorageReader
 
         return true;
     }
-
 }
