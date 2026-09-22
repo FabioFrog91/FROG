@@ -15,6 +15,16 @@ public sealed class InventoryIndex
     private readonly List<InventoryIndexAuditEntry> auditHistory = new();
     private readonly Dictionary<(StorageType Storage, ulong OwnerId, uint Container), DateTime>
         sourceObservedAtUtc = new();
+    private readonly Dictionary<(StorageType Storage, ulong OwnerId, uint Container), long>
+        sourceObservationRevision = new();
+    private readonly Dictionary<(StorageType Storage, ulong OwnerId, uint Container), long>
+        sourceContentRevision = new();
+    private readonly Dictionary<(StorageType Storage, ulong OwnerId, uint Container), long>
+        sourceProviderRevision = new();
+
+    private long nextObservationRevision;
+    private long nextContentRevision;
+    private bool isDirty;
 
     public IReadOnlyList<InventoryItemSnapshot> Items
     {
@@ -49,8 +59,6 @@ public sealed class InventoryIndex
         }
     }
 
-    private bool isDirty;
-
     public IReadOnlyList<InventoryIndexAuditEntry> AuditHistory
     {
         get
@@ -65,6 +73,89 @@ public sealed class InventoryIndex
                         })
                     .ToList();
             }
+        }
+    }
+
+    public InventoryApplyObservationResult ApplyObservation(
+        InventorySource source,
+        IEnumerable<InventoryItemSnapshot> snapshots,
+        long providerRevision,
+        DateTime? observedAtUtc = null)
+    {
+        var newSnapshots = snapshots
+            .Where(x =>
+                x.Storage == source.Storage &&
+                x.OwnerId == source.OwnerId &&
+                x.Container == source.Container)
+            .ToList();
+
+        lock (syncLock)
+        {
+            var key =
+                (source.Storage, source.OwnerId, source.Container);
+
+            if (sourceProviderRevision.TryGetValue(key, out var previousProviderRevision) &&
+                providerRevision <= previousProviderRevision)
+            {
+                return new InventoryApplyObservationResult(
+                    false,
+                    false,
+                    sourceObservationRevision.TryGetValue(key, out var existingObservationRevision)
+                        ? existingObservationRevision
+                        : 0,
+                    sourceContentRevision.TryGetValue(key, out var existingContentRevision)
+                        ? existingContentRevision
+                        : 0);
+            }
+
+            var existingSnapshots = items
+                .Where(x =>
+                    x.Storage == source.Storage &&
+                    x.OwnerId == source.OwnerId &&
+                    x.Container == source.Container)
+                .ToList();
+
+            var contentChanged =
+                !HaveSameContents(existingSnapshots, newSnapshots);
+
+            var observationRevision =
+                ++nextObservationRevision;
+
+            sourceProviderRevision[key] = providerRevision;
+            sourceObservationRevision[key] = observationRevision;
+            sourceObservedAtUtc[key] = observedAtUtc ?? DateTime.UtcNow;
+
+            var contentRevision =
+                sourceContentRevision.TryGetValue(key, out var previousContentRevision)
+                    ? previousContentRevision
+                    : 0;
+
+            if (contentChanged)
+            {
+                var beforeFreeCompanyPages =
+                    BuildFreeCompanyPageAudit();
+
+                items.RemoveAll(x =>
+                    x.Storage == source.Storage &&
+                    x.OwnerId == source.OwnerId &&
+                    x.Container == source.Container);
+
+                items.AddRange(newSnapshots);
+
+                contentRevision = ++nextContentRevision;
+                sourceContentRevision[key] = contentRevision;
+                isDirty = true;
+
+                AddAuditEntry(
+                    $"APPLY_OBSERVATION {source.Storage} owner={source.OwnerId} container={source.Container} providerRevision={providerRevision}",
+                    beforeFreeCompanyPages);
+            }
+
+            return new InventoryApplyObservationResult(
+                true,
+                contentChanged,
+                observationRevision,
+                contentRevision);
         }
     }
 
@@ -85,13 +176,6 @@ public sealed class InventoryIndex
             var beforeFreeCompanyPages =
                 BuildFreeCompanyPageAudit();
 
-            // The provider has just observed this source.
-            // Treat that observation as the source of truth and replace
-            // the complete contents of the source, exactly as we do for
-            // the current character inventory.
-            //
-            // This is important for stack splits/merges: the old slot
-            // state must not participate in the new state.
             items.RemoveAll(x =>
                 x.Storage == source.Storage &&
                 x.OwnerId == source.OwnerId &&
@@ -99,9 +183,13 @@ public sealed class InventoryIndex
 
             items.AddRange(newSnapshots);
 
-            sourceObservedAtUtc[
-                (source.Storage, source.OwnerId, source.Container)] =
-                observedAtUtc ?? DateTime.UtcNow;
+            var key =
+                (source.Storage, source.OwnerId, source.Container);
+
+            sourceObservedAtUtc[key] = observedAtUtc ?? DateTime.UtcNow;
+            sourceObservationRevision[key] = ++nextObservationRevision;
+            sourceContentRevision[key] = ++nextContentRevision;
+            sourceProviderRevision.Remove(key);
 
             isDirty = true;
 
@@ -136,14 +224,6 @@ public sealed class InventoryIndex
                     .Distinct()
                     .ToArray();
 
-            // Deliberately replace the complete current-character inventory
-            // on every synchronization.
-            //
-            // We do not compare the old and new contents here because the
-            // purpose of this method is to make GameInventory the source
-            // of truth for the currently logged-in character.
-            //
-            // Other characters and other storage types are untouched.
             items.RemoveAll(x =>
                 x.Storage == StorageType.CharacterInventory &&
                 x.OwnerId == characterId);
@@ -152,12 +232,20 @@ public sealed class InventoryIndex
 
             var characterObservedAtUtc =
                 observedAtUtc ?? DateTime.UtcNow;
+            var observationRevision =
+                ++nextObservationRevision;
+            var contentRevision =
+                ++nextContentRevision;
 
             foreach (var container in observedContainers)
             {
-                sourceObservedAtUtc[
-                    (StorageType.CharacterInventory, characterId, container)] =
-                    characterObservedAtUtc;
+                var key =
+                    (StorageType.CharacterInventory, characterId, container);
+
+                sourceObservedAtUtc[key] = characterObservedAtUtc;
+                sourceObservationRevision[key] = observationRevision;
+                sourceContentRevision[key] = contentRevision;
+                sourceProviderRevision.Remove(key);
             }
 
             isDirty = true;
@@ -172,7 +260,7 @@ public sealed class InventoryIndex
         {
             items.Clear();
             items.AddRange(snapshots);
-            sourceObservedAtUtc.Clear();
+            ClearRuntimeObservationState();
             isDirty = true;
         }
     }
@@ -230,13 +318,23 @@ public sealed class InventoryIndex
 
             items.Clear();
             items.AddRange(snapshots);
-            sourceObservedAtUtc.Clear();
+            ClearRuntimeObservationState();
             isDirty = false;
 
             AddAuditEntry(
                 "LOAD_FROM_DISK",
                 beforeFreeCompanyPages);
         }
+    }
+
+    private void ClearRuntimeObservationState()
+    {
+        sourceObservedAtUtc.Clear();
+        sourceObservationRevision.Clear();
+        sourceContentRevision.Clear();
+        sourceProviderRevision.Clear();
+        nextObservationRevision = 0;
+        nextContentRevision = 0;
     }
 
     private IReadOnlyList<InventoryIndexFreeCompanyPageAudit> BuildFreeCompanyPageAudit() =>
@@ -270,7 +368,7 @@ public sealed class InventoryIndex
 
         auditHistory.Add(
             new InventoryIndexAuditEntry(
-                System.DateTime.UtcNow,
+                DateTime.UtcNow,
                 operation,
                 beforeFreeCompanyPages.ToArray(),
                 afterFreeCompanyPages.ToArray()));
@@ -296,23 +394,65 @@ public sealed class InventoryIndex
         }
     }
 
+    public long? GetSourceObservationRevision(
+        InventorySource source)
+    {
+        lock (syncLock)
+        {
+            return sourceObservationRevision.TryGetValue(
+                (source.Storage, source.OwnerId, source.Container),
+                out var revision)
+                ? revision
+                : null;
+        }
+    }
+
+    public long GetSourceContentRevision(
+        InventorySource source)
+    {
+        lock (syncLock)
+        {
+            return sourceContentRevision.TryGetValue(
+                (source.Storage, source.OwnerId, source.Container),
+                out var revision)
+                ? revision
+                : 0;
+        }
+    }
+
     public DateTime? GetCharacterInventoryObservedAtUtc(
         ulong characterId)
     {
         lock (syncLock)
         {
-            var observations =
-                sourceObservedAtUtc
-                    .Where(entry =>
-                        entry.Key.Storage == StorageType.CharacterInventory &&
-                        entry.Key.OwnerId == characterId)
-                    .Select(entry =>
-                        entry.Value)
-                    .ToList();
+            var observations = sourceObservedAtUtc
+                .Where(entry =>
+                    entry.Key.Storage == StorageType.CharacterInventory &&
+                    entry.Key.OwnerId == characterId)
+                .Select(entry => entry.Value)
+                .ToList();
 
             return observations.Count == 0
                 ? null
                 : observations.Max();
+        }
+    }
+
+    public long? GetCharacterInventoryObservationRevision(
+        ulong characterId)
+    {
+        lock (syncLock)
+        {
+            var revisions = sourceObservationRevision
+                .Where(entry =>
+                    entry.Key.Storage == StorageType.CharacterInventory &&
+                    entry.Key.OwnerId == characterId)
+                .Select(entry => entry.Value)
+                .ToList();
+
+            return revisions.Count == 0
+                ? null
+                : revisions.Max();
         }
     }
 
@@ -321,18 +461,34 @@ public sealed class InventoryIndex
     {
         lock (syncLock)
         {
-            var observations =
-                sourceObservedAtUtc
-                    .Where(entry =>
-                        entry.Key.Storage == StorageType.FreeCompanyChest &&
-                        entry.Key.OwnerId == freeCompanyId)
-                    .Select(entry =>
-                        entry.Value)
-                    .ToList();
+            var observations = sourceObservedAtUtc
+                .Where(entry =>
+                    entry.Key.Storage == StorageType.FreeCompanyChest &&
+                    entry.Key.OwnerId == freeCompanyId)
+                .Select(entry => entry.Value)
+                .ToList();
 
             return observations.Count == 0
                 ? null
                 : observations.Max();
+        }
+    }
+
+    public long? GetFreeCompanyObservationRevision(
+        ulong freeCompanyId)
+    {
+        lock (syncLock)
+        {
+            var revisions = sourceObservationRevision
+                .Where(entry =>
+                    entry.Key.Storage == StorageType.FreeCompanyChest &&
+                    entry.Key.OwnerId == freeCompanyId)
+                .Select(entry => entry.Value)
+                .ToList();
+
+            return revisions.Count == 0
+                ? null
+                : revisions.Max();
         }
     }
 
@@ -349,8 +505,7 @@ public sealed class InventoryIndex
                     item.IsHq == isHq &&
                     item.Storage == StorageType.CharacterInventory &&
                     item.OwnerId == characterId)
-                .Sum(item =>
-                    item.Quantity);
+                .Sum(item => item.Quantity);
         }
     }
 
@@ -367,8 +522,7 @@ public sealed class InventoryIndex
                     item.IsHq == isHq &&
                     item.Storage == StorageType.FreeCompanyChest &&
                     item.OwnerId == freeCompanyId)
-                .Sum(item =>
-                    item.Quantity);
+                .Sum(item => item.Quantity);
         }
     }
 
@@ -412,8 +566,7 @@ public sealed class InventoryIndex
                     continue;
                 }
 
-                logicalQuantity +=
-                    item.Quantity;
+                logicalQuantity += item.Quantity;
 
                 if (item.Container != source.Container)
                     continue;
@@ -422,52 +575,88 @@ public sealed class InventoryIndex
                 matchingStacks++;
 
                 layoutFingerprint ^=
-                    GetStackLayoutFingerprint(
-                        item);
+                    GetStackLayoutFingerprint(item);
             }
 
             layoutFingerprint ^=
-                unchecked(
-                    (ulong)matchingStacks *
-                    1099511628211UL);
+                unchecked((ulong)matchingStacks * 1099511628211UL);
+
+            var key =
+                (source.Storage, source.OwnerId, source.Container);
 
             var observedAtUtc =
-                sourceObservedAtUtc.TryGetValue(
-                    (source.Storage, source.OwnerId, source.Container),
-                    out var observed)
+                sourceObservedAtUtc.TryGetValue(key, out var observed)
                     ? (DateTime?)observed
                     : null;
+
+            var observationRevision =
+                sourceObservationRevision.TryGetValue(key, out var revision)
+                    ? (long?)revision
+                    : null;
+
+            var contentRevision =
+                sourceContentRevision.TryGetValue(key, out var contentRev)
+                    ? contentRev
+                    : 0;
 
             return new InventorySourceItemObservation(
                 quantity,
                 logicalQuantity,
                 observedAtUtc,
+                observationRevision,
+                contentRevision,
                 layoutFingerprint);
         }
+    }
+
+    private static bool HaveSameContents(
+        IReadOnlyList<InventoryItemSnapshot> left,
+        IReadOnlyList<InventoryItemSnapshot> right)
+    {
+        if (left.Count != right.Count)
+            return false;
+
+        var orderedLeft = left
+            .OrderBy(CreateComparisonKey)
+            .ToArray();
+        var orderedRight = right
+            .OrderBy(CreateComparisonKey)
+            .ToArray();
+
+        for (var index = 0; index < orderedLeft.Length; index++)
+        {
+            var a = orderedLeft[index];
+            var b = orderedRight[index];
+
+            if (a.BaseItemId != b.BaseItemId ||
+                a.RawItemId != b.RawItemId ||
+                a.Quantity != b.Quantity ||
+                a.IsHq != b.IsHq ||
+                a.Storage != b.Storage ||
+                a.OwnerId != b.OwnerId ||
+                a.Container != b.Container ||
+                a.Slot != b.Slot ||
+                a.IsVerified != b.IsVerified ||
+                a.ParentCharacterId != b.ParentCharacterId)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static ulong GetStackLayoutFingerprint(
         InventoryItemSnapshot item)
     {
-        const ulong offsetBasis =
-            14695981039346656037UL;
-
-        const ulong prime =
-            1099511628211UL;
+        const ulong offsetBasis = 14695981039346656037UL;
+        const ulong prime = 1099511628211UL;
 
         var fingerprint = offsetBasis;
-
-        fingerprint =
-            (fingerprint ^ item.RawItemId) * prime;
-
-        fingerprint =
-            (fingerprint ^ unchecked((uint)item.Quantity)) * prime;
-
-        fingerprint =
-            (fingerprint ^ item.Container) * prime;
-
-        fingerprint =
-            (fingerprint ^ unchecked((uint)item.Slot)) * prime;
+        fingerprint = (fingerprint ^ item.RawItemId) * prime;
+        fingerprint = (fingerprint ^ unchecked((uint)item.Quantity)) * prime;
+        fingerprint = (fingerprint ^ item.Container) * prime;
+        fingerprint = (fingerprint ^ unchecked((uint)item.Slot)) * prime;
 
         return fingerprint;
     }
@@ -476,9 +665,7 @@ public sealed class InventoryIndex
     {
         lock (syncLock)
         {
-            return items
-                .Where(x => x.BaseItemId == baseItemId)
-                .ToList();
+            return items.Where(x => x.BaseItemId == baseItemId).ToList();
         }
     }
 
@@ -487,9 +674,7 @@ public sealed class InventoryIndex
         lock (syncLock)
         {
             return items
-                .Where(x =>
-                    x.BaseItemId == baseItemId &&
-                    !x.IsHq)
+                .Where(x => x.BaseItemId == baseItemId && !x.IsHq)
                 .ToList();
         }
     }
@@ -499,9 +684,7 @@ public sealed class InventoryIndex
         lock (syncLock)
         {
             return items
-                .Where(x =>
-                    x.BaseItemId == baseItemId &&
-                    x.IsHq)
+                .Where(x => x.BaseItemId == baseItemId && x.IsHq)
                 .ToList();
         }
     }
@@ -510,9 +693,7 @@ public sealed class InventoryIndex
     {
         lock (syncLock)
         {
-            return items
-                .Where(x => x.BaseItemId == baseItemId)
-                .Sum(x => x.Quantity);
+            return items.Where(x => x.BaseItemId == baseItemId).Sum(x => x.Quantity);
         }
     }
 
@@ -520,11 +701,7 @@ public sealed class InventoryIndex
     {
         lock (syncLock)
         {
-            return items
-                .Where(x =>
-                    x.BaseItemId == baseItemId &&
-                    !x.IsHq)
-                .Sum(x => x.Quantity);
+            return items.Where(x => x.BaseItemId == baseItemId && !x.IsHq).Sum(x => x.Quantity);
         }
     }
 
@@ -532,11 +709,7 @@ public sealed class InventoryIndex
     {
         lock (syncLock)
         {
-            return items
-                .Where(x =>
-                    x.BaseItemId == baseItemId &&
-                    x.IsHq)
-                .Sum(x => x.Quantity);
+            return items.Where(x => x.BaseItemId == baseItemId && x.IsHq).Sum(x => x.Quantity);
         }
     }
 
@@ -619,10 +792,17 @@ public sealed class InventoryIndex
             item.Storage,
             item.OwnerId,
             item.Container,
-            item.Slot);
+            item.Slot,
+            item.IsVerified,
+            item.ParentCharacterId);
     }
 }
 
+public readonly record struct InventoryApplyObservationResult(
+    bool Applied,
+    bool ContentChanged,
+    long ObservationRevision,
+    long ContentRevision);
 
 public sealed record InventoryIndexFreeCompanyPageAudit(
     ulong FreeCompanyId,
@@ -631,7 +811,7 @@ public sealed record InventoryIndexFreeCompanyPageAudit(
     int Quantity);
 
 public sealed record InventoryIndexAuditEntry(
-    System.DateTime AtUtc,
+    DateTime AtUtc,
     string Operation,
     IReadOnlyList<InventoryIndexFreeCompanyPageAudit> BeforeFreeCompanyPages,
     IReadOnlyList<InventoryIndexFreeCompanyPageAudit> FreeCompanyPages);
@@ -640,4 +820,6 @@ public readonly record struct InventorySourceItemObservation(
     int Quantity,
     int LogicalQuantity,
     DateTime? ObservedAtUtc,
+    long? ObservationRevision,
+    long ContentRevision,
     ulong LayoutFingerprint);
