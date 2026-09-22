@@ -1,4 +1,5 @@
 using CriticalCommonLib.Addons;
+using CriticalCommonLib.Models;
 using CriticalCommonLib.Services;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game;
@@ -21,7 +22,7 @@ public readonly record struct ExecutionQuantityBadgeAnchor(
 /// Resolves UI nodes fresh, changes presentation fields only, and restores the
 /// exact original visual state while the same addon instance is alive.
 /// </summary>
-public sealed unsafe class ExecutionInventoryHighlighter
+public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
 {
     private const uint SlotNodeOffset = 3;
     private const uint FreeCompanySlotNodeOffset = 23;
@@ -30,6 +31,7 @@ public sealed unsafe class ExecutionInventoryHighlighter
 
     private readonly IGameGui gameGui;
     private readonly ICharacterMonitor characterMonitor;
+    private readonly IOdrScanner odrScanner;
     private readonly PlanExecutionRuntime executionRuntime;
     private readonly RetainerDisplayLocator retainerDisplayLocator;
     private readonly CharacterDisplayLocator characterDisplayLocator;
@@ -39,10 +41,11 @@ public sealed unsafe class ExecutionInventoryHighlighter
     private PlannerPlan? cachedPlan;
     private int cachedActionIndex = -1;
     private ulong cachedCharacterId;
+    private DateTime? cachedSourceObservedAtUtc;
     private HighlightTarget? cachedTarget;
+    private bool targetRefreshRequested;
     private bool retryTargetWhileUnavailable;
     private long nextTargetRetryAtMs;
-    private long nextLayoutCheckAtMs;
 
     private readonly List<NodeBinding> activeBindings = new();
     private readonly List<ExecutionQuantityBadgeAnchor> quantityBadgeAnchors = new();
@@ -54,6 +57,7 @@ public sealed unsafe class ExecutionInventoryHighlighter
     public ExecutionInventoryHighlighter(
         IGameGui gameGui,
         ICharacterMonitor characterMonitor,
+        IOdrScanner odrScanner,
         PlanExecutionRuntime executionRuntime,
         RetainerDisplayLocator retainerDisplayLocator,
         CharacterDisplayLocator characterDisplayLocator,
@@ -62,11 +66,15 @@ public sealed unsafe class ExecutionInventoryHighlighter
     {
         this.gameGui = gameGui;
         this.characterMonitor = characterMonitor;
+        this.odrScanner = odrScanner;
         this.executionRuntime = executionRuntime;
         this.retainerDisplayLocator = retainerDisplayLocator;
         this.characterDisplayLocator = characterDisplayLocator;
         this.freeCompanyDisplayLocator = freeCompanyDisplayLocator;
         this.plugin = plugin;
+
+        odrScanner.OnSortOrderChanged +=
+            OnSortOrderChanged;
     }
 
     public void Update(
@@ -100,38 +108,43 @@ public sealed unsafe class ExecutionInventoryHighlighter
             cachedActionIndex != actionIndex ||
             cachedCharacterId != currentCharacterId;
 
-        HighlightTarget? refreshedTarget = null;
-        var targetPositionChanged = false;
+        var sourceObservedAtUtc =
+            GetSourceObservedAtUtc(
+                runtime.CurrentAction);
 
-        if (targetContextChanged ||
-            nowMs >= nextLayoutCheckAtMs)
+        var sourceObservationChanged =
+            !targetContextChanged &&
+            sourceObservedAtUtc != cachedSourceObservedAtUtc;
+
+        var targetNeedsRefresh =
+            targetContextChanged ||
+            targetRefreshRequested ||
+            sourceObservationChanged;
+
+        if (targetNeedsRefresh)
         {
-            refreshedTarget =
+            var refreshedTarget =
                 BuildTarget(
                     runtime.Session.Plan,
                     actionIndex,
                     currentCharacterId,
                     plugin.InventoryIndex.Items);
 
-            targetPositionChanged =
-                !targetContextChanged &&
-                refreshedTarget is not null &&
+            var targetChanged =
+                targetContextChanged ||
                 !IsSameTarget(
                     cachedTarget,
                     refreshedTarget);
 
-            nextLayoutCheckAtMs =
-                nowMs + TargetRetryIntervalMs;
-        }
+            if (targetChanged)
+                Clear();
 
-        if (targetContextChanged ||
-            targetPositionChanged)
-        {
-            Clear();
             cachedPlan = runtime.Session.Plan;
             cachedActionIndex = actionIndex;
             cachedCharacterId = currentCharacterId;
+            cachedSourceObservedAtUtc = sourceObservedAtUtc;
             cachedTarget = refreshedTarget;
+            targetRefreshRequested = false;
 
             retryTargetWhileUnavailable =
                 cachedTarget is null &&
@@ -213,6 +226,34 @@ public sealed unsafe class ExecutionInventoryHighlighter
         activeBindings.Clear();
         quantityBadgeAnchors.Clear();
         activeVisualKey = string.Empty;
+    }
+
+    public void Dispose()
+    {
+        odrScanner.OnSortOrderChanged -=
+            OnSortOrderChanged;
+
+        Clear();
+        InvalidateTargetCache();
+    }
+
+    private void OnSortOrderChanged(
+        InventorySortOrder sortOrder)
+    {
+        targetRefreshRequested = true;
+    }
+
+    private DateTime? GetSourceObservedAtUtc(
+        PlannerAction action)
+    {
+        if (action.Type != PlannerActionType.Move ||
+            action.Source is null)
+        {
+            return null;
+        }
+
+        return plugin.InventoryIndex.GetSourceObservedAtUtc(
+            action.Source);
     }
 
     private HighlightTarget? BuildTarget(
@@ -935,10 +976,11 @@ public sealed unsafe class ExecutionInventoryHighlighter
         cachedPlan = null;
         cachedActionIndex = -1;
         cachedCharacterId = 0;
+        cachedSourceObservedAtUtc = null;
         cachedTarget = null;
+        targetRefreshRequested = false;
         retryTargetWhileUnavailable = false;
         nextTargetRetryAtMs = 0;
-        nextLayoutCheckAtMs = 0;
     }
 
     private static int GetRetainerLargeTab(
