@@ -16,6 +16,8 @@ public sealed record PlanExecutionObservation(
     int DestinationQuantity,
     DateTime? SourceObservedAtUtc,
     DateTime? DestinationObservedAtUtc,
+    long? SourceObservationRevision,
+    long? DestinationObservationRevision,
     ulong SourceLayoutFingerprint);
 
 public sealed record PlanExecutionBaseline(
@@ -25,6 +27,8 @@ public sealed record PlanExecutionBaseline(
     int DestinationQuantity,
     DateTime? SourceObservedAtUtc,
     DateTime? DestinationObservedAtUtc,
+    long? SourceObservationRevision,
+    long? DestinationObservationRevision,
     ulong SourceLayoutFingerprint);
 
 public sealed record PlanExecutionVerificationResult(
@@ -50,6 +54,8 @@ public sealed class PlanExecutionVerifier
             observation.DestinationQuantity,
             observation.SourceObservedAtUtc,
             observation.DestinationObservedAtUtc,
+            observation.SourceObservationRevision,
+            observation.DestinationObservationRevision,
             observation.SourceLayoutFingerprint);
     }
 
@@ -65,6 +71,8 @@ public sealed class PlanExecutionVerifier
                 0,
                 0,
                 0,
+                null,
+                null,
                 null,
                 null,
                 0);
@@ -84,6 +92,10 @@ public sealed class PlanExecutionVerifier
                 action),
             sourceObservation.ObservedAtUtc,
             GetDestinationObservedAtUtc(
+                inventoryIndex,
+                action),
+            sourceObservation.ObservationRevision,
+            GetDestinationObservationRevision(
                 inventoryIndex,
                 action),
             sourceObservation.LayoutFingerprint);
@@ -120,11 +132,11 @@ public sealed class PlanExecutionVerifier
                 inventoryIndex);
 
         if (!IsNewerObservation(
-                observation.SourceObservedAtUtc,
-                baseline.SourceObservedAtUtc) ||
+                observation.SourceObservationRevision,
+                baseline.SourceObservationRevision) ||
             !IsNewerObservation(
-                observation.DestinationObservedAtUtc,
-                baseline.DestinationObservedAtUtc))
+                observation.DestinationObservationRevision,
+                baseline.DestinationObservationRevision))
         {
             return new PlanExecutionVerificationResult(
                 PlanExecutionVerificationStatus.WaitingForObservation,
@@ -209,9 +221,34 @@ public sealed class PlanExecutionVerifier
             action.Destination);
     }
 
+    private static long? GetDestinationObservationRevision(
+        InventoryIndex inventoryIndex,
+        PlannerAction action)
+    {
+        if (action.Destination is null)
+            return null;
+
+        if (action.Destination.Storage ==
+            StorageType.CharacterInventory)
+        {
+            return inventoryIndex.GetCharacterInventoryObservationRevision(
+                action.Destination.OwnerId);
+        }
+
+        if (action.Destination.Storage ==
+            StorageType.FreeCompanyChest)
+        {
+            return inventoryIndex.GetFreeCompanyObservationRevision(
+                action.Destination.OwnerId);
+        }
+
+        return inventoryIndex.GetSourceObservationRevision(
+            action.Destination);
+    }
+
     private static bool IsNewerObservation(
-        DateTime? current,
-        DateTime? baseline)
+        long? current,
+        long? baseline)
     {
         if (!current.HasValue)
             return false;
