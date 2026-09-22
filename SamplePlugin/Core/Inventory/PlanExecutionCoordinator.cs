@@ -174,26 +174,6 @@ public sealed class PlanExecutionCoordinator
                         baseline,
                         observation);
 
-                if (action.Source is not null &&
-                    (action.Source.Storage ==
-                         StorageType.CharacterInventory ||
-                     action.Source.Storage ==
-                         StorageType.Retainer) &&
-                    observation.SourceQuantity <
-                        baseline.SourceQuantity &&
-                    observation.LogicalSourceQuantity ==
-                        baseline.LogicalSourceQuantity &&
-                    observation.DestinationQuantity ==
-                        baseline.DestinationQuantity)
-                {
-                    reconciliation =
-                        reconciler.ReconcileSourceContainerChange(
-                            action);
-
-                    return Snapshot(
-                        PlanExecutionCoordinatorStatus.ReplanRequired);
-                }
-
                 if (reconciliation.SourceDecrease <= 0 &&
                     reconciliation.DestinationIncrease <= 0)
                 {
