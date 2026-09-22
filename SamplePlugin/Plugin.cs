@@ -797,6 +797,7 @@ public sealed class Plugin : HostedPlugin
                 out var freeCompanySource,
                 out var freeCompanySnapshots))
         {
+            InvalidateFreeCompanyObservation();
             return;
         }
 
