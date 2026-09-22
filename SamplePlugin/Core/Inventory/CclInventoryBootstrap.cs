@@ -41,6 +41,11 @@ public static class CclInventoryBootstrap
             .SingleInstance()
             .AutoActivate();
 
+        builder.RegisterType<FreeCompanyInventoryObserver>()
+            .AsSelf()
+            .SingleInstance()
+            .AutoActivate();
+
         builder.RegisterType<RetainerDisplayLocator>()
             .AsSelf()
             .SingleInstance();
