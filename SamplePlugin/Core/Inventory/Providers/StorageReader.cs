@@ -107,7 +107,7 @@ public sealed class StorageReader
         return true;
     }
 
-    public bool TryReadActiveFreeCompanyPage(
+    public bool TryReadObservedFreeCompanyPage(
         DateTime observedAtUtc,
         uint container,
         out InventorySource source,
@@ -128,6 +128,9 @@ public sealed class StorageReader
         var freeCompanyId =
             characterMonitor.ActiveFreeCompanyId;
 
+        // CCL now adds InMemory only after a successful RAW -> cache copy.
+        // The post-copy scanner event remains the semantic trigger; this is
+        // an additional fail-safe guard for accidental direct callers.
         if (freeCompanyId == 0 ||
             !inventoryScanner.InMemory.Contains(containerType))
         {
