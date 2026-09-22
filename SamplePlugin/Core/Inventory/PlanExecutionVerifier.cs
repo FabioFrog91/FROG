@@ -131,6 +131,12 @@ public sealed class PlanExecutionVerifier
                 action,
                 inventoryIndex);
 
+        var diagnostics =
+            FormatMoveDiagnostics(
+                action,
+                baseline,
+                observation);
+
         if (!IsNewerObservation(
                 observation.SourceObservationRevision,
                 baseline.SourceObservationRevision) ||
@@ -140,7 +146,16 @@ public sealed class PlanExecutionVerifier
         {
             return new PlanExecutionVerificationResult(
                 PlanExecutionVerificationStatus.WaitingForObservation,
-                "In attesa di una nuova osservazione di source e destination.");
+                $"In attesa di una nuova osservazione di source e destination. {diagnostics}");
+        }
+
+        if (observation.SourceQuantity == baseline.SourceQuantity &&
+            observation.LogicalSourceQuantity == baseline.LogicalSourceQuantity &&
+            observation.DestinationQuantity == baseline.DestinationQuantity)
+        {
+            return new PlanExecutionVerificationResult(
+                PlanExecutionVerificationStatus.WaitingForObservation,
+                $"Nuove osservazioni ricevute, ma nessun delta del MOVE è stato ancora osservato. {diagnostics}");
         }
 
         var expectedSourceMaximum =
@@ -156,14 +171,41 @@ public sealed class PlanExecutionVerifier
         {
             return new PlanExecutionVerificationResult(
                 PlanExecutionVerificationStatus.Verified,
-                "Delta source/destination osservato.");
+                $"Delta source/destination osservato. {diagnostics}");
         }
 
         return new PlanExecutionVerificationResult(
             PlanExecutionVerificationStatus.Mismatch,
-            $"Delta non coerente. Source {baseline.SourceQuantity}->{observation.SourceQuantity}, " +
-            $"Destination {baseline.DestinationQuantity}->{observation.DestinationQuantity}.");
+            $"Delta non coerente. {diagnostics}");
     }
+
+    private static string FormatMoveDiagnostics(
+        PlannerAction action,
+        PlanExecutionBaseline baseline,
+        PlanExecutionObservation observation)
+    {
+        var sourceDecrease =
+            baseline.SourceQuantity - observation.SourceQuantity;
+
+        var destinationIncrease =
+            observation.DestinationQuantity - baseline.DestinationQuantity;
+
+        var logicalSourceDelta =
+            observation.LogicalSourceQuantity - baseline.LogicalSourceQuantity;
+
+        return
+            $"Planned={action.Quantity}; " +
+            $"Source={baseline.SourceQuantity}->{observation.SourceQuantity} (delta={sourceDecrease}); " +
+            $"LogicalSource={baseline.LogicalSourceQuantity}->{observation.LogicalSourceQuantity} (delta={logicalSourceDelta}); " +
+            $"Destination={baseline.DestinationQuantity}->{observation.DestinationQuantity} (delta={destinationIncrease}); " +
+            $"SourceRev={FormatRevision(baseline.SourceObservationRevision)}->{FormatRevision(observation.SourceObservationRevision)}; " +
+            $"DestinationRev={FormatRevision(baseline.DestinationObservationRevision)}->{FormatRevision(observation.DestinationObservationRevision)}; " +
+            $"Layout={baseline.SourceLayoutFingerprint}->{observation.SourceLayoutFingerprint}.";
+    }
+
+    private static string FormatRevision(
+        long? revision) =>
+        revision?.ToString() ?? "null";
 
     private static int GetDestinationQuantity(
         InventoryIndex inventoryIndex,
