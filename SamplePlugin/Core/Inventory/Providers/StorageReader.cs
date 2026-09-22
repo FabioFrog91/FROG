@@ -142,7 +142,7 @@ public sealed class StorageReader
                 StorageType.FreeCompanyChest,
                 freeCompanyId,
                 container,
-                characterMonitor.ActiveCharacterId);
+                ParentCharacterId: 0);
 
         var snapshotList =
             new List<InventoryItemSnapshot>();
@@ -178,7 +178,7 @@ public sealed class StorageReader
                     slot,
                     observedAtUtc,
                     true,
-                    characterMonitor.ActiveCharacterId));
+                    ParentCharacterId: 0));
         }
 
         snapshots = snapshotList;
