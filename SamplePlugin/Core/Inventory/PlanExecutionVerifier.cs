@@ -143,6 +143,15 @@ public sealed class PlanExecutionVerifier
                 "In attesa di una nuova osservazione di source e destination.");
         }
 
+        if (observation.SourceQuantity == baseline.SourceQuantity &&
+            observation.LogicalSourceQuantity == baseline.LogicalSourceQuantity &&
+            observation.DestinationQuantity == baseline.DestinationQuantity)
+        {
+            return new PlanExecutionVerificationResult(
+                PlanExecutionVerificationStatus.WaitingForObservation,
+                "Nuove osservazioni ricevute, ma nessun delta del MOVE è stato ancora osservato.");
+        }
+
         var expectedSourceMaximum =
             Math.Max(
                 0,
