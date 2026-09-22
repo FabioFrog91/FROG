@@ -1,4 +1,3 @@
-using CriticalCommonLib.Models;
 using CriticalCommonLib.Services;
 using FROG.Core.Inventory.Providers;
 using FFXIVClientStructs.FFXIV.Client.Game;
@@ -9,33 +8,29 @@ using System.Linq;
 namespace FROG.Core.Inventory;
 
 /// <summary>
-/// Bridges CriticalCommonLib's session cache into FROG's persistent inventory index.
-/// A free-company page is trusted only after CCL has actually scanned it into
-/// <see cref="IInventoryScanner.InMemory"/>. UI selection and raw InventoryManager
-/// state are intentionally not used as freshness barriers.
+/// Bridges completed CriticalCommonLib FC page scans into FROG's persistent Known state.
+/// ContainerInfo creates an owner/generation-aware pending acquisition; only CCL's
+/// post-copy FreeCompanyPageScanned event can complete it. Later content changes are
+/// accepted only for pages already acquired in the current FC generation.
 /// </summary>
 internal sealed class FreeCompanyInventoryObserver : IDisposable
 {
-    private static readonly InventoryType[] FreeCompanyPages =
-    {
-        InventoryType.FreeCompanyPage1,
-        InventoryType.FreeCompanyPage2,
-        InventoryType.FreeCompanyPage3,
-        InventoryType.FreeCompanyPage4,
-        InventoryType.FreeCompanyPage5
-    };
+    private readonly record struct PendingObservation(
+        ulong FreeCompanyId,
+        InventoryType Page,
+        long Generation);
 
     private readonly Plugin plugin;
     private readonly IInventoryScanner inventoryScanner;
     private readonly ICharacterMonitor characterMonitor;
     private readonly StorageReaderAPI storageReader;
 
-    private readonly HashSet<InventoryType> pendingInitialObservation = new();
-    private readonly HashSet<InventoryType> observedThisSession = new();
+    private readonly HashSet<PendingObservation> pending = new();
+    private readonly HashSet<InventoryType> acquiredPages = new();
 
     private bool disposed;
-    private bool syncRequested;
     private ulong trackedFreeCompanyId;
+    private long freeCompanyGeneration;
 
     public FreeCompanyInventoryObserver(
         Plugin plugin,
@@ -49,10 +44,10 @@ internal sealed class FreeCompanyInventoryObserver : IDisposable
         this.storageReader = storageReader;
 
         trackedFreeCompanyId = characterMonitor.ActiveFreeCompanyId;
+        freeCompanyGeneration = 1;
 
         inventoryScanner.ContainerInfoReceived += OnContainerInfoReceived;
-        inventoryScanner.BagsChanged += OnBagsChanged;
-        Plugin.Framework.Update += OnFrameworkUpdate;
+        inventoryScanner.FreeCompanyPageScanned += OnFreeCompanyPageScanned;
     }
 
     public void Dispose()
@@ -63,83 +58,91 @@ internal sealed class FreeCompanyInventoryObserver : IDisposable
         disposed = true;
 
         inventoryScanner.ContainerInfoReceived -= OnContainerInfoReceived;
-        inventoryScanner.BagsChanged -= OnBagsChanged;
-        Plugin.Framework.Update -= OnFrameworkUpdate;
+        inventoryScanner.FreeCompanyPageScanned -= OnFreeCompanyPageScanned;
 
-        pendingInitialObservation.Clear();
-        observedThisSession.Clear();
+        pending.Clear();
+        acquiredPages.Clear();
     }
 
     private void OnContainerInfoReceived(
         CriticalCommonLib.GameStructs.ContainerInfo containerInfo,
         InventoryType inventoryType)
     {
-        if (!IsFreeCompanyPage(inventoryType))
+        if (disposed || !IsFreeCompanyPage(inventoryType))
             return;
 
-        if (!observedThisSession.Contains(inventoryType))
-            pendingInitialObservation.Add(inventoryType);
+        RefreshFreeCompanyIdentity();
+
+        if (trackedFreeCompanyId == 0)
+            return;
+
+        var key = new PendingObservation(
+            trackedFreeCompanyId,
+            inventoryType,
+            freeCompanyGeneration);
+
+        pending.Add(key);
+
+        FreeCompanyObservationDiagnostics.Add(
+            $"FC_PENDING page={FormatPage(inventoryType)} owner={trackedFreeCompanyId} fcGen={freeCompanyGeneration} seq={containerInfo.containerSequence} numItems={containerInfo.numItems} startOrFinish={containerInfo.startOrFinish}");
     }
 
-    private void OnBagsChanged(
-        List<BagChange> changes)
+    private void OnFreeCompanyPageScanned(
+        long scanRevision,
+        InventoryType inventoryType,
+        bool changed)
     {
-        // CCL has completed a scanner pass and changed at least one cached bag.
-        // Syncing all already-observed FC pages is tiny (5 x 50 slots) and avoids
-        // coupling FROG to BagChange's internal shape.
-        syncRequested = true;
-    }
+        if (disposed || !IsFreeCompanyPage(inventoryType))
+            return;
 
-    private void OnFrameworkUpdate(
-        Dalamud.Plugin.Services.IFramework framework)
-    {
-        var freeCompanyId = characterMonitor.ActiveFreeCompanyId;
+        RefreshFreeCompanyIdentity();
 
-        if (freeCompanyId != trackedFreeCompanyId)
-        {
-            trackedFreeCompanyId = freeCompanyId;
-            pendingInitialObservation.Clear();
-            observedThisSession.Clear();
-            syncRequested = freeCompanyId != 0;
-        }
-
+        var freeCompanyId = trackedFreeCompanyId;
         if (freeCompanyId == 0)
             return;
 
-        if (pendingInitialObservation.Count > 0)
+        var key = new PendingObservation(
+            freeCompanyId,
+            inventoryType,
+            freeCompanyGeneration);
+
+        var hasPending = pending.Contains(key);
+        var alreadyAcquired = acquiredPages.Contains(inventoryType);
+
+        // A periodic completed scan is not a new observation by itself.
+        // Freshness advances only for a pending acquisition, or for a real
+        // content change on a page already acquired for this FC generation.
+        if (!hasPending && !(changed && alreadyAcquired))
         {
-            foreach (var page in pendingInitialObservation.ToArray())
+            if (changed && !alreadyAcquired)
             {
-                if (!inventoryScanner.InMemory.Contains(page))
-                    continue;
-
-                if (SyncPage(page, freeCompanyId, "initial"))
-                {
-                    pendingInitialObservation.Remove(page);
-                    observedThisSession.Add(page);
-                }
+                FreeCompanyObservationDiagnostics.Add(
+                    $"FC_SCAN_IGNORED page={FormatPage(inventoryType)} owner={freeCompanyId} fcGen={freeCompanyGeneration} scanRev={scanRevision} reason=changed-before-acquisition");
             }
-        }
 
-        if (!syncRequested)
             return;
-
-        syncRequested = false;
-
-        foreach (var page in FreeCompanyPages)
-        {
-            if (!inventoryScanner.InMemory.Contains(page))
-                continue;
-
-            if (SyncPage(page, freeCompanyId, "scanner-change"))
-                observedThisSession.Add(page);
         }
+
+        if (!SyncPage(
+                inventoryType,
+                freeCompanyId,
+                scanRevision,
+                hasPending,
+                changed))
+        {
+            return;
+        }
+
+        pending.Remove(key);
+        acquiredPages.Add(inventoryType);
     }
 
     private bool SyncPage(
         InventoryType page,
         ulong freeCompanyId,
-        string reason)
+        long scanRevision,
+        bool hadPending,
+        bool providerChanged)
     {
         var observedAtUtc = DateTime.UtcNow;
 
@@ -149,79 +152,53 @@ internal sealed class FreeCompanyInventoryObserver : IDisposable
                 out var source,
                 out var snapshots))
         {
+            FreeCompanyObservationDiagnostics.Add(
+                $"FC_SCAN_IGNORED page={FormatPage(page)} owner={freeCompanyId} fcGen={freeCompanyGeneration} scanRev={scanRevision} reason=reader-rejected");
             return false;
         }
 
-        if (source.OwnerId != freeCompanyId)
-            return false;
-
-        var knownSnapshots = plugin.InventoryIndex.Items
-            .Where(item =>
-                item.Storage == source.Storage &&
-                item.OwnerId == source.OwnerId &&
-                item.Container == source.Container)
-            .ToList();
-
-        if (HaveSameContents(knownSnapshots, snapshots))
+        if (source.OwnerId != freeCompanyId ||
+            characterMonitor.ActiveFreeCompanyId != freeCompanyId)
         {
             FreeCompanyObservationDiagnostics.Add(
-                $"CCL_OBSERVED reason={reason} page={FormatPage(page)} owner={freeCompanyId} changed=False items={snapshots.Count} qty={snapshots.Sum(item => item.Quantity)}");
-
-            return true;
+                $"FC_SCAN_IGNORED page={FormatPage(page)} owner={freeCompanyId} fcGen={freeCompanyGeneration} scanRev={scanRevision} reason=owner-changed");
+            return false;
         }
 
-        plugin.InventoryIndex.ReplaceSource(
+        var result = plugin.InventoryIndex.ApplyObservation(
             source,
             snapshots,
+            scanRevision,
             observedAtUtc);
 
+        if (!result.Applied)
+        {
+            FreeCompanyObservationDiagnostics.Add(
+                $"FC_SCAN_IGNORED page={FormatPage(page)} owner={freeCompanyId} fcGen={freeCompanyGeneration} scanRev={scanRevision} reason=stale-revision");
+            return false;
+        }
+
         FreeCompanyObservationDiagnostics.Add(
-            $"CCL_OBSERVED reason={reason} page={FormatPage(page)} owner={freeCompanyId} changed=True items={snapshots.Count} qty={snapshots.Sum(item => item.Quantity)}");
+            $"FC_OBSERVED page={FormatPage(page)} owner={freeCompanyId} fcGen={freeCompanyGeneration} scanRev={scanRevision} pending={hadPending} providerChanged={providerChanged} contentChanged={result.ContentChanged} obsRev={result.ObservationRevision} contentRev={result.ContentRevision} items={snapshots.Count} qty={snapshots.Sum(item => item.Quantity)}");
 
         return true;
     }
 
-    private static bool HaveSameContents(
-        IReadOnlyList<InventoryItemSnapshot> left,
-        IReadOnlyList<InventoryItemSnapshot> right)
+    private void RefreshFreeCompanyIdentity()
     {
-        if (left.Count != right.Count)
-            return false;
+        var currentFreeCompanyId = characterMonitor.ActiveFreeCompanyId;
 
-        var orderedLeft = left
-            .OrderBy(item => item.Container)
-            .ThenBy(item => item.Slot)
-            .ThenBy(item => item.RawItemId)
-            .ThenBy(item => item.Quantity)
-            .ToArray();
+        if (currentFreeCompanyId == trackedFreeCompanyId)
+            return;
 
-        var orderedRight = right
-            .OrderBy(item => item.Container)
-            .ThenBy(item => item.Slot)
-            .ThenBy(item => item.RawItemId)
-            .ThenBy(item => item.Quantity)
-            .ToArray();
+        var previous = trackedFreeCompanyId;
+        trackedFreeCompanyId = currentFreeCompanyId;
+        freeCompanyGeneration++;
+        pending.Clear();
+        acquiredPages.Clear();
 
-        for (var index = 0; index < orderedLeft.Length; index++)
-        {
-            var a = orderedLeft[index];
-            var b = orderedRight[index];
-
-            if (a.BaseItemId != b.BaseItemId ||
-                a.RawItemId != b.RawItemId ||
-                a.Quantity != b.Quantity ||
-                a.IsHq != b.IsHq ||
-                a.Storage != b.Storage ||
-                a.OwnerId != b.OwnerId ||
-                a.Container != b.Container ||
-                a.Slot != b.Slot ||
-                a.ParentCharacterId != b.ParentCharacterId)
-            {
-                return false;
-            }
-        }
-
-        return true;
+        FreeCompanyObservationDiagnostics.Add(
+            $"FC_IDENTITY previous={previous} current={currentFreeCompanyId} fcGen={freeCompanyGeneration}");
     }
 
     private static bool IsFreeCompanyPage(
