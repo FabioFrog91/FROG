@@ -37,17 +37,18 @@ internal static class FreeCompanyObservationDiagnosticsPanel
             return;
         }
 
-        if (!ImGui.BeginChild(
+        var childVisible =
+            ImGui.BeginChild(
                 "FrogFreeCompanyObservationDiagnostics",
                 new System.Numerics.Vector2(0, 300),
-                true))
-        {
-            return;
-        }
+                true);
 
-        foreach (var entry in entries)
+        if (childVisible)
         {
-            ImGui.TextUnformatted(entry);
+            foreach (var entry in entries)
+            {
+                ImGui.TextUnformatted(entry);
+            }
         }
 
         ImGui.EndChild();
