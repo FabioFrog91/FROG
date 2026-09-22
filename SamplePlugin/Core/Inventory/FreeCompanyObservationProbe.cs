@@ -1,4 +1,3 @@
-using Autofac;
 using CriticalCommonLib.GameStructs;
 using CriticalCommonLib.Services;
 using FFXIVClientStructs.FFXIV.Client.Game;
@@ -261,7 +260,7 @@ internal sealed class FreeCompanyObservationProbe : IDisposable
             : "persisted-or-not-observed-this-session";
 
         FreeCompanyObservationDiagnostics.Add(
-            $"PROBE STATE reason={reason} page={FormatContainer(container)} ui={FormatContainer(selectedContainer)} probeGen={probeGeneration} sessionMs={ElapsedSessionMs(nowMs)} pageMs={ElapsedPageMs(nowMs, selectedContainer)} fc={freeCompanyId} RAW[available={rawAvailable} loaded={rawLoaded} items={rawItems} qty={rawQuantity} fp={rawFingerprint:X8}] CCL[loaded={cclLoaded} inMemory={cclInMemory} items={cclItems} qty={cclQuantity} fp={cclFingerprint:X8}] KNOWN[items={knownItems} qty={knownQuantity} fp={knownFingerprint:X8} freshness={knownFreshness}]");
+            $"PROBE STATE reason={reason} page={FormatContainer(container)} ui={FormatContainer(selectedContainer)} probeGen={probeGeneration} sessionMs={ElapsedSessionMs(nowMs)} pageMs={ElapsedPageMs(nowMs, selectedContainer)} fc={freeCompanyId} RAW[available={rawAvailable} loaded={rawLoaded} items={rawItems} qty={rawQuantity} fp={rawFingerprint:X16}] CCL[loaded={cclLoaded} inMemory={cclInMemory} items={cclItems} qty={cclQuantity} fp={cclFingerprint:X16}] KNOWN[items={knownItems} qty={knownQuantity} fp={knownFingerprint:X16} freshness={knownFreshness}]");
     }
 
     private static ulong BuildKnownFingerprint(
@@ -287,7 +286,7 @@ internal sealed class FreeCompanyObservationProbe : IDisposable
     private static ulong MixFingerprint(
         ulong fingerprint,
         uint itemId,
-        int quantity,
+        long quantity,
         int slot)
     {
         const ulong prime = 1099511628211UL;
@@ -295,7 +294,7 @@ internal sealed class FreeCompanyObservationProbe : IDisposable
         unchecked
         {
             fingerprint = (fingerprint ^ itemId) * prime;
-            fingerprint = (fingerprint ^ (uint)quantity) * prime;
+            fingerprint = (fingerprint ^ (ulong)quantity) * prime;
             fingerprint = (fingerprint ^ (uint)slot) * prime;
         }
 
