@@ -146,7 +146,7 @@ internal sealed class FreeCompanyInventoryObserver : IDisposable
     {
         var observedAtUtc = DateTime.UtcNow;
 
-        if (!storageReader.TryReadActiveFreeCompanyPage(
+        if (!storageReader.TryReadObservedFreeCompanyPage(
                 observedAtUtc,
                 (uint)page,
                 out var source,
