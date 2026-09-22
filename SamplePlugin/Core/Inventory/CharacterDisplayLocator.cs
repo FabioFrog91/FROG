@@ -65,11 +65,7 @@ public sealed class CharacterDisplayLocator
         var source =
             action.Source;
 
-        var physicalContainerIndex =
-            GetPhysicalContainerIndex(
-                source.Container);
-
-        if (physicalContainerIndex < 0)
+        if (GetPhysicalContainerIndex(source.Container) < 0)
             return CharacterDisplayLocation.Unavailable;
 
         var sortOrder =
@@ -108,7 +104,9 @@ public sealed class CharacterDisplayLocator
                 .Where(item =>
                     item.Storage == source.Storage &&
                     item.OwnerId == source.OwnerId &&
-                    item.Container == source.Container &&
+                    (currentItems is not null ||
+                     item.Container == source.Container) &&
+                    GetPhysicalContainerIndex(item.Container) >= 0 &&
                     item.BaseItemId == action.BaseItemId &&
                     item.IsHq == action.IsHq &&
                     item.Quantity > 0));
@@ -151,6 +149,13 @@ public sealed class CharacterDisplayLocator
                 Math.Min(
                     remaining,
                     available);
+
+            var physicalContainerIndex =
+                GetPhysicalContainerIndex(
+                    stack.Container);
+
+            if (physicalContainerIndex < 0)
+                return CharacterDisplayLocation.Unavailable;
 
             var displayIndex =
                 FindDisplayIndex(

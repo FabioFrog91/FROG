@@ -35,20 +35,6 @@ public sealed record PlanExecutionReconciliationResult(
 /// </summary>
 public sealed class PlanExecutionReconciler
 {
-    public PlanExecutionReconciliationResult ReconcileSourceContainerChange(
-        PlannerAction action) =>
-        new(
-            PlanExecutionReconciliationStatus.NotSatisfied,
-            action.Quantity,
-            0,
-            0,
-            Math.Max(
-                0,
-                action.Quantity),
-            0,
-            0,
-            "Lo stack sorgente è stato spostato in un altro contenitore. Piano fisico da ricalcolare.");
-
     public PlanExecutionReconciliationResult Reconcile(
         PlannerAction action,
         PlanExecutionBaseline baseline,
@@ -69,11 +55,23 @@ public sealed class PlanExecutionReconciler
                 "L'azione non è un MOVE riconciliabile.");
         }
 
+        var baselineSourceQuantity =
+            GetTransferSourceQuantity(
+                action,
+                baseline.SourceQuantity,
+                baseline.LogicalSourceQuantity);
+
+        var observedSourceQuantity =
+            GetTransferSourceQuantity(
+                action,
+                observation.SourceQuantity,
+                observation.LogicalSourceQuantity);
+
         var sourceDecrease =
             Math.Max(
                 0,
-                baseline.SourceQuantity -
-                observation.SourceQuantity);
+                baselineSourceQuantity -
+                observedSourceQuantity);
 
         var destinationIncrease =
             Math.Max(
@@ -133,4 +131,13 @@ public sealed class PlanExecutionReconciler
             destinationIncrease,
             "Nessuna quantità trasferita è confermata contemporaneamente da source e destination.");
     }
+
+    private static int GetTransferSourceQuantity(
+        PlannerAction action,
+        int sourceQuantity,
+        int logicalSourceQuantity) =>
+        action.Source?.Storage == StorageType.CharacterInventory ||
+        action.Source?.Storage == StorageType.Retainer
+            ? logicalSourceQuantity
+            : sourceQuantity;
 }
