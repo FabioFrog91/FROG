@@ -1,6 +1,6 @@
 # FROG — Master Context canonico
 
-Ultimo aggiornamento del contesto: 2026-09-21.
+Ultimo aggiornamento del contesto: 2026-09-22.
 
 Questo documento è il punto di ripartenza autorevole per una nuova chat, un'altra AI o una nuova sessione di sviluppo. Deve essere letto integralmente prima di proporre o applicare modifiche.
 
@@ -13,7 +13,7 @@ Questo file deve essere mantenuto sincronizzato con il progetto.
 - `b ok` o `b ook` significa build locale completata con successo e zero errori. Solo allora la modifica può diventare `BUILD VERIFICATA`.
 - Un test runtime confermato dall'utente, per esempio “funziona” o “perfetto”, promuove la parte interessata a `RUNTIME VERIFICATO`.
 - Ipotesi, ricerche e proposte non devono essere presentate come implementate: restano `DA DECIDERE`, `DA IMPLEMENTARE` o `DA TESTARE`.
-- Dopo ogni decisione, implementazione o conferma significativa aggiornare questo documento nello stesso checkpoint del codice, quando possibile.
+- Conservare nella conversazione gli esiti intermedi. Aggiornare e pubblicare questo documento soltanto quando l'utente lo richiede esplicitamente, consolidando allora tutte le decisioni, implementazioni e conferme accumulate.
 - Rimuovere o correggere le istruzioni diventate obsolete: non accumulare appendici contraddittorie.
 - Non inserire credenziali, sessioni autenticate, dati privati dei personaggi o output sensibili.
 
@@ -62,7 +62,7 @@ Prima di una modifica importante:
 4. identificare componenti e test già esistenti da riusare;
 5. applicare modifiche minime e isolate;
 6. rivedere il diff completo;
-7. aggiornare questo documento con lo stato corretto.
+7. annotare lo stato corretto nella conversazione e aggiornare questo documento solo su richiesta esplicita dell'utente.
 
 ## 3. Repository e ambiente
 
@@ -84,19 +84,20 @@ dotnet build SamplePlugin.slnx -c Debug
 
 Il CI GitHub storico non inizializza correttamente tutti i submodule e non è una prova autorevole finché quel workflow non viene corretto.
 
-Stato Git osservato in questo workspace al 2026-09-21:
+Stato Git osservato in questo workspace al 2026-09-22:
 
-- ultimo checkpoint di codice con build verificata: `52ece15` — `Add stack-aware planner capacity`; equivalente pubblicato dal connettore GitHub nel commit remoto `5884fb3` insieme al contesto aggiornato;
-- l'implementazione stack/capacità ha ricevuto `b ok` il 2026-09-21; i test runtime specifici restano da eseguire;
+- ultimo checkpoint locale di codice con build e runtime verificati: `0b070a0` — `Aggregate capacity advice across blocked stacks`;
+- equivalente più recente pubblicato dal connettore GitHub prima di questo aggiornamento del prompt: `b3fe6d8`;
+- checkpoint immediatamente precedenti del flusso capacità: `40c4746` — `Resume execution after capacity becomes available` e `f6e492c` — `Explain capacity-blocked execution plans`;
+- l'intero flusso stack/capacità fino a `0b070a0` ha ricevuto `b ok` e le conferme runtime descritte nella sezione 12;
 - il riferimento locale `origin/debug/retainer-row-inspector` può restare indietro dopo una pubblicazione tramite connettore finché non viene eseguito `git fetch origin`; non dedurre da questo che il remoto non sia aggiornato;
-- checkpoint precedente: `d799ad1` — `Highlight FC execution pages and slots`;
-- backup tag/branch: `backup/pre-disposal-audit-20260920`;
+- backup tag pertinenti: `backup/pre-stack-capacity-20260921`, `backup/pre-execution-capacity-message-20260921`, `backup/pre-capacity-waiting-flow-20260921` e `backup/pre-capacity-advice-aggregation-20260921`;
 - submodule `CriticalCommonLib` pinned a `34d364ea938e585b4f7eeab5b36e4261fdd817d0`;
 - nel submodule sono presenti due modifiche locali intenzionali di unsubscribe in `InventoryMonitor.cs` e `InventoryScanner.cs`;
 - le stesse modifiche sono conservate in `patches/critical-common-lib-dispose-events.patch`;
 - non sovrascrivere o perdere queste modifiche.
 
-Questo workspace non dispone di `dotnet`, `csc` o `msbuild`. Il checkpoint stack/capacità `52ece15`, pubblicato nel commit remoto `5884fb3`, ha ricevuto un vero `b ok` nell'ambiente Windows dell'utente il 2026-09-21.
+Questo workspace non dispone di `dotnet`, `csc` o `msbuild`. Il checkpoint locale `0b070a0`, pubblicato sul remoto come `b3fe6d8`, ha ricevuto un vero `b ok` nell'ambiente Windows dell'utente e successive conferme runtime.
 
 ## 4. Architettura fondamentale
 
@@ -249,6 +250,7 @@ Status esistenti:
 - WaitingForObservation
 - Verified
 - ReplanRequired
+- WaitingForCapacity
 - Complete
 
 La pipeline è framework-driven; `ExecutionWindow` è una vista passiva. Chiudere la finestra non arresta l'esecuzione, mentre Stop sì.
@@ -263,6 +265,11 @@ Regole:
 - non sottrarre manualmente dalle requirements;
 - il replan usa sempre RequirementSet originale contro InventoryIndex reale;
 - il Main originale deve essere preservato;
+- un piano con quantità disponibili ma bloccate dalla capacità non deve risultare `Complete`: deve entrare in `WaitingForCapacity`;
+- `WaitingForCapacity` è una pausa interamente client-side: non muove oggetti e non invia azioni al server;
+- Execution deve indicare il numero minimo di slot aggiuntivi da liberare, considerando merge, stack massimo, separazione HQ/NQ e slot di riserva, e mostrare il primo movimento che verrà sbloccato;
+- soltanto durante `WaitingForCapacity`, il runtime ricontrolla la capacità mirata ogni 250 ms e avvia automaticamente il replan quando tutti i blocchi di capacità noti entrano nello snapshot reale osservato;
+- `COPIA DEBUG` nella finestra Execution deve includere stato, Missing, CapacityBlocked, UnavailableMissing, CapacityAdvice, blocchi di capacità e step;
 - `PlanExecutionPlanGuard` rigioca solo le azioni residue usando `PlannerActionValidator`;
 - il guard opera ai checkpoint stabili: start/restart e dopo un'azione verificata, non durante un trasferimento in corso;
 - non reintrodurre `InventoryIndex.Revision` per invalidare globalmente il piano.
@@ -307,12 +314,23 @@ Ogni nuovo event handler, hook, timer, task o `CancellationTokenSource` deve ave
 
 ## 12. Stack, merge e capacità
 
-Stato: `BUILD VERIFICATA` tramite `b ok` dell'utente il 2026-09-21.
+Stato: `BUILD E RUNTIME VERIFICATI` fino al checkpoint locale `0b070a0`, pubblicato sul remoto come `b3fe6d8`.
 
-Verifica runtime progressiva:
+Verifiche runtime confermate dall'utente:
 
-- merge semplice NQ verso uno stack compatibile già presente nella destinazione: `RUNTIME VERIFICATO` dall'utente il 2026-09-21;
-- overflow con split, separazione HQ/NQ, slot di riserva, capacità parziale e FC multipagina: ancora da testare.
+- merge semplice NQ verso uno stack compatibile già presente nella destinazione;
+- overflow/split: uno stack a 980 più 50 produce 999 più 31 senza overstack;
+- HQ e NQ restano separati e non vengono mergiati insieme;
+- con un solo slot vuoto fisico residuo, lo slot viene protetto come riserva e non viene generata una MOVE che lo consumi;
+- due blocchi distinti dello stesso item, uno HQ e uno NQ, richiedono correttamente due slot: dopo averne liberato uno Execution resta in attesa, dopo il secondo esegue il replan automatico;
+- capacità parziale: con 1.200 unità disponibili e un solo slot utilizzabile viene pianificata una MOVE da 999 e vengono dichiarate 201 unità bloccate; liberato un altro slot, il replan riparte e pianifica il residuo;
+- messaggio `WaitingForCapacity`, consiglio aggregato sugli slot, indicazione del movimento successivo e copia debug della finestra Execution.
+
+Verifiche runtime ancora mirate:
+
+- capacità/merge FC multipagina attraverso tutte le pagine della destinazione logica;
+- caso con zero slot fisici vuoti, se si vuole una prova separata dal caso già verificato con zero slot utilizzabili dopo la riserva;
+- scenari estesi con più destinazioni logiche o route bridge più lunghe.
 
 Decisioni confermate:
 
@@ -341,6 +359,11 @@ Problemi reali trovati nel codice:
 - `PlannerState.Move()` riempie gli stack parziali compatibili, divide il residuo in stack entro il massimo e aggiorna una capacità virtuale immutabile dopo ogni MOVE;
 - `PlannerActionValidator` e `PlanExecutionPlanGuard` riusano la stessa capacità; il guard ricostruisce l'occupazione dallo stato reale più recente;
 - se entra solo una parte, il compilatore riduce il MOVE alla quantità realmente accettabile e il resto rimane Missing;
+- `PlannerPlan` conserva `CapacityBlocked`, i `PlannerCapacityBlock` ordinati e i consigli `PlannerCapacityAdvice` aggregati;
+- i consigli vengono aggregati per destinazione logica, item, qualità e stack massimo: blocchi compatibili dello stesso item/qualità possono condividere capacità, mentre HQ e NQ richiedono stack distinti;
+- `PlannerCapacitySnapshot.TryReserveDestination` simula in sequenza tutti i blocchi noti sullo snapshot corrente e autorizza il replan soltanto quando entrano tutti;
+- Execution usa `WaitingForCapacity`, non `Complete`, conserva la sessione attiva e ricontrolla soltanto la capacità interessata ogni 250 ms finché non può eseguire il replan;
+- il primo movimento bloccato viene mostrato come prossimo step utile;
 - scoring, selezione source, route e ordinamento ODR non sono stati modificati.
 
 Non implementare una formula locale duplicata. Stack simulation, validator e plan guard devono condividere la stessa responsabilità/calcolo.
@@ -411,13 +434,14 @@ Riferimenti studiati e decisioni derivate:
 
 ## 15. Prossimo lavoro corretto
 
-Stack/capacità ha superato la build locale. Prossimo checkpoint obbligatorio:
+Stack/capacità, attesa per spazio e replan automatico hanno superato build e test runtime mirati. Prossimi checkpoint:
 
-1. continuare i test nel gioco con overflow/split, HQ/NQ, zero slot, unico slot riservato, FC multipagina e trasferimento parziale; il merge semplice NQ è già verificato;
-2. verificare che l'esecuzione manuale e il replan continuino a comportarsi come prima;
-3. controllare diagnostica allocazioni/memoria per verificare che lo snapshot compatto resti leggero;
-4. correggere eventuali problemi senza ampliare il refactor;
-5. aggiornare immediatamente questo file con gli esiti reali, promuovendo a `RUNTIME VERIFICATO` soltanto i casi realmente provati.
+1. testare nel gioco merge e capacità della FC come unica destinazione logica multipagina, compresi stack compatibili presenti in pagine diverse;
+2. facoltativamente isolare il caso con zero slot fisici vuoti e provare scenari con più destinazioni logiche o route bridge più lunghe;
+3. continuare a verificare che esecuzione manuale, consiglio capacità e replan preservino il Main originale e il RequirementSet originale;
+4. controllare diagnostica allocazioni/memoria per confermare che snapshot compatto e polling limitato a `WaitingForCapacity` restino leggeri;
+5. correggere eventuali problemi senza ampliare il refactor;
+6. aggiornare questo file soltanto quando l'utente lo richiede esplicitamente, promuovendo a `RUNTIME VERIFICATO` solo i casi realmente provati.
 
 Il riconoscimento discard deve restare un passaggio separato perché richiede una cattura runtime reale.
 
