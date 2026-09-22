@@ -813,7 +813,6 @@ internal sealed class FrogInventoryStartup : IHostedService
     private readonly IInventoryMonitor inventoryMonitor;
     private readonly IInventoryScanner inventoryScanner;
     private readonly StorageReaderAPI storageReader;
-    private readonly Plugin plugin;
     private readonly PlanExecutionRuntime executionRuntime;
     private readonly RetainerListHighlighter retainerListHighlighter;
     private readonly ExecutionInventoryHighlighter executionInventoryHighlighter;
@@ -822,7 +821,6 @@ internal sealed class FrogInventoryStartup : IHostedService
         IInventoryMonitor inventoryMonitor,
         IInventoryScanner inventoryScanner,
         StorageReaderAPI storageReader,
-        Plugin plugin,
         PlanExecutionRuntime executionRuntime,
         RetainerListHighlighter retainerListHighlighter,
         ExecutionInventoryHighlighter executionInventoryHighlighter)
@@ -830,7 +828,6 @@ internal sealed class FrogInventoryStartup : IHostedService
         this.inventoryMonitor = inventoryMonitor;
         this.inventoryScanner = inventoryScanner;
         this.storageReader = storageReader;
-        this.plugin = plugin;
         this.executionRuntime = executionRuntime;
         this.retainerListHighlighter = retainerListHighlighter;
         this.executionInventoryHighlighter = executionInventoryHighlighter;
@@ -885,7 +882,34 @@ internal sealed class FrogInventoryStartup : IHostedService
         List<InventoryChange> inventoryChanges,
         InventoryMonitor.ItemChanges? itemChanges)
     {
-        plugin.SyncPlayerInventory();
-        plugin.SyncStorageSources(storageReader);
+        SyncStorageSources();
+    }
+
+    private void SyncStorageSources()
+    {
+        var observedAtUtc = DateTime.UtcNow;
+
+        if (!storageReader.TryReadActiveRetainer(
+                observedAtUtc,
+                out var retainerSources,
+                out var retainerSnapshots))
+        {
+            return;
+        }
+
+        foreach (var source in retainerSources)
+        {
+            var sourceSnapshots = retainerSnapshots
+                .Where(x =>
+                    x.Storage == source.Storage &&
+                    x.OwnerId == source.OwnerId &&
+                    x.Container == source.Container)
+                .ToList();
+
+            // Retainer observation remains owned by the CCL monitor path.
+            // CharacterInventory is owned by CharacterInventoryObservationObserver.
+            Plugin.Log.Verbose(
+                $"Retainer observation owner={source.OwnerId} container={source.Container} items={sourceSnapshots.Count}");
+        }
     }
 }
