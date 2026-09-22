@@ -35,7 +35,7 @@ public sealed record PlanExecutionReconciliationResult(
 /// </summary>
 public sealed class PlanExecutionReconciler
 {
-    public PlanExecutionReconciliationResult ReconcileSourceLayoutChange(
+    public PlanExecutionReconciliationResult ReconcileSourceContainerChange(
         PlannerAction action) =>
         new(
             PlanExecutionReconciliationStatus.NotSatisfied,
@@ -47,7 +47,7 @@ public sealed class PlanExecutionReconciler
                 action.Quantity),
             0,
             0,
-            "Lo stack sorgente è stato spostato all'interno del contenitore. Piano fisico da ricalcolare.");
+            "Lo stack sorgente è stato spostato in un altro contenitore. Piano fisico da ricalcolare.");
 
     public PlanExecutionReconciliationResult Reconcile(
         PlannerAction action,

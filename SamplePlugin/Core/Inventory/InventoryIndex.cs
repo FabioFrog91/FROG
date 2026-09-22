@@ -398,6 +398,7 @@ public sealed class InventoryIndex
         lock (syncLock)
         {
             var quantity = 0;
+            var logicalQuantity = 0;
             var matchingStacks = 0;
             ulong layoutFingerprint = 0;
 
@@ -406,11 +407,16 @@ public sealed class InventoryIndex
                 if (item.BaseItemId != baseItemId ||
                     item.IsHq != isHq ||
                     item.Storage != source.Storage ||
-                    item.OwnerId != source.OwnerId ||
-                    item.Container != source.Container)
+                    item.OwnerId != source.OwnerId)
                 {
                     continue;
                 }
+
+                logicalQuantity +=
+                    item.Quantity;
+
+                if (item.Container != source.Container)
+                    continue;
 
                 quantity += item.Quantity;
                 matchingStacks++;
@@ -434,6 +440,7 @@ public sealed class InventoryIndex
 
             return new InventorySourceItemObservation(
                 quantity,
+                logicalQuantity,
                 observedAtUtc,
                 layoutFingerprint);
         }
@@ -631,5 +638,6 @@ public sealed record InventoryIndexAuditEntry(
 
 public readonly record struct InventorySourceItemObservation(
     int Quantity,
+    int LogicalQuantity,
     DateTime? ObservedAtUtc,
     ulong LayoutFingerprint);

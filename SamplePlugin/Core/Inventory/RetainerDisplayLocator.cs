@@ -46,7 +46,8 @@ public sealed class RetainerDisplayLocator
 
     public RetainerDisplayLocation LocateSource(
         PlannerPlan plan,
-        int actionIndex)
+        int actionIndex,
+        IReadOnlyList<InventoryItemSnapshot>? currentItems = null)
     {
         if (actionIndex < 0 ||
             actionIndex >= plan.Actions.Count)
@@ -93,7 +94,9 @@ public sealed class RetainerDisplayLocator
             return RetainerDisplayLocation.Unavailable;
 
         var previouslyPlannedFromSameSource =
-            plan.Actions
+            currentItems is not null
+                ? 0
+                : plan.Actions
                 .Take(actionIndex)
                 .Where(previous =>
                     previous.Type == PlannerActionType.Move &&
@@ -114,7 +117,7 @@ public sealed class RetainerDisplayLocator
         var matchingStacks =
             executionOrderCompiler.OrderStacksForExecution(
                 source,
-                plan.InitialState.Items
+                (currentItems ?? plan.InitialState.Items)
                 .Where(item =>
                     item.Storage == source.Storage &&
                     item.OwnerId == source.OwnerId &&

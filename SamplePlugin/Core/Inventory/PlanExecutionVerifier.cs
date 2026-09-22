@@ -12,6 +12,7 @@ public enum PlanExecutionVerificationStatus
 
 public sealed record PlanExecutionObservation(
     int SourceQuantity,
+    int LogicalSourceQuantity,
     int DestinationQuantity,
     DateTime? SourceObservedAtUtc,
     DateTime? DestinationObservedAtUtc,
@@ -20,6 +21,7 @@ public sealed record PlanExecutionObservation(
 public sealed record PlanExecutionBaseline(
     int ActionIndex,
     int SourceQuantity,
+    int LogicalSourceQuantity,
     int DestinationQuantity,
     DateTime? SourceObservedAtUtc,
     DateTime? DestinationObservedAtUtc,
@@ -44,6 +46,7 @@ public sealed class PlanExecutionVerifier
         return new PlanExecutionBaseline(
             actionIndex,
             observation.SourceQuantity,
+            observation.LogicalSourceQuantity,
             observation.DestinationQuantity,
             observation.SourceObservedAtUtc,
             observation.DestinationObservedAtUtc,
@@ -61,6 +64,7 @@ public sealed class PlanExecutionVerifier
             return new PlanExecutionObservation(
                 0,
                 0,
+                0,
                 null,
                 null,
                 0);
@@ -74,6 +78,7 @@ public sealed class PlanExecutionVerifier
 
         return new PlanExecutionObservation(
             sourceObservation.Quantity,
+            sourceObservation.LogicalQuantity,
             GetDestinationQuantity(
                 inventoryIndex,
                 action),

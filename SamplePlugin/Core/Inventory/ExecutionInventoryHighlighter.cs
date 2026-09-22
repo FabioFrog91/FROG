@@ -40,8 +40,10 @@ public sealed unsafe class ExecutionInventoryHighlighter
     private int cachedActionIndex = -1;
     private ulong cachedCharacterId;
     private HighlightTarget? cachedTarget;
+    private ulong? cachedSourceLayoutFingerprint;
     private bool retryTargetWhileUnavailable;
     private long nextTargetRetryAtMs;
+    private long nextLayoutCheckAtMs;
 
     private readonly List<NodeBinding> activeBindings = new();
     private readonly List<ExecutionQuantityBadgeAnchor> quantityBadgeAnchors = new();
@@ -89,21 +91,55 @@ public sealed unsafe class ExecutionInventoryHighlighter
         var actionIndex =
             runtime.Session.CurrentActionIndex - 1;
 
-        if (!ReferenceEquals(
+        var nowMs =
+            Environment.TickCount64;
+
+        var targetContextChanged =
+            !ReferenceEquals(
                 cachedPlan,
                 runtime.Session.Plan) ||
             cachedActionIndex != actionIndex ||
-            cachedCharacterId != currentCharacterId)
+            cachedCharacterId != currentCharacterId;
+
+        var sourceLayoutChanged = false;
+        InventorySourceItemObservation? sourceObservation = null;
+
+        if (targetContextChanged ||
+            nowMs >= nextLayoutCheckAtMs)
+        {
+            sourceObservation =
+                ObserveCurrentSource(
+                    runtime.Session.Plan,
+                    actionIndex);
+
+            sourceLayoutChanged =
+                !targetContextChanged &&
+                cachedSourceLayoutFingerprint !=
+                    sourceObservation?.LayoutFingerprint;
+
+            nextLayoutCheckAtMs =
+                nowMs + TargetRetryIntervalMs;
+        }
+
+        if (targetContextChanged ||
+            sourceLayoutChanged)
         {
             Clear();
             cachedPlan = runtime.Session.Plan;
             cachedActionIndex = actionIndex;
             cachedCharacterId = currentCharacterId;
+            cachedSourceLayoutFingerprint =
+                sourceObservation?.LayoutFingerprint;
+
+            var currentItems =
+                plugin.InventoryIndex.Items;
+
             cachedTarget =
                 BuildTarget(
                     runtime.Session.Plan,
                     actionIndex,
-                    currentCharacterId);
+                    currentCharacterId,
+                    currentItems);
 
             retryTargetWhileUnavailable =
                 cachedTarget is null &&
@@ -113,15 +149,15 @@ public sealed unsafe class ExecutionInventoryHighlighter
                     currentCharacterId);
 
             nextTargetRetryAtMs =
-                Environment.TickCount64 +
+                nowMs +
                 TargetRetryIntervalMs;
         }
         else if (cachedTarget is null &&
                  retryTargetWhileUnavailable &&
-                 Environment.TickCount64 >= nextTargetRetryAtMs)
+                 nowMs >= nextTargetRetryAtMs)
         {
             nextTargetRetryAtMs =
-                Environment.TickCount64 +
+                nowMs +
                 TargetRetryIntervalMs;
 
             if (IsRelevantSourceUiVisible(
@@ -132,7 +168,8 @@ public sealed unsafe class ExecutionInventoryHighlighter
                     BuildTarget(
                         runtime.Session.Plan,
                         actionIndex,
-                        currentCharacterId);
+                        currentCharacterId,
+                        plugin.InventoryIndex.Items);
 
                 if (cachedTarget is not null)
                     retryTargetWhileUnavailable = false;
@@ -189,7 +226,8 @@ public sealed unsafe class ExecutionInventoryHighlighter
     private HighlightTarget? BuildTarget(
         PlannerPlan plan,
         int actionIndex,
-        ulong currentCharacterId)
+        ulong currentCharacterId,
+        IReadOnlyList<InventoryItemSnapshot> currentItems)
     {
         if (actionIndex < 0 ||
             actionIndex >= plan.Actions.Count)
@@ -218,7 +256,8 @@ public sealed unsafe class ExecutionInventoryHighlighter
             var location =
                 retainerDisplayLocator.LocateSource(
                     plan,
-                    actionIndex);
+                    actionIndex,
+                    currentItems);
 
             if (!location.IsAvailable)
                 return null;
@@ -248,7 +287,8 @@ public sealed unsafe class ExecutionInventoryHighlighter
             var location =
                 characterDisplayLocator.LocateSource(
                     plan,
-                    actionIndex);
+                    actionIndex,
+                    currentItems);
 
             if (!location.IsAvailable)
                 return null;
@@ -276,7 +316,8 @@ public sealed unsafe class ExecutionInventoryHighlighter
             var location =
                 freeCompanyDisplayLocator.LocateSource(
                     plan,
-                    actionIndex);
+                    actionIndex,
+                    currentItems);
 
             if (!location.IsAvailable)
                 return null;
@@ -295,6 +336,31 @@ public sealed unsafe class ExecutionInventoryHighlighter
         }
 
         return null;
+    }
+
+    private InventorySourceItemObservation? ObserveCurrentSource(
+        PlannerPlan plan,
+        int actionIndex)
+    {
+        if (actionIndex < 0 ||
+            actionIndex >= plan.Actions.Count)
+        {
+            return null;
+        }
+
+        var action =
+            plan.Actions[actionIndex];
+
+        if (action.Type != PlannerActionType.Move ||
+            action.Source is null)
+        {
+            return null;
+        }
+
+        return plugin.InventoryIndex.ObserveItem(
+            action.BaseItemId,
+            action.IsHq,
+            action.Source);
     }
 
     private static bool IsPotentialHighlightTarget(
@@ -868,8 +934,10 @@ public sealed unsafe class ExecutionInventoryHighlighter
         cachedActionIndex = -1;
         cachedCharacterId = 0;
         cachedTarget = null;
+        cachedSourceLayoutFingerprint = null;
         retryTargetWhileUnavailable = false;
         nextTargetRetryAtMs = 0;
+        nextLayoutCheckAtMs = 0;
     }
 
     private static int GetRetainerLargeTab(

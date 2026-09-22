@@ -174,13 +174,20 @@ public sealed class PlanExecutionCoordinator
                         baseline,
                         observation);
 
-                if (baseline.SourceQuantity ==
-                        observation.SourceQuantity &&
-                    baseline.SourceLayoutFingerprint !=
-                        observation.SourceLayoutFingerprint)
+                if (action.Source is not null &&
+                    (action.Source.Storage ==
+                         StorageType.CharacterInventory ||
+                     action.Source.Storage ==
+                         StorageType.Retainer) &&
+                    observation.SourceQuantity <
+                        baseline.SourceQuantity &&
+                    observation.LogicalSourceQuantity ==
+                        baseline.LogicalSourceQuantity &&
+                    observation.DestinationQuantity ==
+                        baseline.DestinationQuantity)
                 {
                     reconciliation =
-                        reconciler.ReconcileSourceLayoutChange(
+                        reconciler.ReconcileSourceContainerChange(
                             action);
 
                     return Snapshot(
@@ -302,6 +309,8 @@ public sealed class PlanExecutionCoordinator
         if (pendingMismatchObservation is null ||
             pendingMismatchObservation.SourceQuantity !=
                 observation.SourceQuantity ||
+            pendingMismatchObservation.LogicalSourceQuantity !=
+                observation.LogicalSourceQuantity ||
             pendingMismatchObservation.DestinationQuantity !=
                 observation.DestinationQuantity ||
             pendingMismatchObservation.SourceLayoutFingerprint !=
