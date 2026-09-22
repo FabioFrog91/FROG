@@ -4,42 +4,42 @@ using System.Linq;
 
 namespace FROG.Core.Inventory;
 
-public sealed class FreeCompanyObservationDiagnostics
+public static class FreeCompanyObservationDiagnostics
 {
     private const int MaxEntries = 500;
 
-    private readonly object sync = new();
-    private readonly Queue<string> entries = new();
+    private static readonly object Sync = new();
+    private static readonly Queue<string> Entries = new();
 
-    public void Add(string message)
+    public static void Add(string message)
     {
         var line =
             $"{DateTime.Now:HH:mm:ss.fff} | {message}";
 
-        lock (sync)
+        lock (Sync)
         {
-            entries.Enqueue(line);
+            Entries.Enqueue(line);
 
-            while (entries.Count > MaxEntries)
+            while (Entries.Count > MaxEntries)
             {
-                entries.Dequeue();
+                Entries.Dequeue();
             }
         }
     }
 
-    public IReadOnlyList<string> Snapshot()
+    public static IReadOnlyList<string> Snapshot()
     {
-        lock (sync)
+        lock (Sync)
         {
-            return entries.ToList();
+            return Entries.ToList();
         }
     }
 
-    public void Clear()
+    public static void Clear()
     {
-        lock (sync)
+        lock (Sync)
         {
-            entries.Clear();
+            Entries.Clear();
         }
     }
 }
