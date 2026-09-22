@@ -336,7 +336,7 @@ public sealed class Plugin : HostedPlugin
                 CharacterCatalog);
 
         MainWindow =
-            new MainWindow(
+            new MainWindowWithFcDebug(
                 this,
                 characterMonitor,
                 CharacterCatalog,
@@ -1227,7 +1227,7 @@ public sealed class Plugin : HostedPlugin
                 CharacterCatalogFilePath);
 
             Log.Information(
-                $"Catalogo personaggi salvato: {CharacterCatalogFilePath} ({CharacterCatalog.Entries.Count} identità)");
+                $"Catalogo personaggi salvato da disco: {CharacterCatalogFilePath} ({CharacterCatalog.Entries.Count} identità)");
         }
     }
 }
