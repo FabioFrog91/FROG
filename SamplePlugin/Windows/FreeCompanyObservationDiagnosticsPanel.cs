@@ -5,6 +5,7 @@ using System.Collections.Generic;
 
 namespace FROG.Windows;
 
+// Verification branch only.
 internal static class FreeCompanyObservationDiagnosticsPanel
 {
     public static void Draw()
