@@ -1,5 +1,6 @@
-using CriticalCommonLib.Services;
-using FFXIVClientStructs.FFXIV.Client.Game;
+using Dalamud.Game.Inventory;
+using Dalamud.Game.Inventory.InventoryEventArgTypes;
+using Dalamud.Plugin.Services;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -7,24 +8,25 @@ using System.Linq;
 namespace FROG.Core.Inventory;
 
 /// <summary>
-/// Bridges post-parse character bag changes from CCL into FROG's
-/// CharacterInventory observation stream. No polling: a sync is requested
-/// only when CCL reports a real change in Inventory1..4.
+/// Bridges completed Dalamud character-inventory changelogs into FROG's
+/// physical CharacterInventory snapshots. The notification and snapshot read
+/// come from the same IGameInventory provider; CCL remains responsible for
+/// retainer and Free Company observation paths.
 /// </summary>
 internal sealed class CharacterInventoryObservationObserver : IDisposable
 {
     private readonly Plugin plugin;
-    private readonly IInventoryScanner inventoryScanner;
+    private readonly IGameInventory gameInventory;
     private bool disposed;
 
     public CharacterInventoryObservationObserver(
         Plugin plugin,
-        IInventoryScanner inventoryScanner)
+        IGameInventory gameInventory)
     {
         this.plugin = plugin;
-        this.inventoryScanner = inventoryScanner;
+        this.gameInventory = gameInventory;
 
-        inventoryScanner.BagsChanged += OnBagsChanged;
+        gameInventory.InventoryChangedRaw += OnInventoryChangedRaw;
     }
 
     public void Dispose()
@@ -33,23 +35,44 @@ internal sealed class CharacterInventoryObservationObserver : IDisposable
             return;
 
         disposed = true;
-        inventoryScanner.BagsChanged -= OnBagsChanged;
+        gameInventory.InventoryChangedRaw -= OnInventoryChangedRaw;
     }
 
-    private void OnBagsChanged(
-        List<BagChange> changes)
+    private void OnInventoryChangedRaw(
+        IReadOnlyCollection<InventoryEventArgs> events)
     {
-        if (!changes.Any(change => IsCharacterInventory(change.InventoryType)))
+        if (disposed ||
+            events.Count == 0 ||
+            !events.Any(AffectsCharacterInventory))
+        {
             return;
+        }
 
         plugin.SyncPlayerInventory();
     }
 
+    private static bool AffectsCharacterInventory(
+        InventoryEventArgs inventoryEvent) =>
+        inventoryEvent switch
+        {
+            InventoryItemAddedArgs added =>
+                IsCharacterInventory(added.Inventory),
+
+            InventoryItemRemovedArgs removed =>
+                IsCharacterInventory(removed.Inventory),
+
+            InventoryItemChangedArgs changed =>
+                IsCharacterInventory(changed.Inventory),
+
+            _ => false
+        };
+
     private static bool IsCharacterInventory(
-        InventoryType inventoryType) =>
+        GameInventoryType inventoryType) =>
         inventoryType is
-            InventoryType.Inventory1 or
-            InventoryType.Inventory2 or
-            InventoryType.Inventory3 or
-            InventoryType.Inventory4;
+            GameInventoryType.Inventory1 or
+            GameInventoryType.Inventory2 or
+            GameInventoryType.Inventory3 or
+            GameInventoryType.Inventory4 or
+            GameInventoryType.Crystals;
 }
