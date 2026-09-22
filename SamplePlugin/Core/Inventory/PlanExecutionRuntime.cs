@@ -382,6 +382,7 @@ public sealed class PlanExecutionRuntime
             $"(varianza {varianceText}), " +
             $"delta source -{reconciliation.SourceDecrease}, " +
             $"delta destination +{reconciliation.DestinationIncrease}. " +
+            $"{reconciliation.Message} " +
             $"Piano residuo ricalcolato dallo stato reale.";
 
         TryStartPlanRefresh(

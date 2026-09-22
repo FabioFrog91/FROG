@@ -14,14 +14,16 @@ public sealed record PlanExecutionObservation(
     int SourceQuantity,
     int DestinationQuantity,
     DateTime? SourceObservedAtUtc,
-    DateTime? DestinationObservedAtUtc);
+    DateTime? DestinationObservedAtUtc,
+    ulong SourceLayoutFingerprint);
 
 public sealed record PlanExecutionBaseline(
     int ActionIndex,
     int SourceQuantity,
     int DestinationQuantity,
     DateTime? SourceObservedAtUtc,
-    DateTime? DestinationObservedAtUtc);
+    DateTime? DestinationObservedAtUtc,
+    ulong SourceLayoutFingerprint);
 
 public sealed record PlanExecutionVerificationResult(
     PlanExecutionVerificationStatus Status,
@@ -44,7 +46,8 @@ public sealed class PlanExecutionVerifier
             observation.SourceQuantity,
             observation.DestinationQuantity,
             observation.SourceObservedAtUtc,
-            observation.DestinationObservedAtUtc);
+            observation.DestinationObservedAtUtc,
+            observation.SourceLayoutFingerprint);
     }
 
     public PlanExecutionObservation Observe(
@@ -59,22 +62,26 @@ public sealed class PlanExecutionVerifier
                 0,
                 0,
                 null,
-                null);
+                null,
+                0);
         }
 
-        return new PlanExecutionObservation(
-            inventoryIndex.GetQuantity(
+        var sourceObservation =
+            inventoryIndex.ObserveItem(
                 action.BaseItemId,
                 action.IsHq,
-                action.Source),
+                action.Source);
+
+        return new PlanExecutionObservation(
+            sourceObservation.Quantity,
             GetDestinationQuantity(
                 inventoryIndex,
                 action),
-            inventoryIndex.GetSourceObservedAtUtc(
-                action.Source),
+            sourceObservation.ObservedAtUtc,
             GetDestinationObservedAtUtc(
                 inventoryIndex,
-                action));
+                action),
+            sourceObservation.LayoutFingerprint);
     }
 
     public PlanExecutionVerificationResult Verify(

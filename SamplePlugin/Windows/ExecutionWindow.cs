@@ -112,7 +112,7 @@ public sealed class ExecutionWindow : Window, IDisposable
         if (runtime.IsReplanning)
         {
             ImGui.TextWrapped(
-                "FROG ha rilevato una quantità diversa dal piano. Ricalcolo automatico del percorso residuo in corso...");
+                "FROG ha rilevato una variazione rispetto al piano. Ricalcolo automatico del percorso residuo in corso...");
 
             DrawReconciliation(
                 runtime.Reconciliation);
@@ -298,6 +298,9 @@ public sealed class ExecutionWindow : Window, IDisposable
             $"Osservato: source -{reconciliation.SourceDecrease}, " +
             $"destination +{reconciliation.DestinationIncrease}. " +
             $"Confermato {reconciliation.ReconciledQuantity}/{reconciliation.PlannedQuantity}.");
+
+        ImGui.TextWrapped(
+            reconciliation.Message);
     }
 
     private static void DrawCompletion(

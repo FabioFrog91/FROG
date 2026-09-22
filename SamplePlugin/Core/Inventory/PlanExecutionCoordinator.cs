@@ -174,6 +174,19 @@ public sealed class PlanExecutionCoordinator
                         baseline,
                         observation);
 
+                if (baseline.SourceQuantity ==
+                        observation.SourceQuantity &&
+                    baseline.SourceLayoutFingerprint !=
+                        observation.SourceLayoutFingerprint)
+                {
+                    reconciliation =
+                        reconciler.ReconcileSourceLayoutChange(
+                            action);
+
+                    return Snapshot(
+                        PlanExecutionCoordinatorStatus.ReplanRequired);
+                }
+
                 if (reconciliation.SourceDecrease <= 0 &&
                     reconciliation.DestinationIncrease <= 0)
                 {
@@ -290,7 +303,9 @@ public sealed class PlanExecutionCoordinator
             pendingMismatchObservation.SourceQuantity !=
                 observation.SourceQuantity ||
             pendingMismatchObservation.DestinationQuantity !=
-                observation.DestinationQuantity)
+                observation.DestinationQuantity ||
+            pendingMismatchObservation.SourceLayoutFingerprint !=
+                observation.SourceLayoutFingerprint)
         {
             pendingMismatchObservation = observation;
             pendingMismatchSinceMs = nowMs;

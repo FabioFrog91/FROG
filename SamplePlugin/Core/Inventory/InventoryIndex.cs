@@ -390,6 +390,81 @@ public sealed class InventoryIndex
         }
     }
 
+    public InventorySourceItemObservation ObserveItem(
+        uint baseItemId,
+        bool isHq,
+        InventorySource source)
+    {
+        lock (syncLock)
+        {
+            var quantity = 0;
+            var matchingStacks = 0;
+            ulong layoutFingerprint = 0;
+
+            foreach (var item in items)
+            {
+                if (item.BaseItemId != baseItemId ||
+                    item.IsHq != isHq ||
+                    item.Storage != source.Storage ||
+                    item.OwnerId != source.OwnerId ||
+                    item.Container != source.Container)
+                {
+                    continue;
+                }
+
+                quantity += item.Quantity;
+                matchingStacks++;
+
+                layoutFingerprint ^=
+                    GetStackLayoutFingerprint(
+                        item);
+            }
+
+            layoutFingerprint ^=
+                unchecked(
+                    (ulong)matchingStacks *
+                    1099511628211UL);
+
+            var observedAtUtc =
+                sourceObservedAtUtc.TryGetValue(
+                    (source.Storage, source.OwnerId, source.Container),
+                    out var observed)
+                    ? observed
+                    : null;
+
+            return new InventorySourceItemObservation(
+                quantity,
+                observedAtUtc,
+                layoutFingerprint);
+        }
+    }
+
+    private static ulong GetStackLayoutFingerprint(
+        InventoryItemSnapshot item)
+    {
+        const ulong offsetBasis =
+            14695981039346656037UL;
+
+        const ulong prime =
+            1099511628211UL;
+
+        var fingerprint = offsetBasis;
+
+        fingerprint =
+            (fingerprint ^ item.RawItemId) * prime;
+
+        fingerprint =
+            (fingerprint ^ unchecked((uint)item.Quantity)) * prime;
+
+        fingerprint =
+            (fingerprint ^ item.Container) * prime;
+
+        fingerprint =
+            (fingerprint ^ unchecked((uint)item.Slot)) * prime;
+
+        return fingerprint;
+    }
+
     public IEnumerable<InventoryItemSnapshot> Find(uint baseItemId)
     {
         lock (syncLock)
@@ -553,3 +628,8 @@ public sealed record InventoryIndexAuditEntry(
     string Operation,
     IReadOnlyList<InventoryIndexFreeCompanyPageAudit> BeforeFreeCompanyPages,
     IReadOnlyList<InventoryIndexFreeCompanyPageAudit> FreeCompanyPages);
+
+public readonly record struct InventorySourceItemObservation(
+    int Quantity,
+    DateTime? ObservedAtUtc,
+    ulong LayoutFingerprint);
