@@ -41,7 +41,7 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
     private PlannerPlan? cachedPlan;
     private int cachedActionIndex = -1;
     private ulong cachedCharacterId;
-    private DateTime? cachedSourceObservedAtUtc;
+    private long cachedSourceContentRevision;
     private HighlightTarget? cachedTarget;
     private bool targetRefreshRequested;
     private bool retryTargetWhileUnavailable;
@@ -108,18 +108,18 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
             cachedActionIndex != actionIndex ||
             cachedCharacterId != currentCharacterId;
 
-        var sourceObservedAtUtc =
-            GetSourceObservedAtUtc(
+        var sourceContentRevision =
+            GetSourceContentRevision(
                 runtime.CurrentAction);
 
-        var sourceObservationChanged =
+        var sourceContentChanged =
             !targetContextChanged &&
-            sourceObservedAtUtc != cachedSourceObservedAtUtc;
+            sourceContentRevision != cachedSourceContentRevision;
 
         var targetNeedsRefresh =
             targetContextChanged ||
             targetRefreshRequested ||
-            sourceObservationChanged;
+            sourceContentChanged;
 
         if (targetNeedsRefresh)
         {
@@ -142,7 +142,7 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
             cachedPlan = runtime.Session.Plan;
             cachedActionIndex = actionIndex;
             cachedCharacterId = currentCharacterId;
-            cachedSourceObservedAtUtc = sourceObservedAtUtc;
+            cachedSourceContentRevision = sourceContentRevision;
             cachedTarget = refreshedTarget;
             targetRefreshRequested = false;
 
@@ -243,16 +243,16 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
         targetRefreshRequested = true;
     }
 
-    private DateTime? GetSourceObservedAtUtc(
+    private long GetSourceContentRevision(
         PlannerAction action)
     {
         if (action.Type != PlannerActionType.Move ||
             action.Source is null)
         {
-            return null;
+            return 0;
         }
 
-        return plugin.InventoryIndex.GetSourceObservedAtUtc(
+        return plugin.InventoryIndex.GetSourceContentRevision(
             action.Source);
     }
 
@@ -976,7 +976,7 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
         cachedPlan = null;
         cachedActionIndex = -1;
         cachedCharacterId = 0;
-        cachedSourceObservedAtUtc = null;
+        cachedSourceContentRevision = 0;
         cachedTarget = null;
         targetRefreshRequested = false;
         retryTargetWhileUnavailable = false;
