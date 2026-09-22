@@ -173,6 +173,26 @@ public sealed class InventoryIndex
 
         lock (syncLock)
         {
+            var existingSnapshots = items
+                .Where(x =>
+                    x.Storage == source.Storage &&
+                    x.OwnerId == source.OwnerId &&
+                    x.Container == source.Container)
+                .ToList();
+
+            var contentChanged =
+                !HaveSameContents(existingSnapshots, newSnapshots);
+
+            var key =
+                (source.Storage, source.OwnerId, source.Container);
+
+            sourceObservedAtUtc[key] = observedAtUtc ?? DateTime.UtcNow;
+            sourceObservationRevision[key] = ++nextObservationRevision;
+            sourceProviderRevision.Remove(key);
+
+            if (!contentChanged)
+                return true;
+
             var beforeFreeCompanyPages =
                 BuildFreeCompanyPageAudit();
 
@@ -183,14 +203,7 @@ public sealed class InventoryIndex
 
             items.AddRange(newSnapshots);
 
-            var key =
-                (source.Storage, source.OwnerId, source.Container);
-
-            sourceObservedAtUtc[key] = observedAtUtc ?? DateTime.UtcNow;
-            sourceObservationRevision[key] = ++nextObservationRevision;
             sourceContentRevision[key] = ++nextContentRevision;
-            sourceProviderRevision.Remove(key);
-
             isDirty = true;
 
             AddAuditEntry(
@@ -214,28 +227,33 @@ public sealed class InventoryIndex
 
         lock (syncLock)
         {
-            var observedContainers =
-                items
-                    .Where(item =>
-                        item.Storage == StorageType.CharacterInventory &&
-                        item.OwnerId == characterId)
-                    .Select(item => item.Container)
-                    .Union(newSnapshots.Select(item => item.Container))
-                    .Distinct()
-                    .ToArray();
+            var existingSnapshots = items
+                .Where(item =>
+                    item.Storage == StorageType.CharacterInventory &&
+                    item.OwnerId == characterId)
+                .ToList();
 
-            items.RemoveAll(x =>
-                x.Storage == StorageType.CharacterInventory &&
-                x.OwnerId == characterId);
+            var observedContainers = existingSnapshots
+                .Select(item => item.Container)
+                .Union(newSnapshots.Select(item => item.Container))
+                .Distinct()
+                .ToArray();
 
-            items.AddRange(newSnapshots);
+            var changedContainers = observedContainers
+                .Where(container =>
+                    !HaveSameContents(
+                        existingSnapshots
+                            .Where(item => item.Container == container)
+                            .ToList(),
+                        newSnapshots
+                            .Where(item => item.Container == container)
+                            .ToList()))
+                .ToHashSet();
 
             var characterObservedAtUtc =
                 observedAtUtc ?? DateTime.UtcNow;
             var observationRevision =
                 ++nextObservationRevision;
-            var contentRevision =
-                ++nextContentRevision;
 
             foreach (var container in observedContainers)
             {
@@ -244,8 +262,26 @@ public sealed class InventoryIndex
 
                 sourceObservedAtUtc[key] = characterObservedAtUtc;
                 sourceObservationRevision[key] = observationRevision;
-                sourceContentRevision[key] = contentRevision;
                 sourceProviderRevision.Remove(key);
+            }
+
+            if (changedContainers.Count == 0)
+                return true;
+
+            items.RemoveAll(x =>
+                x.Storage == StorageType.CharacterInventory &&
+                x.OwnerId == characterId);
+
+            items.AddRange(newSnapshots);
+
+            var contentRevision =
+                ++nextContentRevision;
+
+            foreach (var container in changedContainers)
+            {
+                sourceContentRevision[
+                    (StorageType.CharacterInventory, characterId, container)] =
+                    contentRevision;
             }
 
             isDirty = true;

@@ -128,6 +128,7 @@ public sealed class PlanExecutionRuntime
 
     public void Clear()
     {
+        globalPlannerCoordinator.ClearResult();
         executionCoordinator.Clear();
         requirementSet = null;
         optimizationSettings = null;

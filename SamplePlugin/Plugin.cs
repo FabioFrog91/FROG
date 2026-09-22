@@ -885,7 +885,6 @@ internal sealed class FrogInventoryStartup : IHostedService
         List<InventoryChange> inventoryChanges,
         InventoryMonitor.ItemChanges? itemChanges)
     {
-        plugin.SyncPlayerInventory();
         plugin.SyncStorageSources(storageReader);
     }
 }
