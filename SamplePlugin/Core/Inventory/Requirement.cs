@@ -13,5 +13,6 @@ public sealed record Requirement(
     uint BaseItemId,
     int Quantity,
     RequirementQualityPolicy QualityPolicy,
-    bool IsPrecraft
+    bool IsPrecraft,
+    bool IsUntradable = false
 );

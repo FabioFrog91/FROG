@@ -132,7 +132,9 @@ internal sealed class GlobalAllocationPlanner
             var missing =
                 CalculateMissing(
                     requirements,
-                    initialState);
+                    initialState,
+                    initialState,
+                    resolutionPolicy);
 
             return new PlannerPlan(
                 initialState,
@@ -287,6 +289,8 @@ internal sealed class GlobalAllocationPlanner
             relevantItems
                 .Where(item =>
                     item.Storage == StorageType.FreeCompanyChest)
+                .Where(_ =>
+                    !requirement.IsUntradable)
                 .ToList();
 
         var externalItems =
@@ -296,9 +300,18 @@ internal sealed class GlobalAllocationPlanner
                       item.OwnerId == state.MainCharacterId) &&
                     item.Storage != StorageType.FreeCompanyChest)
                 .Where(item =>
-                    FindPolicySource(
-                        resolutionPolicy,
-                        item) is not null)
+                {
+                    var source =
+                        FindPolicySource(
+                            resolutionPolicy,
+                            item);
+
+                    return source is not null &&
+                           RequirementSourceEligibility.CanUse(
+                               requirement,
+                               source,
+                               state.MainCharacterId);
+                })
                 .ToList();
 
         var mainHq =
@@ -338,10 +351,12 @@ internal sealed class GlobalAllocationPlanner
                 mainNq + fcNq + externalNq);
 
         var missing =
-            Math.Max(
-                0,
-                requirement.Quantity -
-                desired.Total);
+            requirement.IsUntradable
+                ? 0
+                : Math.Max(
+                    0,
+                    requirement.Quantity -
+                    desired.Total);
 
         var reservedFreeCompany =
             new List<AllocationPick>();
@@ -1252,7 +1267,9 @@ internal sealed class GlobalAllocationPlanner
         var missing =
             CalculateMissing(
                 requirements,
-                state);
+                initialState,
+                state,
+                resolutionPolicy);
 
         // Availability-derived missing is a lower bound. Destination capacity
         // can legitimately increase it when only part of a requested route
@@ -1681,14 +1698,71 @@ internal sealed class GlobalAllocationPlanner
 
     private static int CalculateMissing(
         RequirementSet requirements,
-        PlannerState state) =>
+        PlannerState initialState,
+        PlannerState state,
+        ResolutionPolicy resolutionPolicy) =>
         requirements.Requirements.Sum(requirement =>
-            Math.Max(
-                0,
-                requirement.Quantity -
-                GetSatisfiedMainQuantity(
+        {
+            var requiredQuantity =
+                GetEffectiveRequiredQuantity(
                     requirement,
-                    state)));
+                    initialState,
+                    resolutionPolicy);
+
+            if (requiredQuantity <= 0)
+                return 0;
+
+            var effectiveRequirement =
+                requirement with
+                {
+                    Quantity = requiredQuantity
+                };
+
+            return Math.Max(
+                0,
+                requiredQuantity -
+                GetSatisfiedMainQuantity(
+                    effectiveRequirement,
+                    state));
+        });
+
+    private static int GetEffectiveRequiredQuantity(
+        Requirement requirement,
+        PlannerState initialState,
+        ResolutionPolicy resolutionPolicy)
+    {
+        if (!requirement.IsUntradable)
+            return requirement.Quantity;
+
+        var eligibleItems =
+            initialState.Items
+                .Where(item =>
+                    item.BaseItemId == requirement.BaseItemId)
+                .Where(item =>
+                {
+                    var source =
+                        FindPolicySource(
+                            resolutionPolicy,
+                            item);
+
+                    return source is not null &&
+                           RequirementSourceEligibility.CanUse(
+                               requirement,
+                               source,
+                               initialState.MainCharacterId);
+                })
+                .ToList();
+
+        return CalculateDesiredQuality(
+                requirement,
+                SumQuality(
+                    eligibleItems,
+                    true),
+                SumQuality(
+                    eligibleItems,
+                    false))
+            .Total;
+    }
 
     private static int GetSatisfiedMainQuantity(
         Requirement requirement,

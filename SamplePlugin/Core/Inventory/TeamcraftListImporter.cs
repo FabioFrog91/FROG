@@ -94,7 +94,8 @@ public sealed class TeamcraftListImporter
 
             if (!TryResolveItemId(
                     itemName,
-                    out var itemId))
+                    out var itemId,
+                    out var isUntradable))
             {
                 continue;
             }
@@ -106,7 +107,8 @@ public sealed class TeamcraftListImporter
                     inPrecraftSection
                         ? RequirementQualityPolicy.HqFirst
                         : RequirementQualityPolicy.Any,
-                    inPrecraftSection));
+                    inPrecraftSection,
+                    isUntradable));
         }
 
         return requirements;
@@ -174,7 +176,8 @@ public sealed class TeamcraftListImporter
 
     private bool TryResolveItemId(
         string itemName,
-        out uint itemId)
+        out uint itemId,
+        out bool isUntradable)
     {
         foreach (var language in LanguageOrder())
         {
@@ -193,12 +196,14 @@ public sealed class TeamcraftListImporter
                         StringComparison.OrdinalIgnoreCase))
                 {
                     itemId = item.RowId;
+                    isUntradable = item.IsUntradable;
                     return true;
                 }
             }
         }
 
         itemId = 0;
+        isUntradable = false;
         return false;
     }
 

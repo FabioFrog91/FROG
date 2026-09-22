@@ -26,6 +26,11 @@ public sealed class RequirementResolver
                 policy.Source == source &&
                 policy.Read &&
                 policy.Use))
+            .Where(source =>
+                RequirementSourceEligibility.CanUse(
+                    requirement,
+                    source,
+                    resolutionPolicy.MainCharacterId))
             .ToList();
 
         var allocations = requirement.QualityPolicy switch
@@ -68,7 +73,9 @@ public sealed class RequirementResolver
         };
 
         var available = allocations.Sum(x => x.Quantity);
-        var missing = requirement.Quantity - available;
+        var missing = requirement.IsUntradable
+            ? 0
+            : requirement.Quantity - available;
 
         return new RequirementResolution(
             requirement,

@@ -8,11 +8,14 @@ public sealed class ResolutionPolicy
     private readonly List<InventorySource> sources = new();
 
     public IReadOnlyList<InventorySource> Sources => sources;
+    public ulong MainCharacterId { get; }
 
     public ResolutionPolicy(
         IEnumerable<InventorySource> sources,
         ulong mainCharacterId)
     {
+        MainCharacterId = mainCharacterId;
+
         foreach (var source in sources
                      .OrderBy(source =>
                          GetPriority(
