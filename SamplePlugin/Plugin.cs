@@ -77,6 +77,7 @@ public sealed class Plugin : HostedPlugin
     private uint? observedFreeCompanyContainer;
     private long observedFreeCompanyContainerSinceMs;
     private long freeCompanyObservationGeneration;
+    private long lastLoggedFreeCompanyStableGeneration = -1;
     private readonly Dictionary<(ulong OwnerId, uint Container), PendingFreeCompanyObservation>
         pendingFreeCompanyObservations = new();
 
@@ -777,7 +778,8 @@ public sealed class Plugin : HostedPlugin
         if (!TryGetObservedFreeCompanyPage(
                 out var observedContainer))
         {
-            InvalidateFreeCompanyObservation();
+            InvalidateFreeCompanyObservation(
+                "selected-page-unavailable");
             return;
         }
 
@@ -797,19 +799,30 @@ public sealed class Plugin : HostedPlugin
                 out var freeCompanySource,
                 out var freeCompanySnapshots))
         {
-            InvalidateFreeCompanyObservation();
+            FreeCompanyObservationDiagnostics.Add(
+                $"READ_FAIL page={FormatFreeCompanyContainer(observedContainer)} gen={observationGeneration}");
+
+            InvalidateFreeCompanyObservation(
+                "read-failed");
             return;
         }
 
         if (!TryGetObservedFreeCompanyPage(
                 out var confirmedContainer))
         {
-            InvalidateFreeCompanyObservation();
+            FreeCompanyObservationDiagnostics.Add(
+                $"DISCARD page={FormatFreeCompanyContainer(observedContainer)} gen={observationGeneration} reason=selected-page-lost-after-read");
+
+            InvalidateFreeCompanyObservation(
+                "selected-page-lost-after-read");
             return;
         }
 
         if (confirmedContainer != observedContainer)
         {
+            FreeCompanyObservationDiagnostics.Add(
+                $"DISCARD page={FormatFreeCompanyContainer(observedContainer)} gen={observationGeneration} reason=page-changed-during-read next={FormatFreeCompanyContainer(confirmedContainer)}");
+
             TrackFreeCompanyObservation(
                 confirmedContainer);
 
@@ -819,6 +832,9 @@ public sealed class Plugin : HostedPlugin
         if (observedFreeCompanyContainer != observedContainer ||
             freeCompanyObservationGeneration != observationGeneration)
         {
+            FreeCompanyObservationDiagnostics.Add(
+                $"DISCARD page={FormatFreeCompanyContainer(observedContainer)} gen={observationGeneration} reason=generation-changed currentGen={freeCompanyObservationGeneration}");
+
             return;
         }
 
@@ -839,6 +855,9 @@ public sealed class Plugin : HostedPlugin
             return;
         }
 
+        FreeCompanyObservationDiagnostics.Add(
+            $"PROMOTE page={FormatFreeCompanyContainer(freeCompanySource.Container)} gen={observationGeneration} owner={freeCompanySource.OwnerId} items={freeCompanySnapshots.Count} qty={freeCompanySnapshots.Sum(x => x.Quantity)}");
+
         InventoryIndex.ReplaceSource(
             freeCompanySource,
             freeCompanySnapshots,
@@ -855,9 +874,25 @@ public sealed class Plugin : HostedPlugin
         generation =
             freeCompanyObservationGeneration;
 
-        return Environment.TickCount64 -
-               observedFreeCompanyContainerSinceMs >=
-               FreeCompanyObservationStabilityMilliseconds;
+        var stableMilliseconds =
+            Environment.TickCount64 -
+            observedFreeCompanyContainerSinceMs;
+
+        var isStable =
+            stableMilliseconds >=
+            FreeCompanyObservationStabilityMilliseconds;
+
+        if (isStable &&
+            lastLoggedFreeCompanyStableGeneration != generation)
+        {
+            lastLoggedFreeCompanyStableGeneration =
+                generation;
+
+            FreeCompanyObservationDiagnostics.Add(
+                $"STABLE page={FormatFreeCompanyContainer(container)} gen={generation} stableMs={stableMilliseconds}");
+        }
+
+        return isStable;
     }
 
     private void TrackFreeCompanyObservation(
@@ -866,14 +901,22 @@ public sealed class Plugin : HostedPlugin
         if (observedFreeCompanyContainer == container)
             return;
 
+        var previousContainer =
+            observedFreeCompanyContainer;
+
         observedFreeCompanyContainer = container;
         observedFreeCompanyContainerSinceMs =
             Environment.TickCount64;
         freeCompanyObservationGeneration++;
+        lastLoggedFreeCompanyStableGeneration = -1;
         pendingFreeCompanyObservations.Clear();
+
+        FreeCompanyObservationDiagnostics.Add(
+            $"PAGE previous={FormatFreeCompanyContainer(previousContainer)} current={FormatFreeCompanyContainer(container)} gen={freeCompanyObservationGeneration}");
     }
 
-    private void InvalidateFreeCompanyObservation()
+    private void InvalidateFreeCompanyObservation(
+        string reason)
     {
         if (!observedFreeCompanyContainer.HasValue &&
             pendingFreeCompanyObservations.Count == 0)
@@ -881,18 +924,30 @@ public sealed class Plugin : HostedPlugin
             return;
         }
 
+        var previousContainer =
+            observedFreeCompanyContainer;
+
         observedFreeCompanyContainer = null;
         observedFreeCompanyContainerSinceMs = 0;
         freeCompanyObservationGeneration++;
+        lastLoggedFreeCompanyStableGeneration = -1;
         pendingFreeCompanyObservations.Clear();
+
+        FreeCompanyObservationDiagnostics.Add(
+            $"INVALIDATE reason={reason} previous={FormatFreeCompanyContainer(previousContainer)} newGen={freeCompanyObservationGeneration}");
     }
 
-    private void ResetFreeCompanyObservation()
+    private void ResetFreeCompanyObservation(
+        string reason)
     {
         observedFreeCompanyContainer = null;
         observedFreeCompanyContainerSinceMs = 0;
         freeCompanyObservationGeneration++;
+        lastLoggedFreeCompanyStableGeneration = -1;
         pendingFreeCompanyObservations.Clear();
+
+        FreeCompanyObservationDiagnostics.Add(
+            $"RESET reason={reason} gen={freeCompanyObservationGeneration}");
     }
 
     private bool ShouldPromoteFreeCompanyObservation(
@@ -936,6 +991,9 @@ public sealed class Plugin : HostedPlugin
                     1,
                     observationGeneration);
 
+            FreeCompanyObservationDiagnostics.Add(
+                $"CANDIDATE page={FormatFreeCompanyContainer(source.Container)} gen={observationGeneration} owner={source.OwnerId} count=1 items={observedSnapshots.Count} qty={observedSnapshots.Sum(x => x.Quantity)} fp={BuildFreeCompanyDiagnosticFingerprintId(fingerprint)}");
+
             return false;
         }
 
@@ -972,6 +1030,38 @@ public sealed class Plugin : HostedPlugin
                     item.IsHq)
                 .Select(item =>
                     $"{item.Container}:{item.Slot}:{item.BaseItemId}:{item.IsHq}:{item.Quantity}"));
+
+    private static string BuildFreeCompanyDiagnosticFingerprintId(
+        string fingerprint)
+    {
+        unchecked
+        {
+            uint hash = 2166136261;
+
+            foreach (var character in fingerprint)
+            {
+                hash ^= character;
+                hash *= 16777619;
+            }
+
+            return hash.ToString("X8");
+        }
+    }
+
+    private static string FormatFreeCompanyContainer(
+        uint? container)
+    {
+        return container switch
+        {
+            (uint)InventoryType.FreeCompanyPage1 => "P1",
+            (uint)InventoryType.FreeCompanyPage2 => "P2",
+            (uint)InventoryType.FreeCompanyPage3 => "P3",
+            (uint)InventoryType.FreeCompanyPage4 => "P4",
+            (uint)InventoryType.FreeCompanyPage5 => "P5",
+            null => "none",
+            _ => container.Value.ToString()
+        };
+    }
 
     private static unsafe bool TryGetObservedFreeCompanyPage(
         out uint container)
@@ -1097,7 +1187,11 @@ public sealed class Plugin : HostedPlugin
         AddonArgs args)
     {
         isFreeCompanyChestOpen = true;
-        ResetFreeCompanyObservation();
+        ResetFreeCompanyObservation(
+            "chest-open");
+
+        FreeCompanyObservationDiagnostics.Add(
+            "CHEST OPEN");
 
         SaveInventoryIndex();
     }
@@ -1106,8 +1200,12 @@ public sealed class Plugin : HostedPlugin
         AddonEvent type,
         AddonArgs args)
     {
+        FreeCompanyObservationDiagnostics.Add(
+            "CHEST CLOSE");
+
         isFreeCompanyChestOpen = false;
-        ResetFreeCompanyObservation();
+        ResetFreeCompanyObservation(
+            "chest-close");
 
         SaveInventoryIndex();
     }
