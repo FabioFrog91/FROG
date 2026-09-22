@@ -36,6 +36,11 @@ public static class CclInventoryBootstrap
         builder.RegisterSingletonSelfAndInterfaces<InventoryScanner>();
         builder.RegisterSingletonSelfAndInterfaces<InventoryMonitor>();
 
+        builder.RegisterType<FreeCompanyObservationProbe>()
+            .AsSelf()
+            .SingleInstance()
+            .AutoActivate();
+
         builder.RegisterType<RetainerDisplayLocator>()
             .AsSelf()
             .SingleInstance();
