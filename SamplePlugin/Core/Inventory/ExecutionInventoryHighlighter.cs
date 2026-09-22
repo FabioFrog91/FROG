@@ -40,7 +40,6 @@ public sealed unsafe class ExecutionInventoryHighlighter
     private int cachedActionIndex = -1;
     private ulong cachedCharacterId;
     private HighlightTarget? cachedTarget;
-    private ulong? cachedSourceLayoutFingerprint;
     private bool retryTargetWhileUnavailable;
     private long nextTargetRetryAtMs;
     private long nextLayoutCheckAtMs;
@@ -101,45 +100,38 @@ public sealed unsafe class ExecutionInventoryHighlighter
             cachedActionIndex != actionIndex ||
             cachedCharacterId != currentCharacterId;
 
-        var sourceLayoutChanged = false;
-        InventorySourceItemObservation? sourceObservation = null;
+        HighlightTarget? refreshedTarget = null;
+        var targetPositionChanged = false;
 
         if (targetContextChanged ||
             nowMs >= nextLayoutCheckAtMs)
         {
-            sourceObservation =
-                ObserveCurrentSource(
+            refreshedTarget =
+                BuildTarget(
                     runtime.Session.Plan,
-                    actionIndex);
+                    actionIndex,
+                    currentCharacterId,
+                    plugin.InventoryIndex.Items);
 
-            sourceLayoutChanged =
+            targetPositionChanged =
                 !targetContextChanged &&
-                cachedSourceLayoutFingerprint !=
-                    sourceObservation?.LayoutFingerprint;
+                refreshedTarget is not null &&
+                !IsSameTarget(
+                    cachedTarget,
+                    refreshedTarget);
 
             nextLayoutCheckAtMs =
                 nowMs + TargetRetryIntervalMs;
         }
 
         if (targetContextChanged ||
-            sourceLayoutChanged)
+            targetPositionChanged)
         {
             Clear();
             cachedPlan = runtime.Session.Plan;
             cachedActionIndex = actionIndex;
             cachedCharacterId = currentCharacterId;
-            cachedSourceLayoutFingerprint =
-                sourceObservation?.LayoutFingerprint;
-
-            var currentItems =
-                plugin.InventoryIndex.Items;
-
-            cachedTarget =
-                BuildTarget(
-                    runtime.Session.Plan,
-                    actionIndex,
-                    currentCharacterId,
-                    currentItems);
+            cachedTarget = refreshedTarget;
 
             retryTargetWhileUnavailable =
                 cachedTarget is null &&
@@ -338,29 +330,39 @@ public sealed unsafe class ExecutionInventoryHighlighter
         return null;
     }
 
-    private InventorySourceItemObservation? ObserveCurrentSource(
-        PlannerPlan plan,
-        int actionIndex)
+    private static bool IsSameTarget(
+        HighlightTarget? left,
+        HighlightTarget? right)
     {
-        if (actionIndex < 0 ||
-            actionIndex >= plan.Actions.Count)
+        if (ReferenceEquals(
+                left,
+                right))
         {
-            return null;
+            return true;
         }
 
-        var action =
-            plan.Actions[actionIndex];
-
-        if (action.Type != PlannerActionType.Move ||
-            action.Source is null)
+        if (left is null ||
+            right is null ||
+            left.Storage != right.Storage ||
+            left.SourceOwnerId != right.SourceOwnerId ||
+            left.OwnerCharacterId != right.OwnerCharacterId ||
+            left.Positions.Count != right.Positions.Count)
         {
-            return null;
+            return false;
         }
 
-        return plugin.InventoryIndex.ObserveItem(
-            action.BaseItemId,
-            action.IsHq,
-            action.Source);
+        for (var index = 0;
+             index < left.Positions.Count;
+             index++)
+        {
+            if (left.Positions[index] !=
+                right.Positions[index])
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static bool IsPotentialHighlightTarget(
@@ -934,7 +936,6 @@ public sealed unsafe class ExecutionInventoryHighlighter
         cachedActionIndex = -1;
         cachedCharacterId = 0;
         cachedTarget = null;
-        cachedSourceLayoutFingerprint = null;
         retryTargetWhileUnavailable = false;
         nextTargetRetryAtMs = 0;
         nextLayoutCheckAtMs = 0;
