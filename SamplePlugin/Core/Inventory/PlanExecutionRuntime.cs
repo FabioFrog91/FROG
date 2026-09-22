@@ -128,7 +128,6 @@ public sealed class PlanExecutionRuntime
 
     public void Clear()
     {
-        globalPlannerCoordinator.ClearResult();
         executionCoordinator.Clear();
         requirementSet = null;
         optimizationSettings = null;
@@ -238,8 +237,11 @@ public sealed class PlanExecutionRuntime
             return;
         }
 
-        if (!completion.AutoStartExecution)
+        if (!completion.AutoStartExecution ||
+            !isReplanning)
+        {
             return;
+        }
 
         isReplanning = false;
 
