@@ -33,6 +33,32 @@ public sealed class PlanExecutionPlanGuard
         ulong currentCharacterId,
         IReadOnlyList<InventoryItemSnapshot> currentItems)
     {
+        if (firstActionIndex < 0)
+            firstActionIndex = 0;
+
+        var pendingActionIndices =
+            Enumerable
+                .Range(
+                    firstActionIndex,
+                    Math.Max(
+                        0,
+                        plan.Actions.Count -
+                        firstActionIndex))
+                .ToArray();
+
+        return ValidateRemaining(
+            plan,
+            pendingActionIndices,
+            currentCharacterId,
+            currentItems);
+    }
+
+    public PlanExecutionPlanValidityResult ValidateRemaining(
+        PlannerPlan plan,
+        IReadOnlyCollection<int> pendingActionIndices,
+        ulong currentCharacterId,
+        IReadOnlyList<InventoryItemSnapshot> currentItems)
+    {
         if (currentCharacterId == 0)
         {
             return new PlanExecutionPlanValidityResult(
@@ -40,15 +66,23 @@ public sealed class PlanExecutionPlanGuard
                 "Personaggio corrente non disponibile.");
         }
 
-        if (firstActionIndex < 0)
-            firstActionIndex = 0;
+        var orderedIndices =
+            pendingActionIndices
+                .Where(index =>
+                    index >= 0 &&
+                    index < plan.Actions.Count)
+                .Distinct()
+                .OrderBy(index =>
+                    index)
+                .ToArray();
 
-        if (firstActionIndex >= plan.Actions.Count)
+        if (orderedIndices.Length == 0)
             return PlanExecutionPlanValidityResult.Valid;
 
         var relevantItemIds =
-            plan.Actions
-                .Skip(firstActionIndex)
+            orderedIndices
+                .Select(index =>
+                    plan.Actions[index])
                 .Where(action =>
                     action.Type == PlannerActionType.Move)
                 .Select(action =>
@@ -70,9 +104,7 @@ public sealed class PlanExecutionPlanGuard
                 plan.InitialState.Capacity.Rebase(
                     currentItems));
 
-        for (var index = firstActionIndex;
-             index < plan.Actions.Count;
-             index++)
+        foreach (var index in orderedIndices)
         {
             var action =
                 plan.Actions[index];
