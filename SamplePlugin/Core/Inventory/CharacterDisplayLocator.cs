@@ -44,7 +44,8 @@ public sealed class CharacterDisplayLocator
     public CharacterDisplayLocation LocateSource(
         PlannerPlan plan,
         int actionIndex,
-        IReadOnlyList<InventoryItemSnapshot>? currentItems = null)
+        IReadOnlyList<InventoryItemSnapshot>? currentItems = null,
+        PlannerAction? executionAction = null)
     {
         if (actionIndex < 0 ||
             actionIndex >= plan.Actions.Count)
@@ -53,6 +54,7 @@ public sealed class CharacterDisplayLocator
         }
 
         var action =
+            executionAction ??
             plan.Actions[actionIndex];
 
         if (action.Type != PlannerActionType.Move ||
