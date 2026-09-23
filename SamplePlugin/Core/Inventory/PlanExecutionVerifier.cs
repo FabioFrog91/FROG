@@ -179,21 +179,21 @@ public sealed class PlanExecutionVerifier
         if (sourceDecrease < 0 ||
             destinationIncrease < 0 ||
             sourceDecrease !=
-                destinationIncrease ||
-            sourceDecrease >
-                decision.Quantity)
+                destinationIncrease)
         {
             return new PlanExecutionVerificationResult(
                 PlanExecutionVerificationStatus.Mismatch,
                 $"Delta non coerente. {diagnostics}");
         }
 
-        if (sourceDecrease ==
+        if (sourceDecrease >=
             decision.Quantity)
         {
             return new PlanExecutionVerificationResult(
                 PlanExecutionVerificationStatus.Verified,
-                $"Delta source/destination completo osservato. {diagnostics}");
+                sourceDecrease > decision.Quantity
+                    ? $"MOVE soddisfatto con quantità aggiuntiva: osservate {sourceDecrease}/{decision.Quantity}. {diagnostics}"
+                    : $"Delta source/destination completo osservato. {diagnostics}");
         }
 
         return new PlanExecutionVerificationResult(
