@@ -126,7 +126,7 @@ public sealed class PlanExecutionMaterializer
             if (remaining <= 0)
                 break;
 
-            var quantity =
+            var allocatedQuantity =
                 Math.Min(
                     remaining,
                     stack.Quantity);
@@ -134,10 +134,10 @@ public sealed class PlanExecutionMaterializer
             allocations.Add(
                 new InventoryStackAllocation(
                     stack,
-                    quantity));
+                    allocatedQuantity));
 
             remaining -=
-                quantity;
+                allocatedQuantity;
         }
 
         if (remaining != 0)
