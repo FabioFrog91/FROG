@@ -97,8 +97,10 @@ public sealed class CharacterDisplayLocator
                 .Sum(previous =>
                     previous.Quantity);
 
-        var sourceStacks =
-            (currentItems ?? plan.InitialState.Items)
+        var matchingStacks =
+            executionOrderCompiler.OrderStacksForExecution(
+                source,
+                (currentItems ?? plan.InitialState.Items)
                 .Where(item =>
                     item.Storage == source.Storage &&
                     item.OwnerId == source.OwnerId &&
@@ -107,18 +109,7 @@ public sealed class CharacterDisplayLocator
                     GetPhysicalContainerIndex(item.Container) >= 0 &&
                     item.BaseItemId == action.BaseItemId &&
                     item.IsHq == action.IsHq &&
-                    item.Quantity > 0);
-
-        var matchingStacks =
-            currentItems is not null
-                ? executionOrderCompiler.OrderRuntimeStacksForAction(
-                    plan,
-                    actionIndex,
-                    source,
-                    sourceStacks)
-                : executionOrderCompiler.OrderStacksForExecution(
-                    source,
-                    sourceStacks);
+                    item.Quantity > 0));
 
         var remaining =
             action.Quantity;
