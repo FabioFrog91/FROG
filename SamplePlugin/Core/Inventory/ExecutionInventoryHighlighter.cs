@@ -1085,8 +1085,7 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
     {
         public bool TryResolveSameAddon(
             IGameGui gameGui,
-            out AtkResNode* node,
-            bool requireVisible = true)
+            out AtkResNode* node)
         {
             node = null;
 
@@ -1105,7 +1104,7 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
                 (AtkUnitBase*)wrapper.Address;
 
             if (addon == null ||
-                (requireVisible && !addon->IsVisible))
+                !addon->IsVisible)
             {
                 return false;
             }
@@ -1126,12 +1125,9 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
         public void Restore(
             IGameGui gameGui)
         {
-            // The source UI can hide while execution advances to the next
-            // decision. Restore its node before it is shown again.
             if (!TryResolveSameAddon(
                     gameGui,
-                    out var node,
-                    requireVisible: false))
+                    out var node))
             {
                 return;
             }
