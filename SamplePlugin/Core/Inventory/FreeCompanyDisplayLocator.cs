@@ -80,7 +80,7 @@ public sealed class FreeCompanyDisplayLocator
 
         if (positions.Sum(position =>
                 position.Quantity) !=
-            decision.Quantity)
+            instruction.Quantity)
         {
             return FreeCompanyDisplayLocation.Unavailable;
         }
