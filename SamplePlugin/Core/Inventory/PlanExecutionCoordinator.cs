@@ -90,13 +90,14 @@ public sealed class PlanExecutionCoordinator
         var materialized =
             materializer.Materialize(
                 session.Plan,
-                session.CurrentActionIndex - 1);
+                session.CurrentActionIndex - 1,
+                session.VerifiedActionIndices);
 
         executedAction =
             materialized.Action;
 
         return session.TryMarkCurrentExecuted(
-            materialized.CoveredActionCount,
+            materialized.CoveredActionIndices,
             out _);
     }
 
@@ -122,13 +123,14 @@ public sealed class PlanExecutionCoordinator
         var materialized =
             materializer.Materialize(
                 session.Plan,
-                currentActionIndex);
+                currentActionIndex,
+                session.VerifiedActionIndices);
 
         var action =
             materialized.Action;
 
-        var coveredActionCount =
-            materialized.CoveredActionCount;
+        var coveredActionIndices =
+            materialized.CoveredActionIndices;
 
         if (action is null)
         {
@@ -165,7 +167,7 @@ public sealed class PlanExecutionCoordinator
                 }
 
                 session.TryMarkCurrentExecuted(
-                    coveredActionCount,
+                    coveredActionIndices,
                     out _);
             }
             else
@@ -217,7 +219,7 @@ public sealed class PlanExecutionCoordinator
                 }
 
                 session.TryMarkCurrentExecuted(
-                    coveredActionCount,
+                    coveredActionIndices,
                     out _);
 
                 if (reconciliation.HasVariance)
@@ -255,7 +257,7 @@ public sealed class PlanExecutionCoordinator
             PlanExecutionVerificationStatus.Verified)
         {
             session.TryMarkCurrentVerified(
-                coveredActionCount);
+                coveredActionIndices);
 
             baseline = null;
             verification = null;
@@ -347,7 +349,8 @@ public sealed class PlanExecutionCoordinator
             currentAction =
                 materializer.Materialize(
                     session.Plan,
-                    session.CurrentActionIndex - 1)
+                    session.CurrentActionIndex - 1,
+                    session.VerifiedActionIndices)
                 .Action;
         }
 
