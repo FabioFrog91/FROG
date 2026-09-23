@@ -17,16 +17,16 @@ public sealed record PlanExecutionStep(
     PlanExecutionStepStatus Status);
 
 /// <summary>
-/// Tracks execution progress for an immutable planner result.
+/// Tracks execution progress against the immutable planner result.
 ///
-/// Planned, Executed and Verified are deliberately separate concepts.
-/// An action is not advanced until it has been verified.
+/// Planner actions keep their original identity/order for audit, while
+/// execution may verify commutable logical MOVE groups non-contiguously.
 /// </summary>
 public sealed class PlanExecutionSession
 {
     private readonly PlannerPlan plan;
-    private int verifiedActionCount;
-    private int currentExecutedActionCount;
+    private readonly bool[] verifiedActions;
+    private HashSet<int> currentExecutedActionIndices = new();
 
     public PlannerPlan Plan => plan;
 
@@ -34,30 +34,67 @@ public sealed class PlanExecutionSession
         plan.Actions.Count;
 
     public int VerifiedActionCount =>
-        verifiedActionCount;
+        verifiedActions.Count(value =>
+            value);
 
     public int ExecutedActionCount =>
-        verifiedActionCount +
-        currentExecutedActionCount;
+        VerifiedActionCount +
+        currentExecutedActionIndices.Count;
 
     public int RemainingActionCount =>
-        TotalActionCount - VerifiedActionCount;
+        TotalActionCount -
+        VerifiedActionCount;
 
     public bool IsComplete =>
-        verifiedActionCount >= TotalActionCount;
+        VerifiedActionCount >=
+        TotalActionCount;
 
     public bool IsCurrentActionExecuted =>
-        currentExecutedActionCount > 0;
+        currentExecutedActionIndices.Count > 0;
 
-    public PlannerAction? CurrentAction =>
-        IsComplete
-            ? null
-            : plan.Actions[verifiedActionCount];
+    public PlannerAction? CurrentAction
+    {
+        get
+        {
+            var index =
+                GetCurrentActionZeroBasedIndex();
 
-    public int CurrentActionIndex =>
-        IsComplete
-            ? TotalActionCount
-            : verifiedActionCount + 1;
+            return index < 0
+                ? null
+                : plan.Actions[index];
+        }
+    }
+
+    public int CurrentActionIndex
+    {
+        get
+        {
+            var index =
+                GetCurrentActionZeroBasedIndex();
+
+            return index < 0
+                ? TotalActionCount
+                : index + 1;
+        }
+    }
+
+    public IReadOnlyCollection<int> VerifiedActionIndices =>
+        Enumerable
+            .Range(
+                0,
+                verifiedActions.Length)
+            .Where(index =>
+                verifiedActions[index])
+            .ToArray();
+
+    public IReadOnlyCollection<int> PendingActionIndices =>
+        Enumerable
+            .Range(
+                0,
+                verifiedActions.Length)
+            .Where(index =>
+                !verifiedActions[index])
+            .ToArray();
 
     public IReadOnlyList<PlanExecutionStep> Steps =>
         plan.Actions
@@ -65,11 +102,10 @@ public sealed class PlanExecutionSession
                 new PlanExecutionStep(
                     index + 1,
                     action,
-                    index < verifiedActionCount
+                    verifiedActions[index]
                         ? PlanExecutionStepStatus.Verified
-                        : index >= verifiedActionCount &&
-                          index < verifiedActionCount +
-                              currentExecutedActionCount
+                        : currentExecutedActionIndices.Contains(
+                            index)
                             ? PlanExecutionStepStatus.Executed
                             : PlanExecutionStepStatus.Pending))
             .ToArray();
@@ -80,61 +116,127 @@ public sealed class PlanExecutionSession
         this.plan =
             plan ?? throw new ArgumentNullException(
                 nameof(plan));
+
+        verifiedActions =
+            new bool[
+                plan.Actions.Count];
     }
 
     public bool TryMarkCurrentExecuted(
-        int actionCount,
+        IReadOnlyCollection<int> actionIndices,
         out PlannerAction? executedAction)
     {
-        executedAction = CurrentAction;
+        executedAction =
+            CurrentAction;
 
         if (executedAction is null ||
-            currentExecutedActionCount > 0 ||
-            actionCount <= 0 ||
-            verifiedActionCount + actionCount >
-                TotalActionCount)
+            currentExecutedActionIndices.Count > 0 ||
+            actionIndices.Count == 0)
         {
             return false;
         }
 
-        currentExecutedActionCount =
-            actionCount;
+        var currentIndex =
+            GetCurrentActionZeroBasedIndex();
+
+        if (currentIndex < 0 ||
+            !actionIndices.Contains(
+                currentIndex))
+        {
+            return false;
+        }
+
+        foreach (var index in actionIndices)
+        {
+            if (index < 0 ||
+                index >= TotalActionCount ||
+                verifiedActions[index])
+            {
+                return false;
+            }
+        }
+
+        currentExecutedActionIndices =
+            actionIndices.ToHashSet();
 
         return true;
     }
 
     public bool TryMarkCurrentExecuted(
-        out PlannerAction? executedAction) =>
-        TryMarkCurrentExecuted(
-            1,
-            out executedAction);
+        out PlannerAction? executedAction)
+    {
+        var currentIndex =
+            GetCurrentActionZeroBasedIndex();
+
+        return currentIndex >= 0 &&
+               TryMarkCurrentExecuted(
+                   new[] { currentIndex },
+                   out executedAction);
+    }
 
     public bool TryMarkCurrentVerified(
-        int actionCount)
+        IReadOnlyCollection<int> actionIndices)
     {
-        if (currentExecutedActionCount <= 0 ||
-            currentExecutedActionCount != actionCount ||
-            verifiedActionCount + actionCount >
-                TotalActionCount)
+        if (currentExecutedActionIndices.Count == 0 ||
+            currentExecutedActionIndices.Count !=
+                actionIndices.Count ||
+            !currentExecutedActionIndices.SetEquals(
+                actionIndices))
         {
             return false;
         }
 
-        verifiedActionCount +=
-            actionCount;
+        foreach (var index in actionIndices)
+        {
+            if (index < 0 ||
+                index >= TotalActionCount ||
+                verifiedActions[index])
+            {
+                return false;
+            }
+        }
 
-        currentExecutedActionCount = 0;
+        foreach (var index in actionIndices)
+        {
+            verifiedActions[index] =
+                true;
+        }
+
+        currentExecutedActionIndices.Clear();
 
         return true;
     }
 
-    public bool TryMarkCurrentVerified() =>
-        TryMarkCurrentVerified(
-            1);
+    public bool TryMarkCurrentVerified()
+    {
+        var currentIndex =
+            GetCurrentActionZeroBasedIndex();
+
+        return currentIndex >= 0 &&
+               TryMarkCurrentVerified(
+                   new[] { currentIndex });
+    }
 
     public void Reset()
     {
-        verifiedActionCount = 0;
-        currentExecutedActionCount = 0;
+        Array.Clear(
+            verifiedActions,
+            0,
+            verifiedActions.Length);
+
+        currentExecutedActionIndices.Clear();
+    }
+
+    private int GetCurrentActionZeroBasedIndex()
+    {
+        for (var index = 0;
+             index < verifiedActions.Length;
+             index++)
+        {
+            if (!verifiedActions[index])
+                return index;
+        }
+
+        return -1;
     }
 }
