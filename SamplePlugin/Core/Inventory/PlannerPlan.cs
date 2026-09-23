@@ -68,15 +68,15 @@ public sealed class PlannerPlan
             .Count();
 
     public int TransferHops =>
-        actions
-            .Where(action =>
-                action.Type == PlannerActionType.Move &&
-                action.Source is not null &&
-                action.Destination is not null)
-            .Select(action =>
-                $"{action.Source!.Storage}:{action.Source.OwnerId}:{action.Source.Container}" +
+        decisions
+            .Where(decision =>
+                decision.Type == PlannerDecisionType.Move &&
+                decision.Source is not null &&
+                decision.Destination is not null)
+            .Select(decision =>
+                $"{decision.Source!.Storage}:{decision.Source.OwnerId}:{decision.Source.ParentCharacterId}" +
                 $">" +
-                $"{action.Destination!.Storage}:{action.Destination.OwnerId}:{action.Destination.Container}")
+                $"{decision.Destination!.Storage}:{decision.Destination.OwnerId}:{decision.Destination.ParentCharacterId}")
             .Distinct()
             .Count();
 

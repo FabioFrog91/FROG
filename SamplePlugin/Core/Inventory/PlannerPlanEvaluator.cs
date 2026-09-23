@@ -8,14 +8,24 @@ public sealed class PlannerPlanEvaluator
 {
     public PlannerPlanScore Evaluate(
         PlannerPlan plan,
-        RequirementSet requirements,
         ResolutionPolicy resolutionPolicy)
     {
-        var consumedStacks = CalculateConsumedStacks(plan);
-        var sourcePriority = CalculateSourcePriority(plan, resolutionPolicy);
-        var freshness = CalculateFreshness(plan);
-        var alphabetical = CalculateAlphabeticalKey(plan);
-        var qualityFallback = CalculateQualityFallback(plan.FinalState, requirements);
+        var consumedStacks =
+            CalculateConsumedStacks(
+                plan);
+
+        var sourcePriority =
+            CalculateSourcePriority(
+                plan,
+                resolutionPolicy);
+
+        var freshness =
+            CalculateFreshness(
+                plan);
+
+        var alphabetical =
+            CalculateAlphabeticalKey(
+                plan);
 
         return new PlannerPlanScore(
             plan.CharacterSwitches,
@@ -24,125 +34,171 @@ public sealed class PlannerPlanEvaluator
             plan.TransferHops,
             sourcePriority,
             freshness,
-            alphabetical,
-            qualityFallback);
+            alphabetical);
     }
 
-    private static int CalculateConsumedStacks(PlannerPlan plan)
+    private static int CalculateConsumedStacks(
+        PlannerPlan plan)
     {
-        var initialStacks = plan.InitialState.Items
-            .Where(item => item.Storage == StorageType.Retainer)
-            .ToDictionary(
-                item => BuildStackKey(item),
-                item => item.Quantity);
+        var initialStacks =
+            plan.InitialState.Items
+                .Where(item =>
+                    item.Storage ==
+                    StorageType.Retainer)
+                .ToDictionary(
+                    item =>
+                        BuildStackKey(
+                            item),
+                    item =>
+                        item.Quantity);
 
-        var finalStacks = plan.FinalState.Items
-            .Where(item => item.Storage == StorageType.Retainer)
-            .ToDictionary(
-                item => BuildStackKey(item),
-                item => item.Quantity);
+        var finalStacks =
+            plan.FinalState.Items
+                .Where(item =>
+                    item.Storage ==
+                    StorageType.Retainer)
+                .ToDictionary(
+                    item =>
+                        BuildStackKey(
+                            item),
+                    item =>
+                        item.Quantity);
 
         return initialStacks.Count(pair =>
             pair.Value > 0 &&
-            !finalStacks.TryGetValue(pair.Key, out var finalQuantity) ||
+            !finalStacks.TryGetValue(
+                pair.Key,
+                out _) ||
             pair.Value > 0 &&
-            finalStacks.TryGetValue(pair.Key, out var remaining) &&
+            finalStacks.TryGetValue(
+                pair.Key,
+                out var remaining) &&
             remaining == 0);
     }
 
-    private static string BuildStackKey(InventoryItemSnapshot item) =>
+    private static string BuildStackKey(
+        InventoryItemSnapshot item) =>
         $"{item.OwnerId}:{item.Container}:{item.Slot}:{item.BaseItemId}:{item.IsHq}";
 
     private static int CalculateSourcePriority(
         PlannerPlan plan,
         ResolutionPolicy resolutionPolicy)
     {
+        var logicalPolicySources =
+            resolutionPolicy.Sources
+                .Select(ToLogicalSourceKey)
+                .Distinct()
+                .ToList();
+
+        var usedSources =
+            plan.Decisions
+                .Where(decision =>
+                    decision.Type ==
+                        PlannerDecisionType.Move &&
+                    decision.Source is not null)
+                .Select(decision =>
+                    ToLogicalSourceKey(
+                        decision.Source!))
+                .Distinct();
+
         var total = 0;
-        var sources = resolutionPolicy.Sources.ToList();
 
-        foreach (var action in plan.Actions)
+        foreach (var source in usedSources)
         {
-            if (action.Type != PlannerActionType.Move || action.Source is null)
-                continue;
+            var index =
+                logicalPolicySources.IndexOf(
+                    source);
 
-            var index = sources.IndexOf(action.Source);
-            total += index < 0 ? sources.Count : index;
+            total +=
+                index < 0
+                    ? logicalPolicySources.Count
+                    : index;
         }
 
         return total;
     }
 
-    private static DateTime CalculateFreshness(PlannerPlan plan)
+    private static DateTime CalculateFreshness(
+        PlannerPlan plan)
     {
-        var timestamps = plan.Actions
-            .Where(action =>
-                action.Type == PlannerActionType.Move &&
-                action.Source is not null)
-            .SelectMany(action =>
-                plan.InitialState
-                    .Find(action.Source!)
-                    .Where(item =>
-                        item.BaseItemId == action.BaseItemId &&
-                        item.IsHq == action.IsHq)
-                    .Select(item => item.ObservedAtUtc))
-            .ToList();
+        var timestamps =
+            plan.Actions
+                .Where(action =>
+                    action.Type ==
+                        PlannerActionType.Move &&
+                    action.Source is not null)
+                .SelectMany(action =>
+                    plan.InitialState
+                        .Find(
+                            action.Source!)
+                        .Where(item =>
+                            item.BaseItemId ==
+                                action.BaseItemId &&
+                            item.IsHq ==
+                                action.IsHq)
+                        .Select(item =>
+                            item.ObservedAtUtc))
+                .ToList();
 
         return timestamps.Count == 0
             ? DateTime.MinValue
             : timestamps.Min();
     }
 
-    private static string CalculateAlphabeticalKey(PlannerPlan plan) =>
+    private static string CalculateAlphabeticalKey(
+        PlannerPlan plan) =>
         string.Join(
             "|",
-            plan.Actions
-                .Where(action =>
-                    action.Type == PlannerActionType.Move &&
-                    action.Source is not null)
-                .Select(action =>
-                    $"{action.Source!.Storage}:{action.Source.OwnerId}:{action.Source.Container}")
-                .OrderBy(value => value));
+            plan.Decisions
+                .Where(decision =>
+                    decision.Type ==
+                        PlannerDecisionType.Move &&
+                    decision.Source is not null)
+                .Select(decision =>
+                    decision.Source!)
+                .GroupBy(ToLogicalSourceKey)
+                .Select(group =>
+                    BuildAlphabeticalSourceKey(
+                        group.First()))
+                .OrderBy(value =>
+                    value,
+                    StringComparer.Ordinal));
 
-    private static int CalculateQualityFallback(
-        PlannerState state,
-        RequirementSet requirements)
+    private static string BuildAlphabeticalSourceKey(
+        PlannerLogicalSource source)
     {
-        var fallback = 0;
+        var ownerName =
+            string.IsNullOrWhiteSpace(
+                source.OwnerName)
+                ? string.Empty
+                : source.OwnerName.Trim();
 
-        foreach (var requirement in requirements.Requirements)
-        {
-            if (requirement.QualityPolicy != RequirementQualityPolicy.HqFirst &&
-                requirement.QualityPolicy != RequirementQualityPolicy.NqFirst)
-            {
-                continue;
-            }
-
-            var hq = state.GetMainInventoryQuantity(
-                requirement.BaseItemId,
-                true);
-
-            var nq = state.GetMainInventoryQuantity(
-                requirement.BaseItemId,
-                false);
-
-            if (requirement.QualityPolicy == RequirementQualityPolicy.HqFirst)
-            {
-                var preferred = Math.Min(requirement.Quantity, hq);
-                fallback += Math.Min(
-                    Math.Max(0, requirement.Quantity - preferred),
-                    nq);
-            }
-            else
-            {
-                var preferred = Math.Min(requirement.Quantity, nq);
-                fallback += Math.Min(
-                    Math.Max(0, requirement.Quantity - preferred),
-                    hq);
-            }
-        }
-
-        return fallback;
+        return string.Join(
+            ":",
+            ownerName,
+            source.Storage,
+            source.OwnerId.ToString("D20"),
+            source.ParentCharacterId.ToString("D20"));
     }
+
+    private static LogicalSourceKey ToLogicalSourceKey(
+        InventorySource source) =>
+        new(
+            source.Storage,
+            source.OwnerId,
+            source.ParentCharacterId);
+
+    private static LogicalSourceKey ToLogicalSourceKey(
+        PlannerLogicalSource source) =>
+        new(
+            source.Storage,
+            source.OwnerId,
+            source.ParentCharacterId);
+
+    private readonly record struct LogicalSourceKey(
+        StorageType Storage,
+        ulong OwnerId,
+        ulong ParentCharacterId);
 }
 
 public sealed record PlannerPlanScore(
@@ -152,48 +208,49 @@ public sealed record PlannerPlanScore(
     int TransferHops,
     int SourcePriority,
     DateTime Freshness,
-    string Alphabetical,
-    int QualityFallback)
+    string Alphabetical)
 {
     public int CompareTo(
         PlannerPlanScore other,
         OptimizationSettings settings)
     {
-        var qualityComparison =
-            QualityFallback.CompareTo(other.QualityFallback);
-
-        if (qualityComparison != 0)
-            return qualityComparison;
-
-        foreach (var criterion in settings.Criteria)
+        foreach (var criterion in
+                 settings.Criteria)
         {
-            var comparison = criterion switch
-            {
-                OptimizationCriterion.CharacterSwitches =>
-                    CharacterSwitches.CompareTo(other.CharacterSwitches),
+            var comparison =
+                criterion switch
+                {
+                    OptimizationCriterion.CharacterSwitches =>
+                        CharacterSwitches.CompareTo(
+                            other.CharacterSwitches),
 
-                OptimizationCriterion.RetainerAccesses =>
-                    RetainerAccesses.CompareTo(other.RetainerAccesses),
+                    OptimizationCriterion.RetainerAccesses =>
+                        RetainerAccesses.CompareTo(
+                            other.RetainerAccesses),
 
-                OptimizationCriterion.ConsumedStacks =>
-                    other.ConsumedStacks.CompareTo(ConsumedStacks),
+                    OptimizationCriterion.ConsumedStacks =>
+                        other.ConsumedStacks.CompareTo(
+                            ConsumedStacks),
 
-                OptimizationCriterion.TransferHops =>
-                    TransferHops.CompareTo(other.TransferHops),
+                    OptimizationCriterion.TransferHops =>
+                        TransferHops.CompareTo(
+                            other.TransferHops),
 
-                OptimizationCriterion.SourcePriority =>
-                    SourcePriority.CompareTo(other.SourcePriority),
+                    OptimizationCriterion.SourcePriority =>
+                        SourcePriority.CompareTo(
+                            other.SourcePriority),
 
-                OptimizationCriterion.Freshness =>
-                    other.Freshness.CompareTo(Freshness),
+                    OptimizationCriterion.Freshness =>
+                        other.Freshness.CompareTo(
+                            Freshness),
 
-                OptimizationCriterion.Alphabetical =>
-                    string.CompareOrdinal(
-                        Alphabetical,
-                        other.Alphabetical),
+                    OptimizationCriterion.Alphabetical =>
+                        string.CompareOrdinal(
+                            Alphabetical,
+                            other.Alphabetical),
 
-                _ => 0
-            };
+                    _ => 0
+                };
 
             if (comparison != 0)
                 return comparison;
