@@ -32,6 +32,11 @@ L'utente non è un programmatore professionista. Parlare principalmente in itali
 
 Regole inderogabili:
 
+- principio guida FROG: **"una piuma, forte come adamantio"** — leggero, semplice, modulare e resistente; prevenire i bug correggendo la logica e l'ownership, non accumulando eccezioni o compensazioni locali;
+- prima di aggiungere un fix, verificare se il sintomo nasce da una responsabilità collocata nel layer sbagliato; se sì, correggere l'ownership invece di aggiungere euristiche;
+- presentation/UI/locator/highlighter non devono reinterpretare o ripianificare il dominio: devono consumare decisioni già risolte dal Core;
+- il replan è una misura di emergenza per divergenze reali di quantità/stato, non per semplici split, merge, sort o relocation fisiche interne che lasciano invariata la quantità logica;
+- un replan deve partire dallo stato reale corrente e dal fabbisogno residuo implicito nelle requirement originali, senza annullare semanticamente i MOVE già verificati;
 - capire architettura, dipendenze, ownership dello stato e conseguenze prima di modificare;
 - leggere sempre i file reali e cercare implementazioni già esistenti;
 - non ricostruire codice dalla memoria e non inventare API;
