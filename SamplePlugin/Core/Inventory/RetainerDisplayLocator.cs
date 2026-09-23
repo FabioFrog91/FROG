@@ -124,7 +124,7 @@ public sealed class RetainerDisplayLocator
 
         if (positions.Sum(position =>
                 position.Quantity) !=
-            decision.Quantity)
+            instruction.Quantity)
         {
             return RetainerDisplayLocation.Unavailable;
         }
