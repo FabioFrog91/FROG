@@ -6,70 +6,42 @@ namespace FROG.Core.Inventory;
 
 public sealed class OptimizationSettings
 {
-    private readonly List<OptimizationCriterion> criteria;
+    private static readonly OptimizationCriterion[] CanonicalCriteria =
+    {
+        OptimizationCriterion.CharacterSwitches,
+        OptimizationCriterion.RetainerAccesses,
+        OptimizationCriterion.ConsumedStacks,
+        OptimizationCriterion.TransferHops,
+        OptimizationCriterion.SourcePriority,
+        OptimizationCriterion.Freshness,
+        OptimizationCriterion.Alphabetical
+    };
 
-    public IReadOnlyList<OptimizationCriterion> Criteria => criteria;
+    private readonly IReadOnlyList<OptimizationCriterion> criteria;
+
+    public IReadOnlyList<OptimizationCriterion> Criteria =>
+        criteria;
 
     public OptimizationSettings()
     {
-        criteria = new List<OptimizationCriterion>
-        {
-            OptimizationCriterion.CharacterSwitches,
-            OptimizationCriterion.RetainerAccesses,
-            OptimizationCriterion.ConsumedStacks,
-            OptimizationCriterion.TransferHops,
-            OptimizationCriterion.SourcePriority,
-            OptimizationCriterion.Freshness,
-            OptimizationCriterion.Alphabetical
-        };
+        criteria =
+            CanonicalCriteria.ToArray();
     }
 
     public OptimizationSettings(
         IEnumerable<OptimizationCriterion> criteria)
     {
-        this.criteria = criteria.ToList();
-        EnsureAllCriteriaArePresent();
-    }
+        var materialized =
+            criteria.ToArray();
 
-    public void Move(
-        OptimizationCriterion criterion,
-        int targetIndex)
-    {
-        if (!criteria.Contains(criterion))
-            throw new ArgumentException(
-                "The optimization criterion is not configured.",
-                nameof(criterion));
-
-        if (targetIndex < 0 || targetIndex >= criteria.Count)
-            throw new ArgumentOutOfRangeException(nameof(targetIndex));
-
-        var currentIndex = criteria.IndexOf(criterion);
-
-        if (currentIndex == targetIndex)
-            return;
-
-        criteria.RemoveAt(currentIndex);
-        criteria.Insert(targetIndex, criterion);
-    }
-
-    public bool Contains(OptimizationCriterion criterion) =>
-        criteria.Contains(criterion);
-
-    private void EnsureAllCriteriaArePresent()
-    {
-        foreach (var criterion in Enum.GetValues<OptimizationCriterion>())
-        {
-            if (!criteria.Contains(criterion))
-            {
-                throw new InvalidOperationException(
-                    $"Optimization criterion '{criterion}' is missing.");
-            }
-        }
-
-        if (criteria.Count != Enum.GetValues<OptimizationCriterion>().Length)
+        if (!materialized.SequenceEqual(
+                CanonicalCriteria))
         {
             throw new InvalidOperationException(
-                "Optimization criteria must contain each criterion exactly once.");
+                "Optimization criteria must match the canonical FROG order exactly.");
         }
+
+        this.criteria =
+            materialized;
     }
 }
