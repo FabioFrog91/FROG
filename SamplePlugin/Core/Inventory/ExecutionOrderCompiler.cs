@@ -67,12 +67,6 @@ public sealed class ExecutionOrderCompiler
     }
 
     public IReadOnlyList<InventoryItemSnapshot> OrderStacksForExecution(
-        InventorySource source,
-        IEnumerable<InventoryItemSnapshot> stacks) =>
-        OrderStacksForExecution(
-            stacks);
-
-    public IReadOnlyList<InventoryItemSnapshot> OrderStacksForExecution(
         IEnumerable<InventoryItemSnapshot> stacks)
     {
         var materialized =
