@@ -252,8 +252,44 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
             return 0;
         }
 
-        return plugin.InventoryIndex.GetSourceContentRevision(
-            action.Source);
+        var source =
+            action.Source;
+
+        if (source.Storage != StorageType.CharacterInventory &&
+            source.Storage != StorageType.Retainer)
+        {
+            return plugin.InventoryIndex.GetSourceContentRevision(
+                source);
+        }
+
+        var containers =
+            plugin.InventoryIndex.Items
+                .Where(item =>
+                    item.Storage == source.Storage &&
+                    item.OwnerId == source.OwnerId &&
+                    (source.Storage != StorageType.Retainer ||
+                     item.ParentCharacterId == source.ParentCharacterId))
+                .Select(item =>
+                    item.Container)
+                .Append(
+                    source.Container)
+                .Distinct();
+
+        var revision = 0L;
+
+        foreach (var container in containers)
+        {
+            revision =
+                Math.Max(
+                    revision,
+                    plugin.InventoryIndex.GetSourceContentRevision(
+                        source with
+                        {
+                            Container = container
+                        }));
+        }
+
+        return revision;
     }
 
     private HighlightTarget? BuildTarget(
