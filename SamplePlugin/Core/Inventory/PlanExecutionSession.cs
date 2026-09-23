@@ -13,63 +13,68 @@ public enum PlanExecutionStepStatus
 
 public sealed record PlanExecutionStep(
     int Index,
-    PlannerAction Action,
+    PlannerDecision Decision,
     PlanExecutionStepStatus Status);
 
 /// <summary>
-/// Tracks execution progress for an immutable planner result.
+/// Tracks execution progress for the immutable logical planner decisions.
 ///
-/// Planned, Executed and Verified are deliberately separate concepts.
-/// An action is not advanced until it has been verified.
+/// Planned, Executed and Verified remain separate concepts. Physical stack
+/// materialization is owned elsewhere and never changes session progress.
 /// </summary>
 public sealed class PlanExecutionSession
 {
     private readonly PlannerPlan plan;
-    private int verifiedActionCount;
-    private int currentExecutedActionCount;
+    private int verifiedDecisionCount;
+    private bool currentDecisionExecuted;
 
-    public PlannerPlan Plan => plan;
+    public PlannerPlan Plan =>
+        plan;
 
     public int TotalActionCount =>
-        plan.Actions.Count;
+        plan.Decisions.Count;
 
     public int VerifiedActionCount =>
-        verifiedActionCount;
+        verifiedDecisionCount;
 
     public int ExecutedActionCount =>
-        verifiedActionCount +
-        currentExecutedActionCount;
+        verifiedDecisionCount +
+        (currentDecisionExecuted
+            ? 1
+            : 0);
 
     public int RemainingActionCount =>
-        TotalActionCount - VerifiedActionCount;
+        TotalActionCount -
+        VerifiedActionCount;
 
     public bool IsComplete =>
-        verifiedActionCount >= TotalActionCount;
+        verifiedDecisionCount >=
+        TotalActionCount;
 
     public bool IsCurrentActionExecuted =>
-        currentExecutedActionCount > 0;
+        currentDecisionExecuted;
 
-    public PlannerAction? CurrentAction =>
+    public PlannerDecision? CurrentDecision =>
         IsComplete
             ? null
-            : plan.Actions[verifiedActionCount];
+            : plan.Decisions[
+                verifiedDecisionCount];
 
     public int CurrentActionIndex =>
         IsComplete
             ? TotalActionCount
-            : verifiedActionCount + 1;
+            : verifiedDecisionCount + 1;
 
     public IReadOnlyList<PlanExecutionStep> Steps =>
-        plan.Actions
-            .Select((action, index) =>
+        plan.Decisions
+            .Select((decision, index) =>
                 new PlanExecutionStep(
                     index + 1,
-                    action,
-                    index < verifiedActionCount
+                    decision,
+                    index < verifiedDecisionCount
                         ? PlanExecutionStepStatus.Verified
-                        : index >= verifiedActionCount &&
-                          index < verifiedActionCount +
-                              currentExecutedActionCount
+                        : index == verifiedDecisionCount &&
+                          currentDecisionExecuted
                             ? PlanExecutionStepStatus.Executed
                             : PlanExecutionStepStatus.Pending))
             .ToArray();
@@ -83,58 +88,40 @@ public sealed class PlanExecutionSession
     }
 
     public bool TryMarkCurrentExecuted(
-        int actionCount,
-        out PlannerAction? executedAction)
+        out PlannerDecision? executedDecision)
     {
-        executedAction = CurrentAction;
+        executedDecision =
+            CurrentDecision;
 
-        if (executedAction is null ||
-            currentExecutedActionCount > 0 ||
-            actionCount <= 0 ||
-            verifiedActionCount + actionCount >
-                TotalActionCount)
+        if (executedDecision is null ||
+            currentDecisionExecuted)
         {
             return false;
         }
 
-        currentExecutedActionCount =
-            actionCount;
+        currentDecisionExecuted =
+            true;
 
         return true;
     }
 
-    public bool TryMarkCurrentExecuted(
-        out PlannerAction? executedAction) =>
-        TryMarkCurrentExecuted(
-            1,
-            out executedAction);
-
-    public bool TryMarkCurrentVerified(
-        int actionCount)
+    public bool TryMarkCurrentVerified()
     {
-        if (currentExecutedActionCount <= 0 ||
-            currentExecutedActionCount != actionCount ||
-            verifiedActionCount + actionCount >
-                TotalActionCount)
+        if (!currentDecisionExecuted ||
+            IsComplete)
         {
             return false;
         }
 
-        verifiedActionCount +=
-            actionCount;
-
-        currentExecutedActionCount = 0;
+        verifiedDecisionCount++;
+        currentDecisionExecuted = false;
 
         return true;
     }
-
-    public bool TryMarkCurrentVerified() =>
-        TryMarkCurrentVerified(
-            1);
 
     public void Reset()
     {
-        verifiedActionCount = 0;
-        currentExecutedActionCount = 0;
+        verifiedDecisionCount = 0;
+        currentDecisionExecuted = false;
     }
 }
