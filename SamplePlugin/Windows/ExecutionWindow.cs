@@ -229,7 +229,14 @@ public sealed class ExecutionWindow : Window, IDisposable
         ImGui.TextWrapped(
             $"{GetItemName(decision.BaseItemId)} | " +
             $"{(decision.IsHq ? "HQ" : "NQ")} | " +
-            $"x{decision.Quantity}");
+            $"x{instruction?.Quantity ?? decision.Quantity}");
+
+        if (instruction is not null &&
+            instruction.Quantity != decision.Quantity)
+        {
+            ImGui.TextWrapped(
+                $"Residuo {instruction.Quantity} / pianificato {decision.Quantity}");
+        }
 
         ImGui.Spacing();
 
@@ -576,6 +583,9 @@ public sealed class ExecutionWindow : Window, IDisposable
                         ? "HQ"
                         : "NQ",
                     decision.Quantity,
+                    instruction is not null
+                        ? $"Remaining={instruction.Quantity}"
+                        : "Remaining=n/a",
                     GetSourceName(
                         decision.Source),
                     decision.Source.Storage,
