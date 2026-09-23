@@ -10,8 +10,8 @@ namespace FROG.Core.Inventory;
 /// <summary>
 /// Bridges completed Dalamud character-inventory changelogs into FROG's
 /// physical CharacterInventory snapshots. The notification and snapshot read
-/// come from the same IGameInventory provider; CCL remains responsible for
-/// retainer and Free Company observation paths.
+/// come from the same IGameInventory provider. Retainer observation has its
+/// own RAW observer; Free Company observation keeps its dedicated CCL bridge.
 /// </summary>
 internal sealed class CharacterInventoryObservationObserver : IDisposable
 {

@@ -1,3 +1,4 @@
+using CriticalCommonLib.Services;
 using Dalamud.Game.Inventory;
 using Dalamud.Game.Inventory.InventoryEventArgTypes;
 using Dalamud.Plugin.Services;
@@ -9,28 +10,35 @@ using System.Linq;
 namespace FROG.Core.Inventory;
 
 /// <summary>
-/// Bridges completed Dalamud retainer-inventory changelogs into FROG's
-/// physical Retainer snapshots. The notification and snapshot read both come
-/// from the game's raw inventory view, so split/merge/relocation changes are
-/// observed independently from CCL's display-oriented retainer cache.
+/// Owns Retainer observation for FROG.
+/// CCL's loaded-retainer signal provides the initial acquisition point; raw
+/// Dalamud inventory changes keep the physical snapshot current afterwards.
+/// The snapshot itself is always read from the game's raw inventory view.
 /// </summary>
 internal sealed class RetainerInventoryObservationObserver : IDisposable
 {
     private readonly Plugin plugin;
     private readonly IGameInventory gameInventory;
+    private readonly ICharacterMonitor characterMonitor;
     private readonly StorageReaderAPI storageReader;
     private bool disposed;
 
     public RetainerInventoryObservationObserver(
         Plugin plugin,
         IGameInventory gameInventory,
+        ICharacterMonitor characterMonitor,
         StorageReaderAPI storageReader)
     {
         this.plugin = plugin;
         this.gameInventory = gameInventory;
+        this.characterMonitor = characterMonitor;
         this.storageReader = storageReader;
 
-        gameInventory.InventoryChangedRaw += OnInventoryChangedRaw;
+        characterMonitor.OnActiveRetainerLoaded +=
+            OnActiveRetainerLoaded;
+
+        gameInventory.InventoryChangedRaw +=
+            OnInventoryChangedRaw;
     }
 
     public void Dispose()
@@ -39,7 +47,25 @@ internal sealed class RetainerInventoryObservationObserver : IDisposable
             return;
 
         disposed = true;
-        gameInventory.InventoryChangedRaw -= OnInventoryChangedRaw;
+
+        characterMonitor.OnActiveRetainerLoaded -=
+            OnActiveRetainerLoaded;
+
+        gameInventory.InventoryChangedRaw -=
+            OnInventoryChangedRaw;
+    }
+
+    private void OnActiveRetainerLoaded(
+        ulong retainerId)
+    {
+        if (disposed ||
+            retainerId == 0)
+        {
+            return;
+        }
+
+        plugin.SyncStorageSources(
+            storageReader);
     }
 
     private void OnInventoryChangedRaw(
