@@ -201,8 +201,13 @@ Deve:
 - considerare ciò che è già realmente arrivato nelle destinazioni;
 - non invalidare semanticamente i passaggi già Verified.
 
-Requisito ancora aperto:
-- preservare esplicitamente la cronologia/progress Verified attraverso una nuova sessione di replan, non solo il risultato materiale già presente nell'InventoryIndex.
+Stato attuale:
+- il risultato materiale resta derivato dall'InventoryIndex reale;
+- lo storico delle PlannerDecision realmente Verified è posseduto dal PlanExecutionRuntime e sopravvive ai replan automatici;
+- una nuova sessione residua resta indipendente e non viene pre-marcata tramite vecchi indici;
+- Start manuale, Clear e ResetProgress azzerano correttamente lo storico.
+
+PR #30: BUILD/CI VERIFICATA. Preservazione dello storico attraverso replan ancora da RUNTIME VERIFICARE.
 
 ### 4.7 Presentation
 
@@ -327,7 +332,12 @@ Principi:
 
 Stato FC observation/data-sync: RUNTIME VERIFICATO.
 
-`FreeCompanyObservationProbe` è diagnostica storica ancora AutoActivate. Non eliminarla solo perché diagnostica: prima va chiarito se serve per future verifiche FC; eventualmente renderla opzionale/separata.
+`FreeCompanyObservationProbe` resta disponibile come diagnostica, ma è opt-in:
+- `EnableFreeCompanyObservationProbe = false` di default;
+- quando disattivato non sottoscrive Framework.Update né ContainerInfoReceived e non esegue polling;
+- l'abilitazione richiede reload del plugin.
+
+PR #31: BUILD/CI VERIFICATA. Nessuna logica FC observation/promotion modificata.
 
 ## 9. Stato del planner
 
@@ -511,19 +521,23 @@ DA RUNTIME VERIFICARE SUL MASTER CORRENTE:
 - planner scoring post-PR #25;
 - CharacterInventory → FC end-to-end;
 - rapid FC owner switch completo;
-- preservazione esplicita dello storico Verified attraverso replan.
+- preservazione esplicita dello storico Verified attraverso un replan reale;
 
 ## 17. Audit aperto — ordine corretto
 
 Prima di nuove feature:
 
 1. runtime test del nuovo contratto Planning → Execution;
-2. audit della pipeline legacy Resolver/TransferPlanner senza eliminazioni speculative;
-3. preservare progress Verified attraverso replan in modo esplicito;
-4. verificare lifecycle/necessità futura di `FreeCompanyObservationProbe`;
-5. riconfermare CharacterInventory → FC end-to-end;
-6. riconfermare rapid FC owner switch;
-7. solo dopo riprendere automazione o nuove feature.
+2. runtime test dello storico Verified attraverso un replan reale;
+3. runtime test della nuova ownership Retainer observation;
+4. riconfermare CharacterInventory → FC end-to-end;
+5. riconfermare rapid FC owner switch;
+6. solo dopo riprendere automazione o nuove feature.
+
+Audit codice concluso:
+- pipeline Resolver/TransferPlanner classificata come preview/diagnostica, non autorità strategica;
+- FreeCompanyObservationProbe preservato ma reso opt-in;
+- progress Verified esplicito implementato senza accoppiare vecchi indici al nuovo piano.
 
 ## 18. Checklist prima di ogni modifica
 
