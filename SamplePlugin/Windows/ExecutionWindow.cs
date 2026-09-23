@@ -108,6 +108,12 @@ public sealed class ExecutionWindow : Window, IDisposable
             new Vector2(-1, 0),
             $"{session.VerifiedDecisionCount}/{session.TotalDecisionCount}");
 
+        if (runtime.VerifiedHistory.Count > 0)
+        {
+            ImGui.TextWrapped(
+                $"Passaggi verificati prima di eventuali replan: {runtime.VerifiedHistory.Count}");
+        }
+
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();
@@ -467,6 +473,7 @@ public sealed class ExecutionWindow : Window, IDisposable
         lines.Add($"UnavailableMissing={Math.Max(0, plan.Missing - plan.CapacityBlocked)}");
         lines.Add($"Decisions={session.TotalDecisionCount}");
         lines.Add($"VerifiedDecisions={session.VerifiedDecisionCount}");
+        lines.Add($"VerifiedHistory={runtime.VerifiedHistory.Count}");
         lines.Add($"RemainingDecisions={session.RemainingDecisionCount}");
         lines.Add($"CurrentDecisionIndex={session.CurrentDecisionIndex}");
 
@@ -526,6 +533,68 @@ public sealed class ExecutionWindow : Window, IDisposable
                         GetSourceName(capacityBlock.Destination),
                         capacityBlock.Destination.Storage,
                         GetContainerName(capacityBlock.Destination)));
+            }
+        }
+
+        if (runtime.VerifiedHistory.Count > 0)
+        {
+            lines.Add(string.Empty);
+            lines.Add("===== VERIFIED HISTORY =====");
+
+            for (var historyIndex = 0;
+                 historyIndex < runtime.VerifiedHistory.Count;
+                 historyIndex++)
+            {
+                var decision =
+                    runtime.VerifiedHistory[historyIndex];
+
+                if (decision.Type ==
+                    PlannerDecisionType.SwitchCharacter)
+                {
+                    lines.Add(
+                        string.Join(
+                            "\t",
+                            historyIndex + 1,
+                            "VERIFIED",
+                            "SWITCH",
+                            GetCharacterName(
+                                decision.FromCharacterId),
+                            decision.FromCharacterId,
+                            GetCharacterName(
+                                decision.ToCharacterId),
+                            decision.ToCharacterId));
+
+                    continue;
+                }
+
+                if (decision.Source is null ||
+                    decision.Destination is null)
+                {
+                    lines.Add(
+                        $"{historyIndex + 1}\tVERIFIED\tMOVE\tINVALID");
+
+                    continue;
+                }
+
+                lines.Add(
+                    string.Join(
+                        "\t",
+                        historyIndex + 1,
+                        "VERIFIED",
+                        "MOVE",
+                        GetItemName(
+                            decision.BaseItemId),
+                        decision.BaseItemId,
+                        decision.IsHq
+                            ? "HQ"
+                            : "NQ",
+                        decision.Quantity,
+                        GetSourceName(
+                            decision.Source),
+                        decision.Source.Storage,
+                        GetSourceName(
+                            decision.Destination),
+                        decision.Destination.Storage));
             }
         }
 
