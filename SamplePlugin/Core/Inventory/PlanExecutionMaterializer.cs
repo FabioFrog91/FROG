@@ -7,10 +7,11 @@ namespace FROG.Core.Inventory;
 
 public sealed record ExecutionInstruction(
     PlannerDecision Decision,
+    int RemainingQuantity,
     IReadOnlyList<InventoryStackAllocation> SourceStacks)
 {
     public int Quantity =>
-        Decision.Quantity;
+        RemainingQuantity;
 }
 
 public sealed record PlanExecutionMaterializationResult(
@@ -55,7 +56,8 @@ public sealed class PlanExecutionMaterializer
 
     public PlanExecutionMaterializationResult Materialize(
         PlannerDecision decision,
-        IReadOnlyList<InventoryItemSnapshot> currentItems)
+        IReadOnlyList<InventoryItemSnapshot> currentItems,
+        int? requestedQuantity = null)
     {
         if (decision.Type ==
             PlannerDecisionType.SwitchCharacter)
@@ -63,12 +65,18 @@ public sealed class PlanExecutionMaterializer
             return PlanExecutionMaterializationResult.Available(
                 new ExecutionInstruction(
                     decision,
+                    0,
                     Array.Empty<InventoryStackAllocation>()));
         }
 
+        var quantity =
+            requestedQuantity ??
+            decision.Quantity;
+
         if (decision.Source is null ||
             decision.Destination is null ||
-            decision.Quantity <= 0)
+            quantity <= 0 ||
+            quantity > decision.Quantity)
         {
             return PlanExecutionMaterializationResult.Unavailable(
                 0,
@@ -95,11 +103,11 @@ public sealed class PlanExecutionMaterializer
                 item.Quantity);
 
         if (availableQuantity <
-            decision.Quantity)
+            quantity)
         {
             return PlanExecutionMaterializationResult.Unavailable(
                 availableQuantity,
-                $"La source logica contiene {availableQuantity} unità, ma il piano ne richiede {decision.Quantity}.");
+                $"La source logica contiene {availableQuantity} unità, ma l'esecuzione residua ne richiede {quantity}.");
         }
 
         var orderedStacks =
@@ -108,7 +116,7 @@ public sealed class PlanExecutionMaterializer
                     matchingStacks);
 
         var remaining =
-            decision.Quantity;
+            quantity;
 
         var allocations =
             new List<InventoryStackAllocation>();
@@ -135,7 +143,7 @@ public sealed class PlanExecutionMaterializer
         if (remaining != 0)
         {
             return PlanExecutionMaterializationResult.Unavailable(
-                decision.Quantity -
+                quantity -
                 remaining,
                 "La materializzazione fisica non copre tutta la quantità logica pianificata.");
         }
@@ -143,6 +151,7 @@ public sealed class PlanExecutionMaterializer
         return PlanExecutionMaterializationResult.Available(
             new ExecutionInstruction(
                 decision,
+                quantity,
                 allocations));
     }
 
