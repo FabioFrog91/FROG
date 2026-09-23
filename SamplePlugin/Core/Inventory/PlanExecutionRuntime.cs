@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 
 namespace FROG.Core.Inventory;
@@ -9,6 +10,7 @@ public readonly record struct PlanExecutionRuntimeSnapshot(
     ExecutionInstruction? CurrentInstruction,
     PlanExecutionVerificationResult? Verification,
     PlanExecutionReconciliationResult? Reconciliation,
+    IReadOnlyList<PlannerDecision> VerifiedHistory,
     bool IsReplanning,
     string? Error);
 
@@ -32,6 +34,7 @@ public sealed class PlanExecutionRuntime
 
     private RequirementSet? requirementSet;
     private OptimizationSettings? optimizationSettings;
+    private readonly List<PlannerDecision> verifiedHistory = new();
     private bool isReplanning;
     private string? error;
     private long lastCapacityPollAtMs;
@@ -43,6 +46,7 @@ public sealed class PlanExecutionRuntime
             null,
             null,
             null,
+            Array.Empty<PlannerDecision>(),
             false,
             null);
 
@@ -72,6 +76,8 @@ public sealed class PlanExecutionRuntime
         RequirementSet requirements,
         OptimizationSettings settings)
     {
+        verifiedHistory.Clear();
+
         requirementSet =
             CloneRequirements(
                 requirements);
@@ -97,6 +103,7 @@ public sealed class PlanExecutionRuntime
     public void Clear()
     {
         executionCoordinator.Clear();
+        verifiedHistory.Clear();
         requirementSet = null;
         optimizationSettings = null;
         isReplanning = false;
@@ -110,6 +117,7 @@ public sealed class PlanExecutionRuntime
                 null,
                 null,
                 null,
+                Array.Empty<PlannerDecision>(),
                 false,
                 null);
     }
@@ -117,6 +125,7 @@ public sealed class PlanExecutionRuntime
     public void ResetProgress()
     {
         executionCoordinator.Reset();
+        verifiedHistory.Clear();
         isReplanning = false;
         error = null;
         lastCapacityPollAtMs = 0;
@@ -165,6 +174,7 @@ public sealed class PlanExecutionRuntime
                 execution.CurrentInstruction,
                 execution.Verification,
                 execution.Reconciliation,
+                verifiedHistory.ToArray(),
                 false,
                 error);
 
@@ -203,6 +213,12 @@ public sealed class PlanExecutionRuntime
                 currentCharacterId);
 
             return;
+        }
+
+        if (execution.VerifiedDecision is not null)
+        {
+            verifiedHistory.Add(
+                execution.VerifiedDecision);
         }
 
         if (execution.Status ==
@@ -499,6 +515,7 @@ public sealed class PlanExecutionRuntime
                 null,
                 snapshot.Verification,
                 snapshot.Reconciliation,
+                verifiedHistory.ToArray(),
                 isReplanning,
                 error);
     }
