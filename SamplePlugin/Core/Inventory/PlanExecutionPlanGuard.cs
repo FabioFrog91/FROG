@@ -77,14 +77,33 @@ public sealed class PlanExecutionPlanGuard
             var action =
                 plan.Actions[index];
 
+            if (action.Type == PlannerActionType.Move &&
+                IsRelocatableExecutionSource(
+                    action.Source))
+            {
+                if (!TryReplayRelocatableMove(
+                        state,
+                        action,
+                        out var updatedState,
+                        out var reason))
+                {
+                    return new PlanExecutionPlanValidityResult(
+                        false,
+                        $"Azione futura {index + 1}/{plan.Actions.Count} non più valida: {reason}");
+                }
+
+                state = updatedState;
+                continue;
+            }
+
             if (!actionValidator.CanApply(
                     state,
                     action,
-                    out var reason))
+                    out var validationReason))
             {
                 return new PlanExecutionPlanValidityResult(
                     false,
-                    $"Azione futura {index + 1}/{plan.Actions.Count} non più valida: {reason}");
+                    $"Azione futura {index + 1}/{plan.Actions.Count} non più valida: {validationReason}");
             }
 
             state =
@@ -109,4 +128,119 @@ public sealed class PlanExecutionPlanGuard
 
         return PlanExecutionPlanValidityResult.Valid;
     }
+
+    private bool TryReplayRelocatableMove(
+        PlannerState state,
+        PlannerAction action,
+        out PlannerState updatedState,
+        out string reason)
+    {
+        updatedState = state;
+        reason = string.Empty;
+
+        if (action.Source is null ||
+            action.Destination is null)
+        {
+            reason =
+                "A move requires both a source and a destination.";
+            return false;
+        }
+
+        var source =
+            action.Source;
+
+        var sourceContainers =
+            state.Items
+                .Where(item =>
+                    item.BaseItemId == action.BaseItemId &&
+                    item.IsHq == action.IsHq &&
+                    item.Storage == source.Storage &&
+                    item.OwnerId == source.OwnerId &&
+                    (source.Storage != StorageType.Retainer ||
+                     item.ParentCharacterId == source.ParentCharacterId) &&
+                    item.Quantity > 0)
+                .GroupBy(item =>
+                    item.Container)
+                .Select(group =>
+                    new
+                    {
+                        Container = group.Key,
+                        Quantity = group.Sum(item => item.Quantity)
+                    })
+                .OrderBy(group =>
+                    group.Container == source.Container
+                        ? 0
+                        : 1)
+                .ThenBy(group =>
+                    group.Container)
+                .ToList();
+
+        if (sourceContainers.Sum(group => group.Quantity) <
+            action.Quantity)
+        {
+            reason =
+                "The source does not contain enough of the requested item.";
+            return false;
+        }
+
+        var remaining =
+            action.Quantity;
+
+        foreach (var sourceContainer in sourceContainers)
+        {
+            if (remaining <= 0)
+                break;
+
+            var moved =
+                Math.Min(
+                    remaining,
+                    sourceContainer.Quantity);
+
+            if (moved <= 0)
+                continue;
+
+            var relocatedSource =
+                source with
+                {
+                    Container = sourceContainer.Container
+                };
+
+            var replayAction =
+                action with
+                {
+                    Source = relocatedSource,
+                    Quantity = moved
+                };
+
+            if (!actionValidator.CanApply(
+                    updatedState,
+                    replayAction,
+                    out reason))
+            {
+                return false;
+            }
+
+            updatedState =
+                updatedState.Move(
+                    relocatedSource,
+                    action.Destination,
+                    action.BaseItemId,
+                    action.IsHq,
+                    moved);
+
+            remaining -= moved;
+        }
+
+        if (remaining == 0)
+            return true;
+
+        reason =
+            "The source does not contain enough of the requested item.";
+        return false;
+    }
+
+    private static bool IsRelocatableExecutionSource(
+        InventorySource? source) =>
+        source?.Storage == StorageType.CharacterInventory ||
+        source?.Storage == StorageType.Retainer;
 }
