@@ -150,7 +150,7 @@ public sealed class PlannerPlan
             Missing,
             CapacityBlocked,
             capacityBlocks,
-            decisions);
+            decisions: null);
     }
 
     public PlannerPlan WithResult(
@@ -165,7 +165,8 @@ public sealed class PlannerPlan
             Math.Min(
                 CapacityBlocked,
                 missing),
-            capacityBlocks);
+            capacityBlocks,
+            decisions);
 
     public PlannerPlan WithActions(
         IEnumerable<PlannerAction> reorderedActions) =>
@@ -176,7 +177,8 @@ public sealed class PlannerPlan
             Result,
             Missing,
             CapacityBlocked,
-            capacityBlocks);
+            capacityBlocks,
+            decisions);
 
     private static List<PlannerCapacityAdvice> BuildCapacityAdvice(
         IReadOnlyList<PlannerCapacityBlock> blocks) =>
