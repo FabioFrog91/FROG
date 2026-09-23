@@ -111,6 +111,8 @@ public sealed class PlanExecutionPlanGuard
                         decision.IsHq &&
                     item.Storage ==
                         decision.Source.Storage &&
+                    ExecutionInventoryRules.IsExecutableContainer(
+                        item) &&
                     item.OwnerId ==
                         decision.Source.OwnerId &&
                     (decision.Source.Storage !=
