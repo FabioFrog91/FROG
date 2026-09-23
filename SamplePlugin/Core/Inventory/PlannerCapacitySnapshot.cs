@@ -131,6 +131,31 @@ public sealed class PlannerCapacitySnapshot
         InventorySource destination,
         uint baseItemId,
         bool isHq,
+        int requestedQuantity) =>
+        GetAcceptableQuantity(
+            ToLogicalStorageKey(
+                destination),
+            baseItemId,
+            isHq,
+            requestedQuantity);
+
+    public int GetAcceptableQuantity(
+        PlannerLogicalSource destination,
+        uint baseItemId,
+        bool isHq,
+        int requestedQuantity) =>
+        GetAcceptableQuantity(
+            new LogicalStorageKey(
+                destination.Storage,
+                destination.OwnerId),
+            baseItemId,
+            isHq,
+            requestedQuantity);
+
+    private int GetAcceptableQuantity(
+        LogicalStorageKey storageKey,
+        uint baseItemId,
+        bool isHq,
         int requestedQuantity)
     {
         if (requestedQuantity <= 0 ||
@@ -140,9 +165,6 @@ public sealed class PlannerCapacitySnapshot
         {
             return 0;
         }
-
-        var storageKey =
-            ToLogicalStorageKey(destination);
 
         if (!totalSlots.TryGetValue(
                 storageKey,
@@ -159,16 +181,16 @@ public sealed class PlannerCapacitySnapshot
                 isHq);
 
         var compatibleMergeSpace =
-            mergeSpace.GetValueOrDefault(stackKey);
+            mergeSpace.GetValueOrDefault(
+                stackKey);
 
         var emptySlots =
             Math.Max(
                 0,
                 slotCount -
-                occupiedSlots.GetValueOrDefault(storageKey));
+                occupiedSlots.GetValueOrDefault(
+                    storageKey));
 
-        // Exactly one empty slot is kept for the whole logical destination,
-        // not one per physical page/container.
         var usableEmptySlots =
             Math.Max(
                 0,
@@ -176,7 +198,8 @@ public sealed class PlannerCapacitySnapshot
 
         var totalCapacity =
             (long)compatibleMergeSpace +
-            (long)usableEmptySlots * maximumStack;
+            (long)usableEmptySlots *
+            maximumStack;
 
         return checked(
             (int)Math.Min(

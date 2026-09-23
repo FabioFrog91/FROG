@@ -22,57 +22,41 @@ public sealed record CharacterDisplayLocation(
 }
 
 /// <summary>
-/// Presentation-only mapping from the four physical character inventory
-/// containers to the four 35-slot pages shown by the game. Uses the ODR sort
-/// order so planner/verifier coordinates remain independent from UI layout.
+/// Pure presentation mapping from already materialized physical character
+/// inventory stacks to visible ODR page/slot coordinates.
 /// </summary>
 public sealed class CharacterDisplayLocator
 {
     private const int VisibleSlotsPerPage = 35;
 
     private readonly IOdrScanner odrScanner;
-    private readonly ExecutionOrderCompiler executionOrderCompiler;
 
     public CharacterDisplayLocator(
-        IOdrScanner odrScanner,
-        ExecutionOrderCompiler executionOrderCompiler)
+        IOdrScanner odrScanner)
     {
-        this.odrScanner = odrScanner;
-        this.executionOrderCompiler = executionOrderCompiler;
+        this.odrScanner =
+            odrScanner;
     }
 
     public CharacterDisplayLocation LocateSource(
-        PlannerPlan plan,
-        int actionIndex,
-        IReadOnlyList<InventoryItemSnapshot>? currentItems = null,
-        PlannerAction? executionAction = null)
+        ExecutionInstruction instruction)
     {
-        if (actionIndex < 0 ||
-            actionIndex >= plan.Actions.Count)
+        var decision =
+            instruction.Decision;
+
+        if (decision.Type !=
+                PlannerDecisionType.Move ||
+            decision.Source is null ||
+            decision.Source.Storage !=
+                StorageType.CharacterInventory ||
+            instruction.SourceStacks.Count == 0)
         {
             return CharacterDisplayLocation.Unavailable;
         }
-
-        var action =
-            executionAction ??
-            plan.Actions[actionIndex];
-
-        if (action.Type != PlannerActionType.Move ||
-            action.Source is null ||
-            action.Source.Storage != StorageType.CharacterInventory)
-        {
-            return CharacterDisplayLocation.Unavailable;
-        }
-
-        var source =
-            action.Source;
-
-        if (GetPhysicalContainerIndex(source.Container) < 0)
-            return CharacterDisplayLocation.Unavailable;
 
         var sortOrder =
             odrScanner.GetSortOrder(
-                source.OwnerId);
+                decision.Source.OwnerId);
 
         if (sortOrder is null ||
             !sortOrder.NormalInventories.TryGetValue(
@@ -83,78 +67,27 @@ public sealed class CharacterDisplayLocator
             return CharacterDisplayLocation.Unavailable;
         }
 
-        var previouslyPlannedFromSameSource =
-            currentItems is not null
-                ? 0
-                : plan.Actions
-                .Take(actionIndex)
-                .Where(previous =>
-                    previous.Type == PlannerActionType.Move &&
-                    previous.Source is not null &&
-                    IsSamePhysicalSource(
-                        previous.Source,
-                        source) &&
-                    previous.BaseItemId == action.BaseItemId &&
-                    previous.IsHq == action.IsHq)
-                .Sum(previous =>
-                    previous.Quantity);
-
-        var matchingStacks =
-            executionOrderCompiler.OrderStacksForExecution(
-                source,
-                (currentItems ?? plan.InitialState.Items)
-                .Where(item =>
-                    item.Storage == source.Storage &&
-                    item.OwnerId == source.OwnerId &&
-                    (currentItems is not null ||
-                     item.Container == source.Container) &&
-                    GetPhysicalContainerIndex(item.Container) >= 0 &&
-                    item.BaseItemId == action.BaseItemId &&
-                    item.IsHq == action.IsHq &&
-                    item.Quantity > 0));
-
-        var remaining =
-            action.Quantity;
-
-        var quantityToSkip =
-            previouslyPlannedFromSameSource;
-
         var positions =
             new List<CharacterDisplayPosition>();
 
-        foreach (var stack in matchingStacks)
+        foreach (var allocation in
+                 instruction.SourceStacks)
         {
-            if (remaining <= 0)
-                break;
+            var item =
+                allocation.Item;
 
-            var available =
-                stack.Quantity;
-
-            if (quantityToSkip > 0)
+            if (item.Storage !=
+                    StorageType.CharacterInventory ||
+                item.OwnerId !=
+                    decision.Source.OwnerId ||
+                allocation.Quantity <= 0)
             {
-                var skipped =
-                    Math.Min(
-                        quantityToSkip,
-                        available);
-
-                quantityToSkip -=
-                    skipped;
-
-                available -=
-                    skipped;
+                return CharacterDisplayLocation.Unavailable;
             }
-
-            if (available <= 0)
-                continue;
-
-            var moved =
-                Math.Min(
-                    remaining,
-                    available);
 
             var physicalContainerIndex =
                 GetPhysicalContainerIndex(
-                    stack.Container);
+                    item.Container);
 
             if (physicalContainerIndex < 0)
                 return CharacterDisplayLocation.Unavailable;
@@ -163,31 +96,25 @@ public sealed class CharacterDisplayLocator
                 FindDisplayIndex(
                     coordinates,
                     physicalContainerIndex,
-                    stack.Slot);
+                    item.Slot);
 
             if (displayIndex < 0)
-            {
                 return CharacterDisplayLocation.Unavailable;
-            }
 
             positions.Add(
                 new CharacterDisplayPosition(
-                    Page:
-                        displayIndex /
+                    displayIndex /
                         VisibleSlotsPerPage +
                         1,
-                    Slot:
-                        displayIndex %
+                    displayIndex %
                         VisibleSlotsPerPage +
                         1,
-                    Quantity:
-                        moved));
-
-            remaining -= moved;
+                    allocation.Quantity));
         }
 
-        if (remaining > 0 ||
-            positions.Count == 0)
+        if (positions.Sum(position =>
+                position.Quantity) !=
+            instruction.Quantity)
         {
             return CharacterDisplayLocation.Unavailable;
         }
@@ -231,12 +158,4 @@ public sealed class CharacterDisplayLocator
 
         return -1;
     }
-
-    private static bool IsSamePhysicalSource(
-        InventorySource left,
-        InventorySource right) =>
-        left.Storage == right.Storage &&
-        left.OwnerId == right.OwnerId &&
-        left.Container == right.Container &&
-        left.ParentCharacterId == right.ParentCharacterId;
 }

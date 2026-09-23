@@ -21,7 +21,7 @@ public sealed record PlanExecutionObservation(
     ulong SourceLayoutFingerprint);
 
 public sealed record PlanExecutionBaseline(
-    int ActionIndex,
+    int DecisionIndex,
     int SourceQuantity,
     int LogicalSourceQuantity,
     int DestinationQuantity,
@@ -39,12 +39,12 @@ public sealed class PlanExecutionVerifier
 {
     public PlanExecutionBaseline CaptureBaseline(
         int actionIndex,
-        PlannerAction action,
+        PlannerDecision decision,
         InventoryIndex inventoryIndex)
     {
         var observation =
             Observe(
-                action,
+                decision,
                 inventoryIndex);
 
         return new PlanExecutionBaseline(
@@ -60,12 +60,13 @@ public sealed class PlanExecutionVerifier
     }
 
     public PlanExecutionObservation Observe(
-        PlannerAction action,
+        PlannerDecision decision,
         InventoryIndex inventoryIndex)
     {
-        if (action.Type == PlannerActionType.SwitchCharacter ||
-            action.Source is null ||
-            action.Destination is null)
+        if (decision.Type ==
+                PlannerDecisionType.SwitchCharacter ||
+            decision.Source is null ||
+            decision.Destination is null)
         {
             return new PlanExecutionObservation(
                 0,
@@ -79,37 +80,39 @@ public sealed class PlanExecutionVerifier
         }
 
         var sourceObservation =
-            inventoryIndex.ObserveItem(
-                action.BaseItemId,
-                action.IsHq,
-                action.Source);
+            inventoryIndex.ObserveLogicalItem(
+                decision.BaseItemId,
+                decision.IsHq,
+                decision.Source);
 
         return new PlanExecutionObservation(
             sourceObservation.Quantity,
             sourceObservation.LogicalQuantity,
             GetDestinationQuantity(
                 inventoryIndex,
-                action),
+                decision),
             sourceObservation.ObservedAtUtc,
             GetDestinationObservedAtUtc(
                 inventoryIndex,
-                action),
+                decision),
             sourceObservation.ObservationRevision,
             GetDestinationObservationRevision(
                 inventoryIndex,
-                action),
+                decision),
             sourceObservation.LayoutFingerprint);
     }
 
     public PlanExecutionVerificationResult Verify(
-        PlannerAction action,
+        PlannerDecision decision,
         PlanExecutionBaseline baseline,
         InventoryIndex inventoryIndex,
         ulong currentCharacterId)
     {
-        if (action.Type == PlannerActionType.SwitchCharacter)
+        if (decision.Type ==
+            PlannerDecisionType.SwitchCharacter)
         {
-            return currentCharacterId == action.ToCharacterId
+            return currentCharacterId ==
+                   decision.ToCharacterId
                 ? new PlanExecutionVerificationResult(
                     PlanExecutionVerificationStatus.Verified,
                     "Cambio personaggio osservato.")
@@ -118,8 +121,8 @@ public sealed class PlanExecutionVerifier
                     "In attesa del personaggio previsto.");
         }
 
-        if (action.Source is null ||
-            action.Destination is null)
+        if (decision.Source is null ||
+            decision.Destination is null)
         {
             return new PlanExecutionVerificationResult(
                 PlanExecutionVerificationStatus.Mismatch,
@@ -128,12 +131,12 @@ public sealed class PlanExecutionVerifier
 
         var observation =
             Observe(
-                action,
+                decision,
                 inventoryIndex);
 
         var diagnostics =
             FormatMoveDiagnostics(
-                action,
+                decision,
                 baseline,
                 observation);
 
@@ -149,74 +152,64 @@ public sealed class PlanExecutionVerifier
                 $"In attesa di una nuova osservazione di source e destination. {diagnostics}");
         }
 
-        var baselineTransferSourceQuantity =
-            GetTransferSourceQuantity(
-                action,
-                baseline.SourceQuantity,
-                baseline.LogicalSourceQuantity);
+        var sourceDecrease =
+            baseline.SourceQuantity -
+            observation.SourceQuantity;
 
-        var observedTransferSourceQuantity =
-            GetTransferSourceQuantity(
-                action,
-                observation.SourceQuantity,
-                observation.LogicalSourceQuantity);
+        var destinationIncrease =
+            observation.DestinationQuantity -
+            baseline.DestinationQuantity;
 
-        if (observedTransferSourceQuantity == baselineTransferSourceQuantity &&
-            observation.DestinationQuantity == baseline.DestinationQuantity)
+        if (sourceDecrease == 0 &&
+            destinationIncrease == 0)
         {
             return new PlanExecutionVerificationResult(
                 PlanExecutionVerificationStatus.WaitingForObservation,
                 $"Nuove osservazioni ricevute, ma nessun delta del MOVE è stato ancora osservato. {diagnostics}");
         }
 
-        var expectedSourceMaximum =
-            Math.Max(
-                0,
-                baselineTransferSourceQuantity - action.Quantity);
+        if (sourceDecrease < 0 ||
+            destinationIncrease < 0 ||
+            sourceDecrease !=
+                destinationIncrease ||
+            sourceDecrease >
+                decision.Quantity)
+        {
+            return new PlanExecutionVerificationResult(
+                PlanExecutionVerificationStatus.Mismatch,
+                $"Delta non coerente. {diagnostics}");
+        }
 
-        var expectedDestinationMinimum =
-            baseline.DestinationQuantity + action.Quantity;
-
-        if (observedTransferSourceQuantity <= expectedSourceMaximum &&
-            observation.DestinationQuantity >= expectedDestinationMinimum)
+        if (sourceDecrease ==
+            decision.Quantity)
         {
             return new PlanExecutionVerificationResult(
                 PlanExecutionVerificationStatus.Verified,
-                $"Delta source/destination osservato. {diagnostics}");
+                $"Delta source/destination completo osservato. {diagnostics}");
         }
 
         return new PlanExecutionVerificationResult(
-            PlanExecutionVerificationStatus.Mismatch,
-            $"Delta non coerente. {diagnostics}");
+            PlanExecutionVerificationStatus.WaitingForObservation,
+            $"Trasferimento parziale coerente: {sourceDecrease}/{decision.Quantity}. {diagnostics}");
     }
 
-    private static int GetTransferSourceQuantity(
-        PlannerAction action,
-        int sourceQuantity,
-        int logicalSourceQuantity) =>
-        action.Source?.Storage == StorageType.CharacterInventory ||
-        action.Source?.Storage == StorageType.Retainer
-            ? logicalSourceQuantity
-            : sourceQuantity;
-
     private static string FormatMoveDiagnostics(
-        PlannerAction action,
+        PlannerDecision decision,
         PlanExecutionBaseline baseline,
         PlanExecutionObservation observation)
     {
         var sourceDecrease =
-            baseline.SourceQuantity - observation.SourceQuantity;
+            baseline.SourceQuantity -
+            observation.SourceQuantity;
 
         var destinationIncrease =
-            observation.DestinationQuantity - baseline.DestinationQuantity;
-
-        var logicalSourceDelta =
-            observation.LogicalSourceQuantity - baseline.LogicalSourceQuantity;
+            observation.DestinationQuantity -
+            baseline.DestinationQuantity;
 
         return
-            $"Planned={action.Quantity}; " +
+            $"Planned={decision.Quantity}; " +
             $"Source={baseline.SourceQuantity}->{observation.SourceQuantity} (delta={sourceDecrease}); " +
-            $"LogicalSource={baseline.LogicalSourceQuantity}->{observation.LogicalSourceQuantity} (delta={logicalSourceDelta}); " +
+            $"LogicalSource={baseline.LogicalSourceQuantity}->{observation.LogicalSourceQuantity}; " +
             $"Destination={baseline.DestinationQuantity}->{observation.DestinationQuantity} (delta={destinationIncrease}); " +
             $"SourceRev={FormatRevision(baseline.SourceObservationRevision)}->{FormatRevision(observation.SourceObservationRevision)}; " +
             $"DestinationRev={FormatRevision(baseline.DestinationObservationRevision)}->{FormatRevision(observation.DestinationObservationRevision)}; " +
@@ -229,83 +222,90 @@ public sealed class PlanExecutionVerifier
 
     private static int GetDestinationQuantity(
         InventoryIndex inventoryIndex,
-        PlannerAction action)
+        PlannerDecision decision)
     {
-        if (action.Destination is null)
+        if (decision.Destination is null)
             return 0;
 
-        if (action.Destination.Storage ==
+        if (decision.Destination.Storage ==
             StorageType.CharacterInventory)
         {
             return inventoryIndex.GetCharacterInventoryQuantity(
-                action.Destination.OwnerId,
-                action.BaseItemId,
-                action.IsHq);
+                decision.Destination.OwnerId,
+                decision.BaseItemId,
+                decision.IsHq);
         }
 
-        if (action.Destination.Storage ==
+        if (decision.Destination.Storage ==
             StorageType.FreeCompanyChest)
         {
             return inventoryIndex.GetFreeCompanyQuantity(
-                action.Destination.OwnerId,
-                action.BaseItemId,
-                action.IsHq);
+                decision.Destination.OwnerId,
+                decision.BaseItemId,
+                decision.IsHq);
         }
 
-        return inventoryIndex.GetQuantity(
-            action.BaseItemId,
-            action.IsHq,
-            action.Destination);
+        return inventoryIndex.ObserveLogicalItem(
+                decision.BaseItemId,
+                decision.IsHq,
+                decision.Destination)
+            .Quantity;
     }
 
     private static DateTime? GetDestinationObservedAtUtc(
         InventoryIndex inventoryIndex,
-        PlannerAction action)
+        PlannerDecision decision)
     {
-        if (action.Destination is null)
+        if (decision.Destination is null)
             return null;
 
-        if (action.Destination.Storage ==
+        if (decision.Destination.Storage ==
             StorageType.CharacterInventory)
         {
             return inventoryIndex.GetCharacterInventoryObservedAtUtc(
-                action.Destination.OwnerId);
+                decision.Destination.OwnerId);
         }
 
-        if (action.Destination.Storage ==
+        if (decision.Destination.Storage ==
             StorageType.FreeCompanyChest)
         {
             return inventoryIndex.GetFreeCompanyObservedAtUtc(
-                action.Destination.OwnerId);
+                decision.Destination.OwnerId);
         }
 
-        return inventoryIndex.GetSourceObservedAtUtc(
-            action.Destination);
+        return inventoryIndex.ObserveLogicalItem(
+                decision.BaseItemId,
+                decision.IsHq,
+                decision.Destination)
+            .ObservedAtUtc;
     }
 
     private static long? GetDestinationObservationRevision(
         InventoryIndex inventoryIndex,
-        PlannerAction action)
+        PlannerDecision decision)
     {
-        if (action.Destination is null)
+        if (decision.Destination is null)
             return null;
 
-        if (action.Destination.Storage ==
+        if (decision.Destination.Storage ==
             StorageType.CharacterInventory)
         {
             return inventoryIndex.GetCharacterInventoryObservationRevision(
-                action.Destination.OwnerId);
+                decision.Destination.OwnerId);
         }
 
-        if (action.Destination.Storage ==
+        if (decision.Destination.Storage ==
             StorageType.FreeCompanyChest)
         {
             return inventoryIndex.GetFreeCompanyObservationRevision(
-                action.Destination.OwnerId);
+                decision.Destination.OwnerId);
         }
 
-        return inventoryIndex.GetSourceObservationRevision(
-            action.Destination);
+        return inventoryIndex.ObserveLogicalItem(
+                decision.BaseItemId,
+                decision.IsHq,
+                decision.Destination)
+            .ObservationRevision;
     }
 
     private static bool IsNewerObservation(
@@ -318,6 +318,7 @@ public sealed class PlanExecutionVerifier
         if (!baseline.HasValue)
             return true;
 
-        return current.Value > baseline.Value;
+        return current.Value >
+            baseline.Value;
     }
 }

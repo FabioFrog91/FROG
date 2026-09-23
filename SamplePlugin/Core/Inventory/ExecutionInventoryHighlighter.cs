@@ -41,7 +41,7 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
     private PlannerPlan? cachedPlan;
     private int cachedActionIndex = -1;
     private ulong cachedCharacterId;
-    private long cachedSourceContentRevision;
+    private string cachedInstructionKey = string.Empty;
     private HighlightTarget? cachedTarget;
     private bool targetRefreshRequested;
     private bool retryTargetWhileUnavailable;
@@ -85,51 +85,56 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
 
         if (!plugin.Configuration.EnableInventoryExecutionHighlight ||
             runtime.IsReplanning ||
-            runtime.Status == PlanExecutionCoordinatorStatus.WaitingForCapacity ||
-            runtime.Status == PlanExecutionCoordinatorStatus.Complete ||
+            runtime.Status ==
+                PlanExecutionCoordinatorStatus.WaitingForCapacity ||
+            runtime.Status ==
+                PlanExecutionCoordinatorStatus.Complete ||
             runtime.Session is null ||
-            runtime.CurrentAction is null)
+            runtime.CurrentInstruction is null)
         {
             Clear();
             InvalidateTargetCache();
             return;
         }
 
+        var instruction =
+            runtime.CurrentInstruction;
+
         var actionIndex =
-            runtime.Session.CurrentActionIndex - 1;
+            runtime.Session.CurrentDecisionIndex -
+            1;
 
         var nowMs =
             Environment.TickCount64;
+
+        var instructionKey =
+            BuildInstructionKey(
+                instruction);
 
         var targetContextChanged =
             !ReferenceEquals(
                 cachedPlan,
                 runtime.Session.Plan) ||
-            cachedActionIndex != actionIndex ||
-            cachedCharacterId != currentCharacterId;
-
-        var sourceContentRevision =
-            GetSourceContentRevision(
-                runtime.CurrentAction);
-
-        var sourceContentChanged =
-            !targetContextChanged &&
-            sourceContentRevision != cachedSourceContentRevision;
+            cachedActionIndex !=
+                actionIndex ||
+            cachedCharacterId !=
+                currentCharacterId ||
+            !string.Equals(
+                cachedInstructionKey,
+                instructionKey,
+                StringComparison.Ordinal);
 
         var targetNeedsRefresh =
             targetContextChanged ||
-            targetRefreshRequested ||
-            sourceContentChanged;
+            targetRefreshRequested;
 
         if (targetNeedsRefresh)
         {
             var refreshedTarget =
                 BuildTarget(
                     runtime.Session.Plan,
-                    actionIndex,
-                    runtime.CurrentAction,
-                    currentCharacterId,
-                    plugin.InventoryIndex.Items);
+                    instruction,
+                    currentCharacterId);
 
             var targetChanged =
                 targetContextChanged ||
@@ -140,18 +145,24 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
             if (targetChanged)
                 Clear();
 
-            cachedPlan = runtime.Session.Plan;
-            cachedActionIndex = actionIndex;
-            cachedCharacterId = currentCharacterId;
-            cachedSourceContentRevision = sourceContentRevision;
-            cachedTarget = refreshedTarget;
-            targetRefreshRequested = false;
+            cachedPlan =
+                runtime.Session.Plan;
+            cachedActionIndex =
+                actionIndex;
+            cachedCharacterId =
+                currentCharacterId;
+            cachedInstructionKey =
+                instructionKey;
+            cachedTarget =
+                refreshedTarget;
+            targetRefreshRequested =
+                false;
 
             retryTargetWhileUnavailable =
                 cachedTarget is null &&
                 IsPotentialHighlightTarget(
                     runtime.Session.Plan,
-                    actionIndex,
+                    instruction,
                     currentCharacterId);
 
             nextTargetRetryAtMs =
@@ -167,19 +178,19 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
                 TargetRetryIntervalMs;
 
             if (IsRelevantSourceUiVisible(
-                    runtime.Session.Plan,
-                    actionIndex))
+                    instruction))
             {
                 cachedTarget =
                     BuildTarget(
                         runtime.Session.Plan,
-                        actionIndex,
-                        runtime.CurrentAction,
-                        currentCharacterId,
-                        plugin.InventoryIndex.Items);
+                        instruction,
+                        currentCharacterId);
 
                 if (cachedTarget is not null)
-                    retryTargetWhileUnavailable = false;
+                {
+                    retryTargetWhileUnavailable =
+                        false;
+                }
             }
         }
 
@@ -187,27 +198,31 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
             cachedTarget;
 
         if (target is null ||
-            target.OwnerCharacterId != currentCharacterId)
+            target.OwnerCharacterId !=
+                currentCharacterId)
         {
             Clear();
             return;
         }
 
-        if (target.Storage == StorageType.Retainer)
+        if (target.Storage ==
+            StorageType.Retainer)
         {
             UpdateRetainer(
                 target);
             return;
         }
 
-        if (target.Storage == StorageType.CharacterInventory)
+        if (target.Storage ==
+            StorageType.CharacterInventory)
         {
             UpdateCharacterInventory(
                 target);
             return;
         }
 
-        if (target.Storage == StorageType.FreeCompanyChest)
+        if (target.Storage ==
+            StorageType.FreeCompanyChest)
         {
             UpdateFreeCompanyChest(
                 target);
@@ -245,97 +260,43 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
         targetRefreshRequested = true;
     }
 
-    private long GetSourceContentRevision(
-        PlannerAction action)
-    {
-        if (action.Type != PlannerActionType.Move ||
-            action.Source is null)
-        {
-            return 0;
-        }
-
-        var source =
-            action.Source;
-
-        if (source.Storage != StorageType.CharacterInventory &&
-            source.Storage != StorageType.Retainer)
-        {
-            return plugin.InventoryIndex.GetSourceContentRevision(
-                source);
-        }
-
-        var containers =
-            plugin.InventoryIndex.Items
-                .Where(item =>
-                    item.Storage == source.Storage &&
-                    item.OwnerId == source.OwnerId &&
-                    (source.Storage != StorageType.Retainer ||
-                     item.ParentCharacterId == source.ParentCharacterId))
-                .Select(item =>
-                    item.Container)
-                .Append(
-                    source.Container)
-                .Distinct();
-
-        var revision = 0L;
-
-        foreach (var container in containers)
-        {
-            revision =
-                Math.Max(
-                    revision,
-                    plugin.InventoryIndex.GetSourceContentRevision(
-                        source with
-                        {
-                            Container = container
-                        }));
-        }
-
-        return revision;
-    }
-
     private HighlightTarget? BuildTarget(
         PlannerPlan plan,
-        int actionIndex,
-        PlannerAction action,
-        ulong currentCharacterId,
-        IReadOnlyList<InventoryItemSnapshot> currentItems)
+        ExecutionInstruction instruction,
+        ulong currentCharacterId)
     {
-        if (actionIndex < 0 ||
-            actionIndex >= plan.Actions.Count)
+        var decision =
+            instruction.Decision;
+
+        if (decision.Type !=
+                PlannerDecisionType.Move ||
+            decision.Source is null ||
+            decision.Destination is null)
         {
             return null;
         }
 
-        if (action.Type != PlannerActionType.Move ||
-            action.Source is null ||
-            action.Destination is null)
+        if (decision.Source.Storage ==
+            StorageType.Retainer)
         {
-            return null;
-        }
-
-        if (action.Source.Storage == StorageType.Retainer)
-        {
-            if (action.Source.ParentCharacterId == 0 ||
-                action.Source.ParentCharacterId != currentCharacterId)
+            if (decision.Source.ParentCharacterId == 0 ||
+                decision.Source.ParentCharacterId !=
+                    currentCharacterId)
             {
                 return null;
             }
 
             var location =
                 retainerDisplayLocator.LocateSource(
-                    plan,
-                    actionIndex,
-                    currentItems,
-                    action);
+                    instruction);
 
             if (!location.IsAvailable)
                 return null;
 
             return new HighlightTarget(
                 StorageType.Retainer,
-                action.Source.OwnerId,
-                action.Source.ParentCharacterId,
+                decision.Source.OwnerId,
+                decision.Source.ParentCharacterId,
                 location.Positions
                     .Select(position =>
                         new HighlightPosition(
@@ -345,29 +306,26 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
                     .ToArray());
         }
 
-        if (action.Source.Storage ==
+        if (decision.Source.Storage ==
                 StorageType.CharacterInventory &&
-            action.Source.OwnerId ==
+            decision.Source.OwnerId ==
                 currentCharacterId &&
             currentCharacterId !=
                 plan.InitialState.MainCharacterId &&
-            action.Destination.Storage ==
+            decision.Destination.Storage ==
                 StorageType.FreeCompanyChest)
         {
             var location =
                 characterDisplayLocator.LocateSource(
-                    plan,
-                    actionIndex,
-                    currentItems,
-                    action);
+                    instruction);
 
             if (!location.IsAvailable)
                 return null;
 
             return new HighlightTarget(
                 StorageType.CharacterInventory,
-                action.Source.OwnerId,
-                action.Source.OwnerId,
+                decision.Source.OwnerId,
+                decision.Source.OwnerId,
                 location.Positions
                     .Select(position =>
                         new HighlightPosition(
@@ -377,26 +335,24 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
                     .ToArray());
         }
 
-        if (action.Source.Storage == StorageType.FreeCompanyChest &&
-            action.Source.Container !=
-                InventorySource.AnyFreeCompanyPageContainer &&
-            action.Destination.Storage ==
+        if (decision.Source.Storage ==
+                StorageType.FreeCompanyChest &&
+            decision.Destination.Storage ==
                 StorageType.CharacterInventory &&
-            action.Destination.OwnerId == currentCharacterId)
+            decision.Destination.OwnerId ==
+                currentCharacterId)
         {
             var location =
                 freeCompanyDisplayLocator.LocateSource(
-                    plan,
-                    actionIndex,
-                    currentItems);
+                    instruction);
 
             if (!location.IsAvailable)
                 return null;
 
             return new HighlightTarget(
                 StorageType.FreeCompanyChest,
-                action.Source.OwnerId,
-                action.Destination.OwnerId,
+                decision.Source.OwnerId,
+                decision.Destination.OwnerId,
                 location.Positions
                     .Select(position =>
                         new HighlightPosition(
@@ -446,82 +402,82 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
 
     private static bool IsPotentialHighlightTarget(
         PlannerPlan plan,
-        int actionIndex,
+        ExecutionInstruction instruction,
         ulong currentCharacterId)
     {
-        if (actionIndex < 0 ||
-            actionIndex >= plan.Actions.Count ||
-            currentCharacterId == 0)
+        if (currentCharacterId == 0)
+            return false;
+
+        var decision =
+            instruction.Decision;
+
+        if (decision.Type !=
+                PlannerDecisionType.Move ||
+            decision.Source is null ||
+            decision.Destination is null)
         {
             return false;
         }
 
-        var action =
-            plan.Actions[actionIndex];
-
-        if (action.Type != PlannerActionType.Move ||
-            action.Source is null ||
-            action.Destination is null)
+        if (decision.Source.Storage ==
+            StorageType.Retainer)
         {
-            return false;
-        }
-
-        if (action.Source.Storage == StorageType.Retainer)
-        {
-            return action.Source.ParentCharacterId ==
+            return decision.Source.ParentCharacterId ==
                 currentCharacterId;
         }
 
-        if (action.Source.Storage == StorageType.FreeCompanyChest)
+        if (decision.Source.Storage ==
+            StorageType.FreeCompanyChest)
         {
-            return action.Source.Container !=
-                       InventorySource.AnyFreeCompanyPageContainer &&
-                   action.Destination.Storage ==
+            return decision.Destination.Storage ==
                        StorageType.CharacterInventory &&
-                   action.Destination.OwnerId ==
+                   decision.Destination.OwnerId ==
                        currentCharacterId;
         }
 
-        return action.Source.Storage ==
+        return decision.Source.Storage ==
                    StorageType.CharacterInventory &&
-               action.Source.OwnerId ==
+               decision.Source.OwnerId ==
                    currentCharacterId &&
                currentCharacterId !=
                    plan.InitialState.MainCharacterId &&
-               action.Destination.Storage ==
+               decision.Destination.Storage ==
                    StorageType.FreeCompanyChest;
     }
 
     private bool IsRelevantSourceUiVisible(
-        PlannerPlan plan,
-        int actionIndex)
+        ExecutionInstruction instruction)
     {
-        if (actionIndex < 0 ||
-            actionIndex >= plan.Actions.Count)
-        {
-            return false;
-        }
-
         var source =
-            plan.Actions[actionIndex].Source;
+            instruction.Decision.Source;
 
-        if (source?.Storage == StorageType.Retainer)
+        if (source?.Storage ==
+            StorageType.Retainer)
         {
-            return IsAddonVisible("RetainerList") ||
-                   IsAddonVisible("InventoryRetainer") ||
-                   IsAddonVisible("InventoryRetainerLarge");
+            return IsAddonVisible(
+                       "RetainerList") ||
+                   IsAddonVisible(
+                       "InventoryRetainer") ||
+                   IsAddonVisible(
+                       "InventoryRetainerLarge");
         }
 
-        if (source?.Storage == StorageType.CharacterInventory)
+        if (source?.Storage ==
+            StorageType.CharacterInventory)
         {
-            return IsAddonVisible("InventoryGrid") ||
-                   IsAddonVisible("InventoryLarge") ||
-                   IsAddonVisible("InventoryExpansion");
+            return IsAddonVisible(
+                       "InventoryGrid") ||
+                   IsAddonVisible(
+                       "InventoryLarge") ||
+                   IsAddonVisible(
+                       "InventoryExpansion");
         }
 
-        if (source?.Storage == StorageType.FreeCompanyChest)
+        if (source?.Storage ==
+            StorageType.FreeCompanyChest)
         {
-            return IsAddonVisible("FreeCompanyChest");
+            return IsAddonVisible(
+                "FreeCompanyChest");
         }
 
         return false;
@@ -1009,12 +965,19 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
         return node != null;
     }
 
+    private static string BuildInstructionKey(
+        ExecutionInstruction instruction) =>
+        string.Join(
+            "|",
+            instruction.SourceStacks.Select(allocation =>
+                $"{allocation.Item.Storage}:{allocation.Item.OwnerId}:{allocation.Item.Container}:{allocation.Item.Slot}:{allocation.Quantity}"));
+
     private void InvalidateTargetCache()
     {
         cachedPlan = null;
         cachedActionIndex = -1;
         cachedCharacterId = 0;
-        cachedSourceContentRevision = 0;
+        cachedInstructionKey = string.Empty;
         cachedTarget = null;
         targetRefreshRequested = false;
         retryTargetWhileUnavailable = false;

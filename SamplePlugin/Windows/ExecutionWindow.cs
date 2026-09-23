@@ -94,19 +94,19 @@ public sealed class ExecutionWindow : Window, IDisposable
         }
 
         ImGui.Text(
-            session.TotalActionCount > 0
-                ? $"Azione {Math.Min(session.CurrentActionIndex, session.TotalActionCount)} / {session.TotalActionCount}"
+            session.TotalDecisionCount > 0
+                ? $"Azione {Math.Min(session.CurrentDecisionIndex, session.TotalDecisionCount)} / {session.TotalDecisionCount}"
                 : "Azioni attualmente eseguibili: 0");
 
         ImGui.ProgressBar(
-            session.TotalActionCount > 0
-                ? (float)session.VerifiedActionCount /
-                  session.TotalActionCount
+            session.TotalDecisionCount > 0
+                ? (float)session.VerifiedDecisionCount /
+                  session.TotalDecisionCount
                 : session.IsComplete
                     ? 1f
                     : 0f,
             new Vector2(-1, 0),
-            $"{session.VerifiedActionCount}/{session.TotalActionCount}");
+            $"{session.VerifiedDecisionCount}/{session.TotalDecisionCount}");
 
         ImGui.Spacing();
         ImGui.Separator();
@@ -159,32 +159,34 @@ public sealed class ExecutionWindow : Window, IDisposable
             return;
         }
 
-        var action =
-            runtime.CurrentAction ??
-            session.CurrentAction;
+        var instruction =
+            runtime.CurrentInstruction;
 
-        if (action is null)
+        var decision =
+            instruction?.Decision ??
+            session.CurrentDecision;
+
+        if (decision is null)
         {
             ImGui.TextWrapped(
-                "Nessuna azione corrente disponibile.");
+                "Nessuna decisione corrente disponibile.");
 
             DrawControls(
                 runtime);
             return;
         }
 
-        if (action.Type ==
-            PlannerActionType.SwitchCharacter)
+        if (decision.Type ==
+            PlannerDecisionType.SwitchCharacter)
         {
             DrawSwitchAction(
-                action);
+                decision);
         }
         else
         {
             DrawMoveAction(
-                session.Plan,
-                session.CurrentActionIndex - 1,
-                action);
+                decision,
+                instruction);
         }
 
         ImGui.Spacing();
@@ -197,7 +199,7 @@ public sealed class ExecutionWindow : Window, IDisposable
     }
 
     private void DrawSwitchAction(
-        PlannerAction action)
+        PlannerDecision decision)
     {
         ImGui.TextWrapped(
             "CAMBIA PERSONAGGIO");
@@ -205,51 +207,54 @@ public sealed class ExecutionWindow : Window, IDisposable
         ImGui.Spacing();
 
         ImGui.TextWrapped(
-            $"Da: {GetCharacterName(action.FromCharacterId)}");
+            $"Da: {GetCharacterName(decision.FromCharacterId)}");
 
         ImGui.TextWrapped(
-            $"A: {GetCharacterName(action.ToCharacterId)}");
+            $"A: {GetCharacterName(decision.ToCharacterId)}");
     }
 
     private void DrawMoveAction(
-        PlannerPlan plan,
-        int actionIndex,
-        PlannerAction action)
+        PlannerDecision decision,
+        ExecutionInstruction? instruction)
     {
-        if (action.Source is null ||
-            action.Destination is null)
+        if (decision.Source is null ||
+            decision.Destination is null)
         {
             ImGui.TextWrapped(
-                "Azione MOVE priva di origine o destinazione.");
+                "Decisione MOVE priva di origine o destinazione.");
 
             return;
         }
 
         ImGui.TextWrapped(
-            $"{GetItemName(action.BaseItemId)} | " +
-            $"{(action.IsHq ? "HQ" : "NQ")} | " +
-            $"x{action.Quantity}");
+            $"{GetItemName(decision.BaseItemId)} | " +
+            $"{(decision.IsHq ? "HQ" : "NQ")} | " +
+            $"x{instruction?.Quantity ?? decision.Quantity}");
+
+        if (instruction is not null &&
+            instruction.Quantity != decision.Quantity)
+        {
+            ImGui.TextWrapped(
+                $"Residuo {instruction.Quantity} / pianificato {decision.Quantity}");
+        }
 
         ImGui.Spacing();
 
         ImGui.TextWrapped(
-            $"PRENDI DA: {GetSourceName(action.Source)}");
+            $"PRENDI DA: {GetSourceName(decision.Source)}");
 
         ImGui.TextWrapped(
             $"DOVE: {GetSourceLocationText(
-                plan,
-                actionIndex,
-                action.Source,
-                plugin.InventoryIndex.Items,
-                action)}");
+                decision.Source,
+                instruction)}");
 
         ImGui.Spacing();
 
         ImGui.TextWrapped(
-            $"PORTA A: {GetSourceName(action.Destination)}");
+            $"PORTA A: {GetSourceName(decision.Destination)}");
 
         ImGui.TextWrapped(
-            $"DESTINAZIONE: {GetContainerName(action.Destination)}");
+            $"DESTINAZIONE: {GetContainerName(decision.Destination)}");
     }
 
     private static void DrawStatus(
@@ -317,7 +322,7 @@ public sealed class ExecutionWindow : Window, IDisposable
         if (plan.CapacityBlocked > 0)
         {
             ImGui.TextWrapped(
-                plan.Actions.Count == 0
+                plan.Decisions.Count == 0
                     ? "Piano non eseguibile: lo spazio libero nelle destinazioni non è sufficiente."
                     : "Tutte le azioni eseguibili sono state osservate e verificate, ma il piano non può essere completato per spazio insufficiente.");
 
@@ -345,7 +350,7 @@ public sealed class ExecutionWindow : Window, IDisposable
         }
 
         ImGui.TextWrapped(
-            plan.Actions.Count == 0
+            plan.Decisions.Count == 0
                 ? "Nessuna azione necessaria: il fabbisogno è già soddisfatto."
                 : "Piano completato. Tutte le azioni sono state osservate e verificate.");
     }
@@ -460,10 +465,10 @@ public sealed class ExecutionWindow : Window, IDisposable
         lines.Add($"CapacityBlocks={plan.CapacityBlocks.Count}");
         lines.Add($"CapacityAdvice={plan.CapacityAdvice.Count}");
         lines.Add($"UnavailableMissing={Math.Max(0, plan.Missing - plan.CapacityBlocked)}");
-        lines.Add($"Actions={session.TotalActionCount}");
-        lines.Add($"VerifiedActions={session.VerifiedActionCount}");
-        lines.Add($"RemainingActions={session.RemainingActionCount}");
-        lines.Add($"CurrentActionIndex={session.CurrentActionIndex}");
+        lines.Add($"Decisions={session.TotalDecisionCount}");
+        lines.Add($"VerifiedDecisions={session.VerifiedDecisionCount}");
+        lines.Add($"RemainingDecisions={session.RemainingDecisionCount}");
+        lines.Add($"CurrentDecisionIndex={session.CurrentDecisionIndex}");
 
         if (runtime.Verification is not null)
         {
@@ -529,11 +534,11 @@ public sealed class ExecutionWindow : Window, IDisposable
 
         foreach (var step in session.Steps)
         {
-            var action =
-                step.Action;
+            var decision =
+                step.Decision;
 
-            if (action.Type ==
-                PlannerActionType.SwitchCharacter)
+            if (decision.Type ==
+                PlannerDecisionType.SwitchCharacter)
             {
                 lines.Add(
                     string.Join(
@@ -541,21 +546,29 @@ public sealed class ExecutionWindow : Window, IDisposable
                         step.Index,
                         step.Status,
                         "SWITCH",
-                        GetCharacterName(action.FromCharacterId),
-                        action.FromCharacterId,
-                        GetCharacterName(action.ToCharacterId),
-                        action.ToCharacterId));
+                        GetCharacterName(
+                            decision.FromCharacterId),
+                        decision.FromCharacterId,
+                        GetCharacterName(
+                            decision.ToCharacterId),
+                        decision.ToCharacterId));
 
                 continue;
             }
 
-            if (action.Source is null ||
-                action.Destination is null)
+            if (decision.Source is null ||
+                decision.Destination is null)
             {
                 lines.Add(
                     $"{step.Index}\t{step.Status}\tMOVE\tINVALID");
                 continue;
             }
+
+            var instruction =
+                step.Index ==
+                session.CurrentDecisionIndex
+                    ? runtime.CurrentInstruction
+                    : null;
 
             lines.Add(
                 string.Join(
@@ -563,25 +576,27 @@ public sealed class ExecutionWindow : Window, IDisposable
                     step.Index,
                     step.Status,
                     "MOVE",
-                    GetItemName(action.BaseItemId),
-                    action.BaseItemId,
-                    action.IsHq ? "HQ" : "NQ",
-                    action.Quantity,
-                    GetSourceName(action.Source),
-                    action.Source.Storage,
+                    GetItemName(
+                        decision.BaseItemId),
+                    decision.BaseItemId,
+                    decision.IsHq
+                        ? "HQ"
+                        : "NQ",
+                    decision.Quantity,
+                    instruction is not null
+                        ? $"Remaining={instruction.Quantity}"
+                        : "Remaining=n/a",
+                    GetSourceName(
+                        decision.Source),
+                    decision.Source.Storage,
                     GetSourceLocationText(
-                        plan,
-                        step.Index - 1,
-                        action.Source,
-                        step.Index == session.CurrentActionIndex
-                            ? plugin.InventoryIndex.Items
-                            : null,
-                        step.Index == session.CurrentActionIndex
-                            ? runtime.CurrentAction
-                            : null),
-                    GetSourceName(action.Destination),
-                    action.Destination.Storage,
-                    GetContainerName(action.Destination)));
+                        decision.Source,
+                        instruction),
+                    GetSourceName(
+                        decision.Destination),
+                    decision.Destination.Storage,
+                    GetContainerName(
+                        decision.Destination)));
         }
 
         return string.Join(
@@ -595,37 +610,71 @@ public sealed class ExecutionWindow : Window, IDisposable
     }
 
     private string GetSourceLocationText(
-        PlannerPlan plan,
-        int actionIndex,
-        InventorySource source,
-        IReadOnlyList<InventoryItemSnapshot>? currentItems = null,
-        PlannerAction? executionAction = null)
+        PlannerLogicalSource source,
+        ExecutionInstruction? instruction)
     {
-        if (source.Storage !=
+        if (instruction is null)
+        {
+            return GetContainerName(
+                source);
+        }
+
+        if (source.Storage ==
             StorageType.Retainer)
         {
-            return GetContainerName(
-                source);
+            var location =
+                retainerDisplayLocator.LocateSource(
+                    instruction);
+
+            return location.IsAvailable
+                ? string.Join(
+                    ", ",
+                    location.Positions.Select(position =>
+                        $"Pagina {position.Page}, slot {position.Slot} x{position.Quantity}"))
+                : GetContainerName(
+                    source);
         }
 
-        var displayLocation =
-            retainerDisplayLocator.LocateSource(
-                plan,
-                actionIndex,
-                currentItems,
-                executionAction);
+        return GetContainerName(
+            source);
+    }
 
-        if (!displayLocation.IsAvailable)
+    private string GetSourceName(
+        PlannerLogicalSource source)
+    {
+        var ownerName =
+            source.OwnerName;
+
+        if (!string.IsNullOrWhiteSpace(
+                ownerName))
         {
-            return GetContainerName(
-                source);
+            return source.Storage ==
+                       StorageType.Retainer
+                ? AppendParentCharacter(
+                    ownerName,
+                    source.ParentCharacterId)
+                : ownerName;
         }
 
-        return string.Join(
-            ", ",
-            displayLocation.Positions
-                .Select(position =>
-                    $"Pagina {position.Page}, slot {position.Slot} x{position.Quantity}"));
+        return source.Storage switch
+        {
+            StorageType.CharacterInventory =>
+                GetCharacterName(
+                    source.OwnerId),
+
+            StorageType.Retainer =>
+                AppendParentCharacter(
+                    GetCharacterName(
+                        source.OwnerId),
+                    source.ParentCharacterId),
+
+            StorageType.FreeCompanyChest =>
+                GetCharacterName(
+                    source.OwnerId),
+
+            _ =>
+                source.Storage.ToString()
+        };
     }
 
     private string GetSourceName(
@@ -728,6 +777,23 @@ public sealed class ExecutionWindow : Window, IDisposable
 
         return $"Item {baseItemId}";
     }
+
+    private static string GetContainerName(
+        PlannerLogicalSource source) =>
+        source.Storage switch
+        {
+            StorageType.CharacterInventory =>
+                "Inventario personaggio",
+
+            StorageType.Retainer =>
+                "Inventario retainer",
+
+            StorageType.FreeCompanyChest =>
+                "Free Company Chest",
+
+            _ =>
+                source.Storage.ToString()
+        };
 
     private static string GetContainerName(
         InventorySource source)

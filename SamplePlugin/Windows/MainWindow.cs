@@ -664,10 +664,10 @@ public class MainWindow : Window, IDisposable
         }
 
         ImGui.Text(
-            $"Verificate: {session.VerifiedActionCount}/{session.TotalActionCount}");
+            $"Verificate: {session.VerifiedDecisionCount}/{session.TotalDecisionCount}");
 
         ImGui.Text(
-            $"Rimanenti: {session.RemainingActionCount}");
+            $"Rimanenti: {session.RemainingDecisionCount}");
 
         if (execution.IsReplanning)
         {
@@ -1085,8 +1085,6 @@ public class MainWindow : Window, IDisposable
                     action.Source.OwnerId,
                     action.Source.ParentCharacterId,
                     GetActionSourceLocationText(
-                        plan,
-                        actionIndex,
                         action),
                     GetSourceName(action.Destination),
                     action.Destination.Storage,
@@ -1972,43 +1970,13 @@ public class MainWindow : Window, IDisposable
     }
 
     private string GetActionSourceLocationText(
-        PlannerPlan plan,
-        int actionIndex,
         PlannerAction action)
     {
         if (action.Source is null)
             return "Source non disponibile";
 
-        if (action.Source.Storage != StorageType.Retainer)
-        {
-            return GetContainerName(
-                action.Source);
-        }
-
-        var displayLocation =
-            retainerDisplayLocator.LocateSource(
-                plan,
-                actionIndex);
-
-        var internalContainer =
-            GetContainerName(
-                action.Source);
-
-        if (!displayLocation.IsAvailable)
-        {
-            return
-                $"Posizione visibile retainer non disponibile | {internalContainer}";
-        }
-
-        var visiblePositions =
-            string.Join(
-                ", ",
-                displayLocation.Positions
-                    .Select(position =>
-                        $"Pagina visibile {position.Page}, slot {position.Slot} x{position.Quantity}"));
-
-        return
-            $"{visiblePositions} | {internalContainer}";
+        return GetContainerName(
+            action.Source);
     }
 
     private static string GetContainerName(

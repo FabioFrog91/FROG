@@ -1,124 +1,167 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace FROG.Core.Inventory;
 
-public readonly record struct PlanExecutionMaterializedAction(
-    PlannerAction Action,
-    int CoveredActionCount);
+public sealed record ExecutionInstruction(
+    PlannerDecision Decision,
+    int RemainingQuantity,
+    IReadOnlyList<InventoryStackAllocation> SourceStacks)
+{
+    public int Quantity =>
+        RemainingQuantity;
+}
+
+public sealed record PlanExecutionMaterializationResult(
+    bool IsAvailable,
+    ExecutionInstruction? Instruction,
+    int AvailableQuantity,
+    string Message)
+{
+    public static PlanExecutionMaterializationResult Available(
+        ExecutionInstruction instruction) =>
+        new(
+            true,
+            instruction,
+            instruction.Quantity,
+            string.Empty);
+
+    public static PlanExecutionMaterializationResult Unavailable(
+        int availableQuantity,
+        string message) =>
+        new(
+            false,
+            null,
+            availableQuantity,
+            message);
+}
 
 /// <summary>
-/// Collapses consecutive planner MOVE actions that represent the same logical
-/// transfer while ignoring only the physical source container for storages
-/// whose execution semantics are logical across their internal containers.
+/// Materializes one logical planner decision against the current observed
+/// inventory state. It decides physical source stacks only; it never changes
+/// route, item, quality or planned quantity.
 /// </summary>
 public sealed class PlanExecutionMaterializer
 {
-    public PlanExecutionMaterializedAction Materialize(
-        PlannerPlan plan,
-        int firstActionIndex)
+    private readonly ExecutionOrderCompiler executionOrderCompiler;
+
+    public PlanExecutionMaterializer(
+        ExecutionOrderCompiler executionOrderCompiler)
     {
-        if (firstActionIndex < 0 ||
-            firstActionIndex >= plan.Actions.Count)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(firstActionIndex));
-        }
+        this.executionOrderCompiler =
+            executionOrderCompiler;
+    }
 
-        var first =
-            plan.Actions[firstActionIndex];
-
-        if (!CanMaterializeAcrossContainers(
-                first))
+    public PlanExecutionMaterializationResult Materialize(
+        PlannerDecision decision,
+        IReadOnlyList<InventoryItemSnapshot> currentItems,
+        int? requestedQuantity = null)
+    {
+        if (decision.Type ==
+            PlannerDecisionType.SwitchCharacter)
         {
-            return new PlanExecutionMaterializedAction(
-                first,
-                1);
+            return PlanExecutionMaterializationResult.Available(
+                new ExecutionInstruction(
+                    decision,
+                    0,
+                    Array.Empty<InventoryStackAllocation>()));
         }
 
         var quantity =
-            first.Quantity;
+            requestedQuantity ??
+            decision.Quantity;
 
-        var covered =
-            1;
-
-        for (var index = firstActionIndex + 1;
-             index < plan.Actions.Count;
-             index++)
+        if (decision.Source is null ||
+            decision.Destination is null ||
+            quantity <= 0 ||
+            quantity > decision.Quantity)
         {
-            var candidate =
-                plan.Actions[index];
+            return PlanExecutionMaterializationResult.Unavailable(
+                0,
+                "Decisione MOVE logica non valida.");
+        }
 
-            if (!IsSameLogicalMove(
-                    first,
-                    candidate))
-            {
+        var matchingStacks =
+            currentItems
+                .Where(item =>
+                    IsSameLogicalSource(
+                        item,
+                        decision.Source) &&
+                    ExecutionInventoryRules.IsExecutableContainer(
+                        item) &&
+                    item.BaseItemId ==
+                        decision.BaseItemId &&
+                    item.IsHq ==
+                        decision.IsHq &&
+                    item.Quantity > 0)
+                .ToList();
+
+        var availableQuantity =
+            matchingStacks.Sum(item =>
+                item.Quantity);
+
+        if (availableQuantity <
+            quantity)
+        {
+            return PlanExecutionMaterializationResult.Unavailable(
+                availableQuantity,
+                $"La source logica contiene {availableQuantity} unità, ma l'esecuzione residua ne richiede {quantity}.");
+        }
+
+        var orderedStacks =
+            executionOrderCompiler
+                .OrderStacksForExecution(
+                    matchingStacks);
+
+        var remaining =
+            quantity;
+
+        var allocations =
+            new List<InventoryStackAllocation>();
+
+        foreach (var stack in orderedStacks)
+        {
+            if (remaining <= 0)
                 break;
-            }
 
-            quantity =
-                checked(
-                    quantity +
-                    candidate.Quantity);
+            var allocatedQuantity =
+                Math.Min(
+                    remaining,
+                    stack.Quantity);
 
-            covered++;
+            allocations.Add(
+                new InventoryStackAllocation(
+                    stack,
+                    allocatedQuantity));
+
+            remaining -=
+                allocatedQuantity;
         }
 
-        if (covered == 1)
+        if (remaining != 0)
         {
-            return new PlanExecutionMaterializedAction(
-                first,
-                1);
+            return PlanExecutionMaterializationResult.Unavailable(
+                quantity -
+                remaining,
+                "La materializzazione fisica non copre tutta la quantità logica pianificata.");
         }
 
-        return new PlanExecutionMaterializedAction(
-            first with
-            {
-                Quantity = quantity
-            },
-            covered);
+        return PlanExecutionMaterializationResult.Available(
+            new ExecutionInstruction(
+                decision,
+                quantity,
+                allocations));
     }
 
-    private static bool CanMaterializeAcrossContainers(
-        PlannerAction action) =>
-        action.Type == PlannerActionType.Move &&
-        action.Source is not null &&
-        action.Destination is not null &&
-        action.Quantity > 0 &&
-        action.Source.Storage is
-            StorageType.Retainer or
-            StorageType.CharacterInventory;
-
-    private static bool IsSameLogicalMove(
-        PlannerAction first,
-        PlannerAction candidate)
-    {
-        if (!CanMaterializeAcrossContainers(
-                candidate) ||
-            first.Source is null ||
-            first.Destination is null ||
-            candidate.Source is null ||
-            candidate.Destination is null)
-        {
-            return false;
-        }
-
-        return first.BaseItemId ==
-                   candidate.BaseItemId &&
-               first.IsHq ==
-                   candidate.IsHq &&
-               first.Source.Storage ==
-                   candidate.Source.Storage &&
-               first.Source.OwnerId ==
-                   candidate.Source.OwnerId &&
-               first.Source.ParentCharacterId ==
-                   candidate.Source.ParentCharacterId &&
-               first.Destination.Storage ==
-                   candidate.Destination.Storage &&
-               first.Destination.OwnerId ==
-                   candidate.Destination.OwnerId &&
-               first.Destination.Container ==
-                   candidate.Destination.Container &&
-               first.Destination.ParentCharacterId ==
-                   candidate.Destination.ParentCharacterId;
-    }
+    private static bool IsSameLogicalSource(
+        InventoryItemSnapshot item,
+        PlannerLogicalSource source) =>
+        item.Storage ==
+            source.Storage &&
+        item.OwnerId ==
+            source.OwnerId &&
+        (source.Storage != StorageType.Retainer ||
+         item.ParentCharacterId ==
+            source.ParentCharacterId);
 }

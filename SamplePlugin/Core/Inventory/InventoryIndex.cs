@@ -645,6 +645,82 @@ public sealed class InventoryIndex
         }
     }
 
+    public InventorySourceItemObservation ObserveLogicalItem(
+        uint baseItemId,
+        bool isHq,
+        PlannerLogicalSource source)
+    {
+        lock (syncLock)
+        {
+            var matchingItems =
+                items
+                    .Where(item =>
+                        item.BaseItemId == baseItemId &&
+                        item.IsHq == isHq &&
+                        item.Storage == source.Storage &&
+                        item.OwnerId == source.OwnerId &&
+                        (source.Storage != StorageType.Retainer ||
+                         item.ParentCharacterId == source.ParentCharacterId))
+                    .ToList();
+
+            var quantity =
+                matchingItems.Sum(item =>
+                    item.Quantity);
+
+            ulong layoutFingerprint = 0;
+
+            foreach (var item in matchingItems)
+            {
+                layoutFingerprint ^=
+                    GetStackLayoutFingerprint(
+                        item);
+            }
+
+            layoutFingerprint ^=
+                unchecked(
+                    (ulong)matchingItems.Count *
+                    1099511628211UL);
+
+            var observedAtUtc =
+                sourceObservedAtUtc
+                    .Where(entry =>
+                        entry.Key.Storage == source.Storage &&
+                        entry.Key.OwnerId == source.OwnerId)
+                    .Select(entry =>
+                        (DateTime?)entry.Value)
+                    .DefaultIfEmpty(null)
+                    .Max();
+
+            var observationRevision =
+                sourceObservationRevision
+                    .Where(entry =>
+                        entry.Key.Storage == source.Storage &&
+                        entry.Key.OwnerId == source.OwnerId)
+                    .Select(entry =>
+                        (long?)entry.Value)
+                    .DefaultIfEmpty(null)
+                    .Max();
+
+            var contentRevision =
+                sourceContentRevision
+                    .Where(entry =>
+                        entry.Key.Storage == source.Storage &&
+                        entry.Key.OwnerId == source.OwnerId)
+                    .Select(entry =>
+                        entry.Value)
+                    .DefaultIfEmpty(0)
+                    .Max();
+
+            return new InventorySourceItemObservation(
+                quantity,
+                quantity,
+                observedAtUtc,
+                observationRevision,
+                contentRevision,
+                layoutFingerprint);
+        }
+    }
+
     private static bool HaveSameContents(
         IReadOnlyList<InventoryItemSnapshot> left,
         IReadOnlyList<InventoryItemSnapshot> right)
