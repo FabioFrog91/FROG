@@ -18,7 +18,6 @@ namespace FROG.Windows;
 public sealed class ExecutionWindow : Window, IDisposable
 {
     private readonly PlanExecutionRuntime executionRuntime;
-    private readonly ExecutionInventoryHighlighter executionInventoryHighlighter;
     private readonly RetainerDisplayLocator retainerDisplayLocator;
     private readonly ICharacterMonitor characterMonitor;
     private readonly CharacterCatalog characterCatalog;
@@ -26,7 +25,6 @@ public sealed class ExecutionWindow : Window, IDisposable
 
     public ExecutionWindow(
         PlanExecutionRuntime executionRuntime,
-        ExecutionInventoryHighlighter executionInventoryHighlighter,
         RetainerDisplayLocator retainerDisplayLocator,
         ICharacterMonitor characterMonitor,
         CharacterCatalog characterCatalog,
@@ -34,7 +32,6 @@ public sealed class ExecutionWindow : Window, IDisposable
         : base("FROG - Execution###FROGExecution")
     {
         this.executionRuntime = executionRuntime;
-        this.executionInventoryHighlighter = executionInventoryHighlighter;
         this.retainerDisplayLocator = retainerDisplayLocator;
         this.characterMonitor = characterMonitor;
         this.characterCatalog = characterCatalog;
@@ -479,9 +476,6 @@ public sealed class ExecutionWindow : Window, IDisposable
         lines.Add($"VerifiedHistory={runtime.VerifiedHistory.Count}");
         lines.Add($"RemainingDecisions={session.RemainingDecisionCount}");
         lines.Add($"CurrentDecisionIndex={session.CurrentDecisionIndex}");
-        lines.Add(string.Empty);
-        lines.Add("===== HIGHLIGHT HISTORY =====");
-        lines.AddRange(executionInventoryHighlighter.GetDebugLines());
 
         if (runtime.Verification is not null)
         {
