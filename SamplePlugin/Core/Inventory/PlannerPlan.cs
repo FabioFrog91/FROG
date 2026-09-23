@@ -173,7 +173,7 @@ public sealed class PlannerPlan
         new(
             InitialState,
             FinalState,
-            reorderedActions,
+            reorderedActions.ToList(),
             Result,
             Missing,
             CapacityBlocked,
