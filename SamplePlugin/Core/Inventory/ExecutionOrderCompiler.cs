@@ -85,6 +85,131 @@ public sealed class ExecutionOrderCompiler
             materialized);
     }
 
+    public IReadOnlyList<InventoryItemSnapshot> OrderRuntimeStacksForAction(
+        PlannerPlan plan,
+        int actionIndex,
+        InventorySource source,
+        IEnumerable<InventoryItemSnapshot> stacks)
+    {
+        var ordered =
+            OrderStacksForExecution(
+                source,
+                stacks)
+            .ToList();
+
+        if (actionIndex < 0 ||
+            actionIndex >= plan.Actions.Count ||
+            ordered.Count < 2)
+        {
+            return ordered;
+        }
+
+        var action =
+            plan.Actions[actionIndex];
+
+        if (action.Type != PlannerActionType.Move ||
+            action.Source is null ||
+            action.Quantity <= 0)
+        {
+            return ordered;
+        }
+
+        var reserved =
+            new HashSet<PhysicalStackKey>();
+
+        var availableQuantity =
+            ordered.Sum(item =>
+                item.Quantity);
+
+        for (var index = actionIndex + 1;
+             index < plan.Actions.Count;
+             index++)
+        {
+            var future =
+                plan.Actions[index];
+
+            if (future.Type != PlannerActionType.Move ||
+                future.Source is null ||
+                future.Destination is null ||
+                action.Destination is null ||
+                !IsSameExecutionGroup(
+                    action,
+                    future))
+            {
+                break;
+            }
+
+            if (future.BaseItemId != action.BaseItemId ||
+                future.IsHq != action.IsHq ||
+                future.Quantity <= 0)
+            {
+                continue;
+            }
+
+            var exact =
+                ordered
+                    .Where(item =>
+                        !reserved.Contains(
+                            PhysicalStackKey.From(
+                                item)) &&
+                        item.Quantity ==
+                            future.Quantity)
+                    .OrderBy(item =>
+                        item.Container ==
+                        future.Source.Container
+                            ? 0
+                            : 1)
+                    .ThenBy(item =>
+                        ordered.IndexOf(
+                            item))
+                    .FirstOrDefault();
+
+            if (exact is null)
+                continue;
+
+            if (availableQuantity - exact.Quantity <
+                action.Quantity)
+            {
+                continue;
+            }
+
+            reserved.Add(
+                PhysicalStackKey.From(
+                    exact));
+
+            availableQuantity -=
+                exact.Quantity;
+        }
+
+        var available =
+            ordered
+                .Where(item =>
+                    !reserved.Contains(
+                        PhysicalStackKey.From(
+                            item)))
+                .ToList();
+
+        var exactCurrentIndex =
+            available.FindIndex(item =>
+                item.Quantity ==
+                action.Quantity);
+
+        if (exactCurrentIndex > 0)
+        {
+            var exactCurrent =
+                available[exactCurrentIndex];
+
+            available.RemoveAt(
+                exactCurrentIndex);
+
+            available.Insert(
+                0,
+                exactCurrent);
+        }
+
+        return available;
+    }
+
     private void CaptureCharacter(
         ulong characterId,
         IReadOnlyList<InventoryItemSnapshot> inventoryItems,
