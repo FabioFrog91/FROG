@@ -35,12 +35,14 @@ public sealed record PlannerCapacityAdvice(
 public sealed class PlannerPlan
 {
     private readonly List<PlannerAction> actions;
+    private readonly IReadOnlyList<PlannerDecision> decisions;
     private readonly List<PlannerCapacityBlock> capacityBlocks;
     private readonly List<PlannerCapacityAdvice> capacityAdvice;
 
     public PlannerState InitialState { get; }
     public PlannerState FinalState { get; }
     public IReadOnlyList<PlannerAction> Actions => actions;
+    public IReadOnlyList<PlannerDecision> Decisions => decisions;
     public PlannerPlanResult Result { get; }
     public int Missing { get; }
     public int CapacityBlocked { get; }
@@ -94,7 +96,8 @@ public sealed class PlannerPlan
             missing,
             capacityBlocked,
             capacityBlocks?.ToList() ??
-            new List<PlannerCapacityBlock>())
+            new List<PlannerCapacityBlock>(),
+            decisions: null)
     {
     }
 
@@ -105,11 +108,16 @@ public sealed class PlannerPlan
         PlannerPlanResult result,
         int missing,
         int capacityBlocked,
-        List<PlannerCapacityBlock> capacityBlocks)
+        List<PlannerCapacityBlock> capacityBlocks,
+        IReadOnlyList<PlannerDecision>? decisions)
     {
         InitialState = initialState;
         FinalState = finalState;
         this.actions = actions;
+        this.decisions =
+            decisions ??
+            PlannerDecisionCompiler.Compile(
+                actions);
         Result = result;
         Missing = missing;
         CapacityBlocked = Math.Clamp(
@@ -141,7 +149,8 @@ public sealed class PlannerPlan
             Result,
             Missing,
             CapacityBlocked,
-            capacityBlocks);
+            capacityBlocks,
+            decisions: null);
     }
 
     public PlannerPlan WithResult(
@@ -156,18 +165,20 @@ public sealed class PlannerPlan
             Math.Min(
                 CapacityBlocked,
                 missing),
-            capacityBlocks);
+            capacityBlocks,
+            decisions);
 
     public PlannerPlan WithActions(
         IEnumerable<PlannerAction> reorderedActions) =>
         new(
             InitialState,
             FinalState,
-            reorderedActions,
+            reorderedActions.ToList(),
             Result,
             Missing,
             CapacityBlocked,
-            capacityBlocks);
+            capacityBlocks,
+            decisions);
 
     private static List<PlannerCapacityAdvice> BuildCapacityAdvice(
         IReadOnlyList<PlannerCapacityBlock> blocks) =>
