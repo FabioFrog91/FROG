@@ -21,7 +21,7 @@ public sealed record PlanExecutionObservation(
     ulong SourceLayoutFingerprint);
 
 public sealed record PlanExecutionBaseline(
-    int ActionIndex,
+    int DecisionIndex,
     int SourceQuantity,
     int LogicalSourceQuantity,
     int DestinationQuantity,
