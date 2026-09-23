@@ -39,7 +39,7 @@ Regole inderogabili:
 - Solution: `SamplePlugin.slnx`
 - Project: `SamplePlugin/SamplePlugin.csproj`
 - Namespace Core: `FROG.Core.Inventory`
-- Master corrente al 2026-09-23: `1c6e67283fe62f02549268129965460ab6083b50`
+- Master corrente al 2026-09-23: `523b666d38886ca3e418d22ef7d6a2870691cc85`
 
 Workflow modifiche:
 
@@ -52,7 +52,7 @@ Workflow modifiche:
 7. merge normale, mai force push;
 8. test locale/runtime separato.
 
-Branch sperimentali non mergiate non sono soluzione. In particolare `fix/core-execution-logical-groups` è da considerare prototipo/scarto finché non viene riprogettata secondo questo documento.
+Branch sperimentali non mergiate non sono soluzione. `fix/core-execution-logical-groups` è obsoleta/scartata e non va usata come riferimento.
 
 ## 3. Obiettivo principale di FROG
 
@@ -230,12 +230,15 @@ Ordine lessicografico esatto:
 
 Mai weighted.
 
-Problema aperto verificato nel codice:
-- `PlannerPlanScore.CompareTo()` confronta attualmente `QualityFallback` prima delle sette priorità. Va corretto con una decisione esplicita, non ignorato.
+Stato corrente:
+- ordine canonico reso immutabile;
+- `QualityFallback` rimosso dallo score perché HqFirst/NqFirst è già deciso a monte nella costruzione dei target qualità;
+- `TransferHops` conta route logiche distinte;
+- `SourcePriority` è calcolata una volta per source logica;
+- `Alphabetical` usa source logiche distinte;
+- `ConsumedStacks` e `Freshness` restano intenzionalmente fisici perché misurano consumo reale degli stack ed evidenza osservata.
 
-Semantica importante:
-- `ConsumedStacks` può e deve usare dettaglio fisico;
-- `TransferHops`, `SourcePriority` e `Alphabetical` non devono cambiare solo perché la stessa quantità è distribuita su più container fisici della stessa source logica.
+Stato: BUILD/CI VERIFICATO, runtime planner da riconfermare nelle casistiche complete.
 
 ## 7. Capacity
 
@@ -300,21 +303,18 @@ Componenti validi da conservare come base:
 - `PlannerPlanEvaluator`
 - `GlobalPlannerCoordinator`
 
-Problema architetturale centrale aperto:
+Contratto corrente:
 
-Il planner usa correttamente gli stack fisici per scegliere/valutare un piano, ma oggi `PlannerPlan.Actions` espone direttamente chunk fisici/container come istruzioni operative.
+- `PlannerPlan.Actions` = simulazione/evidenza fisica interna del planner;
+- `PlannerPlan.Decisions` = contratto logico immutabile Planning → Execution;
+- `ExecutionInstruction` = materializzazione runtime della decisione logica sugli stack osservati correnti.
 
 Esempio reale:
+- evidenza fisica: NQ 4 + 1 + 3 + 2, HQ 9;
+- decisioni logiche: NQ 10, HQ 9;
+- split/merge/sort/relocation cambiano solo la `ExecutionInstruction`, non la decisione logica.
 
-- NQ 4 + 1 + 3 + 2 = NQ 10
-- HQ 9
-
-Il planner può usare quei cinque stack fisici per scoring, ma Execution non deve trattare `5 / 3 / HQ9 / 2` come comandi permanenti dopo split/merge/relocation.
-
-Va definito un contratto pulito tra:
-- decisione logica del planner;
-- evidenza fisica usata per score/audit;
-- istruzione runtime di execution.
+Stato: BUILD/CI VERIFICATO; runtime multi-stack ancora da confermare.
 
 ## 10. Doppia pipeline resolver/planner
 
@@ -331,7 +331,7 @@ La prima è ancora usata per diagnostica/resolution e alimenta anche la `Resolut
 Audit richiesto:
 - separare "resolver/source policy" da "planner";
 - eliminare o ridurre `TransferPlanner` se duplica planning;
-- verificare `InventoryStackResolver`, che al momento non mostra consumer reali;
+- `InventoryStackResolver` legacy è stato rimosso perché privo di consumer e legato al vecchio modello fisico;
 - una sola autorità finale deve decidere il piano strategico.
 
 ## 11. Execution corrente
@@ -354,31 +354,33 @@ Buono da conservare:
 - capacity blocked non diventa Complete;
 - replan usa requirements originali e Main originale.
 
-Problema aperto:
-- Session/Coordinator/Guard sono ancora modellati intorno a `PlannerAction` troppo fisiche;
-- `PlanExecutionMaterializer` introdotto in PR #21 è una compensazione incompleta: aggrega chunk consecutivi ma non risolve l'identità logica completa (caso NQ 10 separato da HQ);
-- non aggiungere ulteriori euristiche sopra questo modello;
-- prima va corretto il contratto Planning → Execution.
+Stato corrente:
+- Session/Coordinator/Verifier/Reconciler lavorano su `PlannerDecision` logiche;
+- `PlanExecutionMaterializer` produce una sola `ExecutionInstruction` autorevole dagli stack correnti;
+- trasferimenti parziali coerenti avanzano cumulativamente senza replan e rimaterializzano solo il residuo;
+- il Guard fa preflight solo della decisione corrente;
+- layout change senza delta logico non causa replan;
+- Start iniziale e Start post-replan usano lo stesso percorso di preflight.
+
+Stato: BUILD/CI VERIFICATO; runtime multi-stack e progressivo da confermare.
 
 ## 12. Presentation corrente
 
 ### RetainerDisplayLocator / CharacterDisplayLocator / FreeCompanyDisplayLocator
 
-Problema:
-- oggi non fanno solo mapping visivo;
-- selezionano stack e quantità da consumare.
-
-Target architetturale:
-- devono ricevere posizioni fisiche già materializzate da Execution e tradurle soltanto in pagina/slot visibile.
+Stato corrente:
+- ricevono `ExecutionInstruction`;
+- traducono soltanto stack fisici già materializzati → pagina/slot visibile;
+- non leggono `InventoryIndex`;
+- non scelgono quantità;
+- non ordinano o ripianificano stack.
 
 ### ExecutionInventoryHighlighter
 
-Problema:
-- oggi ricostruisce il target leggendo Runtime + InventoryIndex + locator;
-- è troppo intelligente per essere presentation.
-
-Target:
-- consumare un target già deciso da Execution.
+Stato corrente:
+- consuma `ExecutionInstruction` e locator passivi;
+- non legge `InventoryIndex` per ricostruire il dominio;
+- ODR può aggiornare solo la traduzione visiva.
 
 ### RetainerListHighlighter
 
@@ -393,9 +395,12 @@ Modello corretto:
 ### ExecutionWindow
 
 Deve essere solo vista.
-Problema attuale:
-- debug e UI possono mescolare `session.Steps` originali con una `runtime.CurrentAction` materializzata diversa;
-- questo può produrre output semanticamente incoerente.
+
+Stato corrente:
+- mostra `PlannerDecision` logiche;
+- solo la decisione corrente riceve una `ExecutionInstruction` fisica;
+- distingue quantità pianificata da quantità residua;
+- non ricostruisce stack dal piano fisico.
 
 ## 13. ODR e ordine visibile
 
@@ -446,18 +451,23 @@ NON considerare runtime verificato:
 
 Prima di nuove feature:
 
-1. fissare il contratto Planning → Execution;
-2. separare decisione logica del piano dall'evidenza fisica usata per scoring;
-3. correggere semantica di `TransferHops`, `SourcePriority`, `Alphabetical`;
-4. decidere/correggere `QualityFallback` rispetto alle sette priorità canoniche;
-5. eliminare la doppia ownership Retainer observation;
-6. ridurre/eliminare la pipeline planner legacy duplicata;
-7. introdurre una sola materializzazione runtime posseduta da Execution;
-8. rendere locator/highlighter/window passivi;
-9. semplificare Session/Guard/Runtime eliminando compensazioni non più necessarie;
-10. preservare progress Verified attraverso replan in modo esplicito;
-11. rimuovere diagnostica storica non più necessaria;
-12. solo dopo riprendere automazione o nuove feature.
+Completato a livello BUILD/CI:
+- contratto Planning → Execution separato tra `Actions`, `Decisions`, `ExecutionInstruction`;
+- materializzazione runtime posseduta da Execution;
+- locator/highlighter/window resi passivi;
+- Session/Guard/Runtime migrati alle decisioni logiche;
+- scoring `TransferHops`, `SourcePriority`, `Alphabetical` reso logico;
+- `QualityFallback` rimosso dallo score;
+- ordine delle sette priorità reso canonico e immutabile.
+
+Restante, in ordine:
+1. eliminare la doppia ownership Retainer observation;
+2. ridurre/eliminare la pipeline planner legacy duplicata;
+3. preservare progress Verified attraverso replan in modo esplicito;
+4. rimuovere/isolare diagnostica storica non più necessaria;
+5. verificare gli edge case FC ancora aperti (freshness pagina/owner switch rapido);
+6. ridurre logica di dominio ancora presente in `MainWindow`;
+7. runtime test completo del nuovo execution contract prima di nuove feature/automazione.
 
 ## 17. Regola finale per ogni modifica
 
