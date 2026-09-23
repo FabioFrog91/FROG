@@ -21,18 +21,21 @@ public sealed class ExecutionWindow : Window, IDisposable
     private readonly RetainerDisplayLocator retainerDisplayLocator;
     private readonly ICharacterMonitor characterMonitor;
     private readonly CharacterCatalog characterCatalog;
+    private readonly Plugin plugin;
 
     public ExecutionWindow(
         PlanExecutionRuntime executionRuntime,
         RetainerDisplayLocator retainerDisplayLocator,
         ICharacterMonitor characterMonitor,
-        CharacterCatalog characterCatalog)
+        CharacterCatalog characterCatalog,
+        Plugin plugin)
         : base("FROG - Execution###FROGExecution")
     {
         this.executionRuntime = executionRuntime;
         this.retainerDisplayLocator = retainerDisplayLocator;
         this.characterMonitor = characterMonitor;
         this.characterCatalog = characterCatalog;
+        this.plugin = plugin;
 
         Size = new Vector2(430, 245);
         SizeCondition = ImGuiCond.FirstUseEver;
@@ -233,7 +236,11 @@ public sealed class ExecutionWindow : Window, IDisposable
             $"PRENDI DA: {GetSourceName(action.Source)}");
 
         ImGui.TextWrapped(
-            $"DOVE: {GetSourceLocationText(plan, actionIndex, action.Source)}");
+            $"DOVE: {GetSourceLocationText(
+                plan,
+                actionIndex,
+                action.Source,
+                plugin.InventoryIndex.Items)}");
 
         ImGui.Spacing();
 
@@ -564,7 +571,10 @@ public sealed class ExecutionWindow : Window, IDisposable
                     GetSourceLocationText(
                         plan,
                         step.Index - 1,
-                        action.Source),
+                        action.Source,
+                        step.Index == session.CurrentActionIndex
+                            ? plugin.InventoryIndex.Items
+                            : null),
                     GetSourceName(action.Destination),
                     action.Destination.Storage,
                     GetContainerName(action.Destination)));
@@ -583,7 +593,8 @@ public sealed class ExecutionWindow : Window, IDisposable
     private string GetSourceLocationText(
         PlannerPlan plan,
         int actionIndex,
-        InventorySource source)
+        InventorySource source,
+        IReadOnlyList<InventoryItemSnapshot>? currentItems = null)
     {
         if (source.Storage !=
             StorageType.Retainer)
@@ -595,7 +606,8 @@ public sealed class ExecutionWindow : Window, IDisposable
         var displayLocation =
             retainerDisplayLocator.LocateSource(
                 plan,
-                actionIndex);
+                actionIndex,
+                currentItems);
 
         if (!displayLocation.IsAvailable)
         {
