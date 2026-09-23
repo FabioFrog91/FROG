@@ -89,51 +89,9 @@ public sealed class PlanExecutionRuntime
                 ? Plugin.PlayerState.ContentId
                 : 0;
 
-        var firstDecision =
-            plan.Decisions.FirstOrDefault();
-
-        if (firstDecision is not null)
-        {
-            var validity =
-                planGuard.ValidateCurrent(
-                    plan,
-                    firstDecision,
-                    currentCharacterId,
-                    plugin.InventoryIndex.Items);
-
-            if (!validity.IsValid)
-            {
-                executionCoordinator.Clear();
-
-                if (TryStartPlanRefresh(
-                        plan,
-                        currentCharacterId,
-                        $"REPLAN ESECUZIONE: la decisione corrente non è più valida rispetto allo stato reale. {validity.Message}"))
-                {
-                    RefreshSnapshot(
-                        PlanExecutionCoordinatorStatus.ReplanRequired);
-
-                    return;
-                }
-
-                error =
-                    $"La decisione corrente non è più valida. {validity.Message}";
-
-                RefreshSnapshot(
-                    PlanExecutionCoordinatorStatus.ReplanRequired);
-
-                return;
-            }
-        }
-
-        executionCoordinator.Start(
-            plan);
-
-        RefreshSnapshot(
-            GetInitialStatus(
-                plan));
-
-        SessionStarted?.Invoke();
+        TryBeginExecutionPlan(
+            plan,
+            currentCharacterId);
     }
 
     public void Clear()
@@ -173,7 +131,8 @@ public sealed class PlanExecutionRuntime
     public void Update(
         ulong currentCharacterId)
     {
-        ApplyPlannerCompletion();
+        ApplyPlannerCompletion(
+            currentCharacterId);
 
         var session =
             executionCoordinator.Session;
@@ -255,7 +214,8 @@ public sealed class PlanExecutionRuntime
         }
     }
 
-    private void ApplyPlannerCompletion()
+    private void ApplyPlannerCompletion(
+        ulong currentCharacterId)
     {
         if (!globalPlannerCoordinator.TryConsumeCompletion(
                 out var completion))
@@ -286,14 +246,62 @@ public sealed class PlanExecutionRuntime
         error = null;
         lastCapacityPollAtMs = 0;
 
+        TryBeginExecutionPlan(
+            completion.Plan,
+            currentCharacterId);
+    }
+
+    private bool TryBeginExecutionPlan(
+        PlannerPlan plan,
+        ulong currentCharacterId)
+    {
+        var firstDecision =
+            plan.Decisions.FirstOrDefault();
+
+        if (firstDecision is not null)
+        {
+            var validity =
+                planGuard.ValidateCurrent(
+                    plan,
+                    firstDecision,
+                    currentCharacterId,
+                    plugin.InventoryIndex.Items);
+
+            if (!validity.IsValid)
+            {
+                executionCoordinator.Clear();
+
+                if (TryStartPlanRefresh(
+                        plan,
+                        currentCharacterId,
+                        $"REPLAN ESECUZIONE: la decisione corrente non è più valida rispetto allo stato reale. {validity.Message}"))
+                {
+                    RefreshSnapshot(
+                        PlanExecutionCoordinatorStatus.ReplanRequired);
+
+                    return false;
+                }
+
+                error =
+                    $"La decisione corrente non è più valida. {validity.Message}";
+
+                RefreshSnapshot(
+                    PlanExecutionCoordinatorStatus.ReplanRequired);
+
+                return false;
+            }
+        }
+
         executionCoordinator.Start(
-            completion.Plan);
+            plan);
 
         RefreshSnapshot(
             GetInitialStatus(
-                completion.Plan));
+                plan));
 
         SessionStarted?.Invoke();
+
+        return true;
     }
 
     private void TryStartCapacityReplan(
