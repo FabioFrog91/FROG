@@ -1705,6 +1705,30 @@ public class MainWindow : Window, IDisposable
             ImGui.Text(
                 $"Versione assembly: {version}");
         }
+
+        var moduleId =
+            typeof(Plugin).Module.ModuleVersionId;
+
+        ImGui.Text(
+            $"ID build caricata: {moduleId:D}");
+
+        if (ImGui.Button("TEST VERSIONE"))
+        {
+            var lastWriteUtc =
+                !string.IsNullOrWhiteSpace(assemblyPath) &&
+                File.Exists(assemblyPath)
+                    ? File.GetLastWriteTimeUtc(assemblyPath).ToString("O")
+                    : "n/a";
+
+            ImGui.SetClipboardText(
+                string.Join(
+                    Environment.NewLine,
+                    "FROG TEST VERSIONE",
+                    $"LoadedDll={assemblyPath}",
+                    $"DllLastWriteUtc={lastWriteUtc}",
+                    $"ModuleVersionId={moduleId:D}",
+                    $"AssemblyVersion={version?.ToString() ?? "n/a"}"));
+        }
     }
 
     private static void DrawInventoryContainer(
