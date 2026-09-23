@@ -465,9 +465,9 @@ public sealed class ExecutionWindow : Window, IDisposable
         lines.Add($"CapacityBlocks={plan.CapacityBlocks.Count}");
         lines.Add($"CapacityAdvice={plan.CapacityAdvice.Count}");
         lines.Add($"UnavailableMissing={Math.Max(0, plan.Missing - plan.CapacityBlocked)}");
-        lines.Add($"Actions={session.TotalDecisionCount}");
-        lines.Add($"VerifiedActions={session.VerifiedDecisionCount}");
-        lines.Add($"RemainingActions={session.RemainingDecisionCount}");
+        lines.Add($"Decisions={session.TotalDecisionCount}");
+        lines.Add($"VerifiedDecisions={session.VerifiedDecisionCount}");
+        lines.Add($"RemainingDecisions={session.RemainingDecisionCount}");
         lines.Add($"CurrentDecisionIndex={session.CurrentDecisionIndex}");
 
         if (runtime.Verification is not null)
