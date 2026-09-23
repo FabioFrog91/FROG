@@ -125,24 +125,26 @@ public sealed unsafe class RetainerListHighlighter
         if (currentCharacterId == 0)
             return 0;
 
-        var action =
-            executionRuntime.Snapshot.CurrentAction;
+        var decision =
+            executionRuntime.Snapshot
+                .CurrentInstruction?
+                .Decision;
 
-        if (action is null ||
-            action.Type != PlannerActionType.Move ||
-            action.Source is null ||
-            action.Source.Storage != StorageType.Retainer)
+        if (decision is null ||
+            decision.Type != PlannerDecisionType.Move ||
+            decision.Source is null ||
+            decision.Source.Storage != StorageType.Retainer)
         {
             return 0;
         }
 
-        if (action.Source.ParentCharacterId == 0 ||
+        if (decision.Source.ParentCharacterId == 0 ||
             action.Source.ParentCharacterId != currentCharacterId)
         {
             return 0;
         }
 
-        return action.Source.OwnerId;
+        return decision.Source.OwnerId;
     }
 
     private AtkResNode* FindHighlightNode(
