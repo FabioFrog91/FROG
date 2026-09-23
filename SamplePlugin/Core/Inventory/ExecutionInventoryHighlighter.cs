@@ -50,6 +50,32 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
     private readonly List<NodeBinding> activeBindings = new();
     private readonly List<ExecutionQuantityBadgeAnchor> quantityBadgeAnchors = new();
     private string activeVisualKey = string.Empty;
+    private readonly List<string> debugEvents = new();
+
+    public IReadOnlyList<string> GetDebugLines()
+    {
+        var lines = new List<string>
+        {
+            $"CachedActionIndex={cachedActionIndex + 1}",
+            $"CachedTarget={cachedTarget?.Storage.ToString() ?? "none"}",
+            $"ActiveBindings={activeBindings.Count}",
+            $"ActiveVisualKey={activeVisualKey}"
+        };
+        lines.AddRange(debugEvents);
+        return lines;
+    }
+
+    private void OnExecutionStarted()
+    {
+        debugEvents.Clear();
+        RecordDebugEvent("EXECUTION START");
+    }
+
+    private void RecordDebugEvent(string message)
+    {
+        debugEvents.Add($"{DateTime.UtcNow:O} {message}");
+
+    }
 
     public IReadOnlyList<ExecutionQuantityBadgeAnchor> QuantityBadgeAnchors =>
         quantityBadgeAnchors;
@@ -75,6 +101,7 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
 
         odrScanner.OnSortOrderChanged +=
             OnSortOrderChanged;
+        executionRuntime.ExecutionStarted += OnExecutionStarted;
     }
 
     public void Update(
@@ -92,7 +119,7 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
             runtime.Session is null ||
             runtime.CurrentInstruction is null)
         {
-            Clear();
+            Clear($"runtime inactive: status={runtime.Status}, replanning={runtime.IsReplanning}");
             InvalidateTargetCache();
             return;
         }
@@ -143,7 +170,7 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
                     refreshedTarget);
 
             if (targetChanged)
-                Clear();
+                Clear($"target changed: action={actionIndex + 1}, next={refreshedTarget?.Storage.ToString() ?? "none"}");
 
             cachedPlan =
                 runtime.Session.Plan;
@@ -201,7 +228,7 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
             target.OwnerCharacterId !=
                 currentCharacterId)
         {
-            Clear();
+            Clear("no target for current character");
             return;
         }
 
@@ -232,12 +259,15 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
         Clear();
     }
 
-    public void Clear()
+    public void Clear(string reason = "clear")
     {
-        foreach (var binding in activeBindings)
+        if (activeBindings.Count > 0 || activeVisualKey.Length > 0)
         {
-            binding.Restore(
-                gameGui);
+            RecordDebugEvent($"CLEAR reason={reason}; visual={activeVisualKey}; bindings={activeBindings.Count}");
+            foreach (var binding in activeBindings)
+            {
+                RecordDebugEvent($"RESTORE {binding.AddonName}/{binding.NodeId}: {binding.Restore(gameGui)}");
+            }
         }
 
         activeBindings.Clear();
@@ -249,6 +279,7 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
     {
         odrScanner.OnSortOrderChanged -=
             OnSortOrderChanged;
+        executionRuntime.ExecutionStarted -= OnExecutionStarted;
 
         Clear();
         InvalidateTargetCache();
@@ -820,9 +851,10 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
             return;
         }
 
-        Clear();
+        Clear("visual state rebuild");
         activeVisualKey = visualKey;
         rebuild();
+        RecordDebugEvent($"APPLY visual={visualKey}; bindings={activeBindings.Count}");
     }
 
     private bool AddBinding(
@@ -1122,18 +1154,24 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
                 gameGui,
                 out _);
 
-        public void Restore(
-            IGameGui gameGui)
+        public string Restore(IGameGui gameGui)
         {
-            if (!TryResolveSameAddon(
-                    gameGui,
-                    out var node))
-            {
-                return;
-            }
+            var wrapper = gameGui.GetAddonByName(AddonName, 1);
+            if (wrapper == IntPtr.Zero)
+                return "addon missing";
+            if (wrapper.Address != AddonAddress)
+                return "addon changed";
 
-            Original.Restore(
-                node);
+            var addon = (AtkUnitBase*)wrapper.Address;
+            if (addon == null || !addon->IsVisible)
+                return "addon hidden";
+
+            var node = addon->GetNodeById(NodeId);
+            if (node == null)
+                return "node missing";
+
+            Original.Restore(node);
+            return "restored";
         }
     }
 }
