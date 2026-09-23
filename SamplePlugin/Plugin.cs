@@ -298,9 +298,6 @@ public sealed class Plugin : HostedPlugin
         var executionRuntime =
             Host.Services.GetRequiredService<PlanExecutionRuntime>();
 
-        var executionInventoryHighlighter =
-            Host.Services.GetRequiredService<ExecutionInventoryHighlighter>();
-
         ExecutionQuantityOverlay =
             Host.Services.GetRequiredService<ExecutionQuantityOverlay>();
 
@@ -320,7 +317,6 @@ public sealed class Plugin : HostedPlugin
         ExecutionWindow =
             new ExecutionWindow(
                 executionRuntime,
-                executionInventoryHighlighter,
                 retainerDisplayLocator,
                 characterMonitor,
                 CharacterCatalog,
