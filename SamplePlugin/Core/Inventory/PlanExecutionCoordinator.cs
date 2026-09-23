@@ -143,6 +143,7 @@ public sealed class PlanExecutionCoordinator
             PlannerDecisionType.SwitchCharacter)
         {
             return UpdateSwitch(
+                decision,
                 verification);
         }
 
@@ -269,6 +270,7 @@ public sealed class PlanExecutionCoordinator
     }
 
     private PlanExecutionCoordinatorSnapshot UpdateSwitch(
+        PlannerDecision decision,
         PlanExecutionVerificationResult switchVerification)
     {
         if (session is null)
@@ -291,12 +293,6 @@ public sealed class PlanExecutionCoordinator
         }
 
         session.TryMarkCurrentDecisionVerified();
-
-        var verifiedDecision =
-            session.CurrentDecision is null
-                ? null
-                : decision;
-
         ClearCurrentDecisionState();
 
         return Snapshot(
