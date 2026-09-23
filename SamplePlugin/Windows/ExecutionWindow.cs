@@ -94,19 +94,19 @@ public sealed class ExecutionWindow : Window, IDisposable
         }
 
         ImGui.Text(
-            session.TotalActionCount > 0
-                ? $"Azione {Math.Min(session.CurrentActionIndex, session.TotalActionCount)} / {session.TotalActionCount}"
+            session.TotalDecisionCount > 0
+                ? $"Azione {Math.Min(session.CurrentDecisionIndex, session.TotalDecisionCount)} / {session.TotalDecisionCount}"
                 : "Azioni attualmente eseguibili: 0");
 
         ImGui.ProgressBar(
-            session.TotalActionCount > 0
-                ? (float)session.VerifiedActionCount /
-                  session.TotalActionCount
+            session.TotalDecisionCount > 0
+                ? (float)session.VerifiedDecisionCount /
+                  session.TotalDecisionCount
                 : session.IsComplete
                     ? 1f
                     : 0f,
             new Vector2(-1, 0),
-            $"{session.VerifiedActionCount}/{session.TotalActionCount}");
+            $"{session.VerifiedDecisionCount}/{session.TotalDecisionCount}");
 
         ImGui.Spacing();
         ImGui.Separator();
@@ -465,10 +465,10 @@ public sealed class ExecutionWindow : Window, IDisposable
         lines.Add($"CapacityBlocks={plan.CapacityBlocks.Count}");
         lines.Add($"CapacityAdvice={plan.CapacityAdvice.Count}");
         lines.Add($"UnavailableMissing={Math.Max(0, plan.Missing - plan.CapacityBlocked)}");
-        lines.Add($"Actions={session.TotalActionCount}");
-        lines.Add($"VerifiedActions={session.VerifiedActionCount}");
-        lines.Add($"RemainingActions={session.RemainingActionCount}");
-        lines.Add($"CurrentActionIndex={session.CurrentActionIndex}");
+        lines.Add($"Actions={session.TotalDecisionCount}");
+        lines.Add($"VerifiedActions={session.VerifiedDecisionCount}");
+        lines.Add($"RemainingActions={session.RemainingDecisionCount}");
+        lines.Add($"CurrentDecisionIndex={session.CurrentDecisionIndex}");
 
         if (runtime.Verification is not null)
         {
@@ -566,7 +566,7 @@ public sealed class ExecutionWindow : Window, IDisposable
 
             var instruction =
                 step.Index ==
-                session.CurrentActionIndex
+                session.CurrentDecisionIndex
                     ? runtime.CurrentInstruction
                     : null;
 
