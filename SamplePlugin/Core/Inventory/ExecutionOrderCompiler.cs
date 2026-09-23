@@ -132,7 +132,7 @@ public sealed class ExecutionOrderCompiler
                 future.Source is null ||
                 future.Destination is null ||
                 action.Destination is null ||
-                !IsSameExecutionGroup(
+                !IsSameRuntimeExecutionGroup(
                     action,
                     future))
             {
@@ -208,6 +208,32 @@ public sealed class ExecutionOrderCompiler
         }
 
         return available;
+    }
+
+    private static bool IsSameRuntimeExecutionGroup(
+        PlannerAction first,
+        PlannerAction candidate)
+    {
+        if (first.Source is null ||
+            first.Destination is null ||
+            candidate.Source is null ||
+            candidate.Destination is null)
+        {
+            return false;
+        }
+
+        return first.Source.Storage ==
+                   candidate.Source.Storage &&
+               first.Source.OwnerId ==
+                   candidate.Source.OwnerId &&
+               first.Source.ParentCharacterId ==
+                   candidate.Source.ParentCharacterId &&
+               first.Destination.Storage ==
+                   candidate.Destination.Storage &&
+               first.Destination.OwnerId ==
+                   candidate.Destination.OwnerId &&
+               first.Destination.ParentCharacterId ==
+                   candidate.Destination.ParentCharacterId;
     }
 
     private void CaptureCharacter(
