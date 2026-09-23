@@ -301,7 +301,7 @@ public sealed class PlanExecutionCoordinator
             return false;
 
         if (baseline is not null &&
-            baseline.ActionIndex ==
+            baseline.DecisionIndex ==
                 session.CurrentDecisionIndex)
         {
             return true;
