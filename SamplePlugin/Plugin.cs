@@ -813,8 +813,6 @@ internal sealed class FrogInventoryStartup : IHostedService
 {
     private readonly IInventoryMonitor inventoryMonitor;
     private readonly IInventoryScanner inventoryScanner;
-    private readonly StorageReaderAPI storageReader;
-    private readonly Plugin plugin;
     private readonly PlanExecutionRuntime executionRuntime;
     private readonly RetainerListHighlighter retainerListHighlighter;
     private readonly ExecutionInventoryHighlighter executionInventoryHighlighter;
@@ -822,16 +820,12 @@ internal sealed class FrogInventoryStartup : IHostedService
     public FrogInventoryStartup(
         IInventoryMonitor inventoryMonitor,
         IInventoryScanner inventoryScanner,
-        StorageReaderAPI storageReader,
-        Plugin plugin,
         PlanExecutionRuntime executionRuntime,
         RetainerListHighlighter retainerListHighlighter,
         ExecutionInventoryHighlighter executionInventoryHighlighter)
     {
         this.inventoryMonitor = inventoryMonitor;
         this.inventoryScanner = inventoryScanner;
-        this.storageReader = storageReader;
-        this.plugin = plugin;
         this.executionRuntime = executionRuntime;
         this.retainerListHighlighter = retainerListHighlighter;
         this.executionInventoryHighlighter = executionInventoryHighlighter;
@@ -840,7 +834,6 @@ internal sealed class FrogInventoryStartup : IHostedService
     public Task StartAsync(
         CancellationToken cancellationToken)
     {
-        inventoryMonitor.OnInventoryChanged += OnInventoryChanged;
         Plugin.Framework.Update += OnFrameworkUpdate;
 
         inventoryMonitor.Start();
@@ -855,7 +848,6 @@ internal sealed class FrogInventoryStartup : IHostedService
     public Task StopAsync(
         CancellationToken cancellationToken)
     {
-        inventoryMonitor.OnInventoryChanged -= OnInventoryChanged;
         Plugin.Framework.Update -= OnFrameworkUpdate;
 
         retainerListHighlighter.Clear();
@@ -882,10 +874,4 @@ internal sealed class FrogInventoryStartup : IHostedService
             currentCharacterId);
     }
 
-    private void OnInventoryChanged(
-        List<InventoryChange> inventoryChanges,
-        InventoryMonitor.ItemChanges? itemChanges)
-    {
-        plugin.SyncStorageSources(storageReader);
-    }
 }
