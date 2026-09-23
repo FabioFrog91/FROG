@@ -139,7 +139,7 @@ public sealed unsafe class RetainerListHighlighter
         }
 
         if (decision.Source.ParentCharacterId == 0 ||
-            action.Source.ParentCharacterId != currentCharacterId)
+            decision.Source.ParentCharacterId != currentCharacterId)
         {
             return 0;
         }
