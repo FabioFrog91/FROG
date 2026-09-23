@@ -21,6 +21,7 @@ internal sealed class FreeCompanyObservationProbe : IDisposable
     private readonly ICharacterMonitor characterMonitor;
     private readonly long sessionStartedAtMs = Environment.TickCount64;
 
+    private readonly bool enabled;
     private bool disposed;
     private bool chestWasOpen;
     private uint? selectedContainer;
@@ -37,6 +38,11 @@ internal sealed class FreeCompanyObservationProbe : IDisposable
         this.plugin = plugin;
         this.inventoryScanner = inventoryScanner;
         this.characterMonitor = characterMonitor;
+        enabled =
+            plugin.Configuration.EnableFreeCompanyObservationProbe;
+
+        if (!enabled)
+            return;
 
         inventoryScanner.ContainerInfoReceived += OnContainerInfoReceived;
         Plugin.Framework.Update += OnFrameworkUpdate;
@@ -51,6 +57,9 @@ internal sealed class FreeCompanyObservationProbe : IDisposable
             return;
 
         disposed = true;
+
+        if (!enabled)
+            return;
 
         inventoryScanner.ContainerInfoReceived -= OnContainerInfoReceived;
         Plugin.Framework.Update -= OnFrameworkUpdate;

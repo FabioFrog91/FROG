@@ -98,6 +98,22 @@ public class ConfigWindow : Window, IDisposable
             configuration.Save();
         }
 
+        ImGui.Separator();
+        ImGui.Text("Diagnostics");
+
+        var enableFcObservationProbe =
+            configuration.EnableFreeCompanyObservationProbe;
+
+        if (ImGui.Checkbox(
+                "Enable FC observation probe (reload required)",
+                ref enableFcObservationProbe))
+        {
+            configuration.EnableFreeCompanyObservationProbe =
+                enableFcObservationProbe;
+
+            configuration.Save();
+        }
+
         var retainerHighlightColor =
             configuration.RetainerRowHighlightColor;
 
