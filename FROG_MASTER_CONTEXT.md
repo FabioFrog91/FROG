@@ -21,6 +21,9 @@ Regole inderogabili:
 - se esiste un dubbio non banale sul comportamento, fermarsi e ragionare prima di modificare;
 - leggere sempre il codice reale corrente e verificare dipendenze/API prima di cambiare;
 - non inventare API, eventi, metodi o semantiche;
+- **"non usato oggi" non significa "obsoleto"**: prima di eliminare codice classificare uso attuale, compatibilità, diagnostica e possibile ruolo futuro;
+- se il ruolo futuro di un componente non è ricostruibile con certezza da codice/documentazione/storia Git, non eliminarlo senza chiedere;
+- preferire preservare una API dormiente compatibile piuttosto che cancellarla solo perché non ha consumer attuali;
 - distinguere sempre:
   - DECISO
   - IMPLEMENTATO — DA TESTARE
@@ -39,20 +42,22 @@ Regole inderogabili:
 - Solution: `SamplePlugin.slnx`
 - Project: `SamplePlugin/SamplePlugin.csproj`
 - Namespace Core: `FROG.Core.Inventory`
-- Master corrente al 2026-09-23: `1c6e67283fe62f02549268129965460ab6083b50`
+- Master corrente al 2026-09-23: `5301209166b685b3f89fc7c5b539fd0bb409c7a1`
 
 Workflow modifiche:
 
 1. leggere `master` reale;
-2. creare branch dedicata;
-3. applicare modifiche minime e coerenti;
-4. controllare diff completo;
-5. aprire PR;
-6. attendere CI verde;
-7. merge normale, mai force push;
-8. test locale/runtime separato.
+2. verificare dipendenze, ownership e conseguenze;
+3. se cambia la logica, spiegare il cambiamento all'utente prima di applicarlo;
+4. creare branch dedicata;
+5. applicare modifiche minime e coerenti;
+6. controllare diff completo;
+7. aprire PR;
+8. attendere CI verde;
+9. merge normale, mai force push;
+10. test locale/runtime separato.
 
-Branch sperimentali non mergiate non sono soluzione. In particolare `fix/core-execution-logical-groups` è da considerare prototipo/scarto finché non viene riprogettata secondo questo documento.
+Branch sperimentali non mergiate non sono soluzione.
 
 ## 3. Obiettivo principale di FROG
 
@@ -61,6 +66,8 @@ FROG deve portare il Main Character il più vicino possibile al fabbisogno richi
 - stato osservato;
 - stato conosciuto;
 - stato pianificato;
+- decisione da eseguire;
+- istruzione fisica corrente;
 - azione eseguita;
 - azione verificata.
 
@@ -95,14 +102,14 @@ Non deve:
 
 ### 4.2 Planning — "Che cosa bisogna fare?"
 
-Owner principale: `GlobalTransferPlanner` e suoi componenti di planner.
+Owner principale: `GlobalTransferPlanner` e suoi componenti.
 
 Input:
 
 - `RequirementSet`;
 - snapshot immutabile di inventory/capacity;
 - `ResolutionPolicy`;
-- impostazioni di ottimizzazione.
+- priorità canoniche.
 
 Responsabilità:
 
@@ -113,18 +120,32 @@ Responsabilità:
 - pianificare switch;
 - ottimizzare secondo le priorità canoniche.
 
-Il planner può usare dettaglio fisico degli stack per scoring/simulazione, ma il dettaglio fisico non deve diventare automaticamente un comando permanente di execution.
+Contratto attuale:
+
+- `PlannerPlan.Actions` = simulazione/evidenza fisica interna al planner;
+- `PlannerPlan.Decisions` = contratto logico destinato all'Execution;
+- il dettaglio fisico può influire dove semanticamente corretto (es. ConsumedStacks), ma non deve trasformarsi automaticamente in comando permanente di Execution;
+- `ExecutionOrderCompiler.WithActions` può riordinare evidenza fisica commutabile senza riscrivere `Decisions`.
 
 ### 4.3 Execution — "Come eseguo adesso ciò che il planner ha deciso?"
 
-Execution traduce il piano logico sullo stato fisico corrente.
+Owner principali:
+
+- `PlanExecutionRuntime`
+- `PlanExecutionCoordinator`
+- `PlanExecutionSession`
+- `PlanExecutionMaterializer`
+
+Execution traduce una `PlannerDecision` logica sullo stato fisico corrente.
 
 Responsabilità:
 
-- prendere la prossima decisione logica del piano;
-- materializzarla sugli stack correnti osservati;
-- produrre una sola istruzione runtime autorevole per UI/highlighter/verifier;
-- aggiornare la materializzazione quando cambiano split/merge/sort/relocation senza cambiare il piano logico.
+- prendere la decisione logica corrente;
+- materializzarla sugli stack osservati adesso;
+- produrre una sola `ExecutionInstruction` autorevole;
+- rimaterializzare guida fisica quando split/merge/sort/relocation cambiano il layout ma non la quantità logica;
+- per trasferimenti parziali mantenere il baseline logico originario e materializzare soltanto la quantità residua;
+- avanzare solo dopo Verification.
 
 Split, merge, sort e relocation interna che non cambiano la quantità logica non sono motivo di replan.
 
@@ -143,10 +164,11 @@ Regole:
 
 - SWITCH verificato osservando il target character;
 - MOVE richiede osservazione nuova di source e destination;
-- quantità confermata = `min(source decrease, destination increase)`;
+- verifica su quantità logiche della decisione;
 - source-only non completa;
-- relocation/split/merge interno non è un MOVE;
-- Retainer e CharacterInventory usano quantità logica per evitare falsi trasferimenti da relocation interna.
+- source decrease e destination increase devono essere coerenti;
+- trasferimento parziale coerente resta in attesa e può continuare con instruction residua;
+- relocation/split/merge interno non è un MOVE.
 
 Verification non decide il nuovo piano.
 
@@ -158,6 +180,7 @@ Responsabilità:
 
 - classificare delta osservati;
 - determinare quantità realmente trasferita;
+- calcolare residuo;
 - segnalare variance reale.
 
 Non deve:
@@ -178,21 +201,23 @@ Deve:
 - considerare ciò che è già realmente arrivato nelle destinazioni;
 - non invalidare semanticamente i passaggi già Verified.
 
-La cronologia Verified esplicita attraverso una nuova sessione di replan è ancora un requisito aperto da implementare correttamente.
+Requisito ancora aperto:
+- preservare esplicitamente la cronologia/progress Verified attraverso una nuova sessione di replan, non solo il risultato materiale già presente nell'InventoryIndex.
 
 ### 4.7 Presentation
 
-Componenti come locator, highlighter, overlay e finestre devono essere passivi.
+Locator, highlighter, overlay e finestre sono consumatori passivi.
 
 Locator:
-- traduce coordinate fisiche → coordinate visibili;
-- non decide quantità;
-- non sceglie stack;
-- non ripianifica.
+- ricevono `ExecutionInstruction.SourceStacks`;
+- traducono coordinate fisiche → coordinate visibili;
+- non decidono quantità;
+- non scelgono stack;
+- non ripianificano.
 
 Highlighter/overlay/window:
-- mostrano ciò che Execution ha già deciso;
-- non ricostruiscono il dominio da `PlannerPlan` + `InventoryIndex`;
+- mostrano `ExecutionInstruction` e `PlannerDecision`;
+- non ricostruiscono il dominio da `PlannerPlan.Actions` + `InventoryIndex`;
 - nessuna logica critica deve vivere nel render ImGui.
 
 ## 5. Storage e route
@@ -216,6 +241,8 @@ Route vietate:
 
 FC è hub condiviso. HQ e NQ sono identità logiche separate.
 
+`InventoryRouteRules` è l'owner condiviso delle regole di accessibilità/route usate da planner ed execution preflight.
+
 ## 6. Priorità planner canoniche
 
 Ordine lessicografico esatto:
@@ -228,14 +255,19 @@ Ordine lessicografico esatto:
 6. Freshness
 7. Alphabetical
 
-Mai weighted.
+Mai weighted e non riordinabili a runtime.
 
-Problema aperto verificato nel codice:
-- `PlannerPlanScore.CompareTo()` confronta attualmente `QualityFallback` prima delle sette priorità. Va corretto con una decisione esplicita, non ignorato.
+Stato attuale:
 
-Semantica importante:
-- `ConsumedStacks` può e deve usare dettaglio fisico;
-- `TransferHops`, `SourcePriority` e `Alphabetical` non devono cambiare solo perché la stessa quantità è distribuita su più container fisici della stessa source logica.
+- `OptimizationSettings` accetta solo l'ordine canonico;
+- `QualityFallback` non precede più le sette priorità;
+- `TransferHops` è calcolato sulle route logiche, non sui container fisici;
+- `SourcePriority` è calcolato sulle source logiche usate;
+- `Alphabetical` usa source logiche e non il container;
+- `ConsumedStacks` resta volutamente fisico;
+- `Freshness` resta basata sull'evidenza fisica iniziale usata dal piano.
+
+PR #25: BUILD/CI VERIFICATA. Runtime planner post-refactor ancora da riconfermare.
 
 ## 7. Capacity
 
@@ -253,30 +285,39 @@ Regole canoniche:
 - se resta quantità bloccata → `WaitingForCapacity`, non `Complete`;
 - capacity simulata dal planner non autorizza da sola un futuro movimento automatico.
 
+`PlannerCapacitySnapshot` espone anche capacity per `PlannerLogicalSource` per il preflight Execution, riutilizzando lo stesso modello logico.
+
 ## 8. Observation corrente
 
 ### CharacterInventory
 
-Owner corretto: `CharacterInventoryObservationObserver`.
+Owner: `CharacterInventoryObservationObserver`.
 
 Usa `IGameInventory.InventoryChangedRaw` e aggiorna l'intero CharacterInventory tramite `SyncPlayerInventory()`.
 
+Stato storico: RUNTIME VERIFICATO; non modificato dal refactor Execution.
+
 ### Retainer
 
-Owner desiderato: `RetainerInventoryObservationObserver`.
+Owner unico: `RetainerInventoryObservationObserver`.
 
-Usa `IGameInventory.InventoryChangedRaw` e legge RAW Retainer tramite `StorageReader.TryReadActiveRetainer`.
+Trigger:
 
-Problema aperto:
-- esiste ancora un secondo trigger in `FrogInventoryStartup.OnInventoryChanged` basato su CCL che richiama `SyncStorageSources`;
-- due owner dello stesso refresh Retainer violano il principio di ownership unica;
-- va ripulito dopo verifica delle dipendenze/lifecycle.
+- `ICharacterMonitor.OnActiveRetainerLoaded` → acquisizione iniziale;
+- `IGameInventory.InventoryChangedRaw` → split/merge/relocation/cambi successivi.
+
+Snapshot sempre letto RAW tramite `StorageReader.TryReadActiveRetainer`.
+
+Il vecchio bridge `FrogInventoryStartup.OnInventoryChanged → SyncStorageSources` è stato rimosso; `InventoryMonitor` e `InventoryScanner` restano attivi per gli altri consumer CCL.
+
+PR #27: BUILD/CI VERIFICATA. Nuova ownership singola ancora da RUNTIME VERIFICARE.
 
 ### FreeCompanyChest
 
 Owner: `FreeCompanyInventoryObserver`.
 
 Principi:
+
 - loaded != observed;
 - owner/generation-aware;
 - pending acquisition da ContainerInfo;
@@ -286,11 +327,11 @@ Principi:
 
 Stato FC observation/data-sync: RUNTIME VERIFICATO.
 
-`FreeCompanyObservationProbe` è diagnostica storica ancora AutoActivate: candidato a rimozione/isolation dopo audit lifecycle.
+`FreeCompanyObservationProbe` è diagnostica storica ancora AutoActivate. Non eliminarla solo perché diagnostica: prima va chiarito se serve per future verifiche FC; eventualmente renderla opzionale/separata.
 
 ## 9. Stato del planner
 
-Componenti validi da conservare come base:
+Componenti validi da conservare:
 
 - `GlobalTransferPlanner`
 - `GlobalAllocationPlanner`
@@ -299,40 +340,36 @@ Componenti validi da conservare come base:
 - `PlannerCapacitySnapshot`
 - `PlannerPlanEvaluator`
 - `GlobalPlannerCoordinator`
+- `PlannerDecisionCompiler`
 
-Problema architetturale centrale aperto:
+Contratto Planning → Execution implementato:
 
-Il planner usa correttamente gli stack fisici per scegliere/valutare un piano, ma oggi `PlannerPlan.Actions` espone direttamente chunk fisici/container come istruzioni operative.
+- le action fisiche del planner restano disponibili per score/audit/simulazione;
+- le decisioni logiche aggregano container fisici della stessa route/item/qualità;
+- esempio fisico `NQ 5 + NQ 3 + HQ 9 + NQ 2` sulla stessa route diventa decisione logica `NQ 10 + HQ 9`;
+- ODR non modifica le decisioni logiche.
 
-Esempio reale:
+PR #23/#24: BUILD/CI VERIFICATA. Comportamento NQ10/split multi-stack ancora da RUNTIME VERIFICARE.
 
-- NQ 4 + 1 + 3 + 2 = NQ 10
-- HQ 9
+## 10. Resolver e pipeline legacy
 
-Il planner può usare quei cinque stack fisici per scoring, ma Execution non deve trattare `5 / 3 / HQ9 / 2` come comandi permanenti dopo split/merge/relocation.
-
-Va definito un contratto pulito tra:
-- decisione logica del planner;
-- evidenza fisica usata per score/audit;
-- istruzione runtime di execution.
-
-## 10. Doppia pipeline resolver/planner
-
-Esiste ancora una pipeline legacy attiva:
+Esiste ancora:
 
 `ResolverCoordinator → TransferPlanner → RequirementResolver → TransferPlan`
 
-e una pipeline globale:
+oltre alla pipeline strategica:
 
-`GlobalPlannerCoordinator → GlobalTransferPlanner → PlannerPlan`
+`GlobalPlannerCoordinator → GlobalTransferPlanner → PlannerPlan`.
 
-La prima è ancora usata per diagnostica/resolution e alimenta anche la `ResolutionPolicy`, ma non deve diventare una seconda autorità di planning.
+Non eliminare automaticamente la pipeline legacy.
 
-Audit richiesto:
-- separare "resolver/source policy" da "planner";
-- eliminare o ridurre `TransferPlanner` se duplica planning;
-- verificare `InventoryStackResolver`, che al momento non mostra consumer reali;
-- una sola autorità finale deve decidere il piano strategico.
+Audit ancora richiesto:
+
+- capire quali output sono diagnostica/resolution/source policy e quali duplicano realmente planning;
+- ricostruire eventuale ruolo futuro da codice/documentazione/storia Git;
+- una sola autorità finale deve decidere il piano strategico;
+- `InventoryStackResolver` è stato esplicitamente preservato anche se oggi non mostra consumer, perché potrebbe essere scaffolding futuro;
+- l'overload compatibile `ExecutionOrderCompiler.OrderStacksForExecution(InventorySource,...)` è stato preservato per lo stesso motivo.
 
 ## 11. Execution corrente
 
@@ -341,74 +378,73 @@ Componenti:
 - `PlanExecutionRuntime`
 - `PlanExecutionCoordinator`
 - `PlanExecutionSession`
+- `PlanExecutionMaterializer`
 - `PlanExecutionVerifier`
 - `PlanExecutionReconciler`
 - `PlanExecutionPlanGuard`
 
-Buono da conservare:
+Stato architetturale:
 
-- framework-driven, indipendente dalla finestra;
-- source+destination verification;
-- logical source quantity per Retainer/CharacterInventory;
-- source-only non completa;
-- capacity blocked non diventa Complete;
-- replan usa requirements originali e Main originale.
+- Session traccia `PlannerDecision`, non chunk fisici;
+- Materializer decide gli stack fisici correnti e produce `ExecutionInstruction`;
+- Guard fa preflight della sola decisione corrente, non replay speculativo di tutto il futuro;
+- route/accessibilità condivise con planner tramite `InventoryRouteRules`;
+- Coordinator mantiene baseline logico e può rimaterializzare residui parziali;
+- Runtime orchestra replan senza dipendere dalla UI.
 
-Problema aperto:
-- Session/Coordinator/Guard sono ancora modellati intorno a `PlannerAction` troppo fisiche;
-- `PlanExecutionMaterializer` introdotto in PR #21 è una compensazione incompleta: aggrega chunk consecutivi ma non risolve l'identità logica completa (caso NQ 10 separato da HQ);
-- non aggiungere ulteriori euristiche sopra questo modello;
-- prima va corretto il contratto Planning → Execution.
+PR #24: BUILD/CI VERIFICATA. Nuovo execution contract non ancora RUNTIME VERIFICATO end-to-end.
 
 ## 12. Presentation corrente
 
 ### RetainerDisplayLocator / CharacterDisplayLocator / FreeCompanyDisplayLocator
 
-Problema:
-- oggi non fanno solo mapping visivo;
-- selezionano stack e quantità da consumare.
+Ora sono presentation-only:
 
-Target architetturale:
-- devono ricevere posizioni fisiche già materializzate da Execution e tradurle soltanto in pagina/slot visibile.
+- input: `ExecutionInstruction`;
+- output: pagina/slot/quantità visibile;
+- non scelgono stack;
+- non reinterpretano PlannerAction.
 
 ### ExecutionInventoryHighlighter
 
-Problema:
-- oggi ricostruisce il target leggendo Runtime + InventoryIndex + locator;
-- è troppo intelligente per essere presentation.
+Consuma `ExecutionInstruction`, non ricostruisce il piano dall'InventoryIndex.
 
-Target:
-- consumare un target già deciso da Execution.
+Refresh:
+
+- nuova instruction → nuova chiave fisica;
+- ODR change → refresh visuale.
 
 ### RetainerListHighlighter
 
-Modello corretto:
-- legge soltanto il Retainer target dall'ExecutionRuntime e lo mostra.
+Legge il Retainer target dalla decisione della current instruction.
 
 ### ExecutionQuantityOverlay
 
-Modello corretto:
-- rendering passivo delle quantità già decise.
+Rendering passivo delle quantità già decise.
 
 ### ExecutionWindow
 
-Deve essere solo vista.
-Problema attuale:
-- debug e UI possono mescolare `session.Steps` originali con una `runtime.CurrentAction` materializzata diversa;
-- questo può produrre output semanticamente incoerente.
+Mostra:
+
+- `PlannerDecision` logica;
+- `ExecutionInstruction` fisica solo per la decisione corrente;
+- quantità residua separata dalla quantità pianificata dopo partial move.
+
+Non deve calcolare source/stack.
 
 ## 13. ODR e ordine visibile
 
-ODR è presentation/execution ordering, non criterio strategico.
+ODR è execution/presentation ordering, non criterio strategico.
 
 Regole:
 
 - il planner decide WHAT/WHERE;
-- l'ordine visibile può decidere HOW TO PRESENT/EXECUTE elementi commutabili;
-- ODR non deve cambiare source, quantità o score strategico;
+- Execution decide quali stack correnti materializzano la decisione;
+- ODR può ordinare stack fisici equivalenti per guidare l'utente;
+- ODR non cambia source logica, quantità o score strategico;
 - fallback deterministico se ODR non disponibile.
 
-La traduzione Retainer fisico → pagina/slot visibile tramite `RetainerSortOrder.InventoryCoords` è valida e runtime verificata.
+La traduzione Retainer fisico → pagina/slot visibile tramite `RetainerSortOrder.InventoryCoords` era runtime verificata prima del refactor; va riconfermata insieme al nuovo ExecutionInstruction.
 
 ## 14. Lifecycle
 
@@ -421,45 +457,62 @@ Ogni event handler, hook, timer, task e CTS deve avere:
 
 No force push, no stash/pop cieco, no cambio branch/path/procedura silenzioso.
 
-## 15. Stato runtime realmente verificato
+## 15. Future auto-movement — architettura prevista, NON implementata
 
-RUNTIME VERIFICATO:
+L'automazione futura non deve cambiare la separazione dei moduli.
 
-- FC observation/data-sync stabile;
+Requisiti previsti:
+
+1. preflight per singola `ExecutionInstruction`;
+2. un'azione gameplay alla volta;
+3. verification prima dell'azione successiva;
+4. timeout/manual-interference classification;
+5. AutoRetainer IPC suppression/restore;
+6. duplicate/idempotency protection;
+7. native UI automation separata dalla logica di planner/execution.
+
+UI command != successo. Il successo resta proprietà di Verification.
+
+Non eliminare componenti apparentemente dormienti se potrebbero essere scaffolding per questa fase senza prima verificarne l'intento.
+
+## 16. Stato runtime realmente verificato
+
+RUNTIME VERIFICATO e non toccato dal refactor, salvo dove indicato:
+
+- FC observation/data-sync storico;
 - CharacterInventory RAW observation;
-- Retainer relocation interna non produce falso verify/replan nel caso testato;
-- reale Retainer → CharacterInventory single-stack;
-- FC → CharacterInventory nei casi testati;
-- planner manuale non viene cancellato da `Runtime.Clear`;
-- capacity/stack simulation nei casi già testati;
-- highlight ODR/retainer/character/FC nelle casistiche confermate prima dei bug split più recenti.
+- reale Retainer → CharacterInventory single-stack sul vecchio execution contract;
+- FC → CharacterInventory nei casi storici;
+- planner manuale non cancellato da `Runtime.Clear`;
+- capacity/stack simulation nei casi storici;
+- ODR/highlight nelle casistiche storiche precedenti al nuovo ExecutionInstruction.
 
-NON considerare runtime verificato:
+DA RUNTIME VERIFICARE SUL MASTER CORRENTE:
 
-- soluzione definitiva split/merge/relocation multi-stack;
-- PR #21 come soluzione del problema logico NQ 10;
-- preservazione esplicita dello storico Verified attraverso replan;
-- CharacterInventory → FC end-to-end recente;
-- rapid FC owner switch completo.
+- contratto `PlannerDecision → ExecutionInstruction`;
+- caso NQ10 distribuito su più container;
+- split/merge/sort/relocation durante decisione corrente;
+- partial move e rimaterializzazione del residuo;
+- highlighter + DOVE sincronizzati alla stessa instruction;
+- Retainer initial acquisition via `OnActiveRetainerLoaded` + cambi RAW;
+- planner scoring post-PR #25;
+- CharacterInventory → FC end-to-end;
+- rapid FC owner switch completo;
+- preservazione esplicita dello storico Verified attraverso replan.
 
-## 16. Audit aperto — ordine corretto
+## 17. Audit aperto — ordine corretto
 
 Prima di nuove feature:
 
-1. fissare il contratto Planning → Execution;
-2. separare decisione logica del piano dall'evidenza fisica usata per scoring;
-3. correggere semantica di `TransferHops`, `SourcePriority`, `Alphabetical`;
-4. decidere/correggere `QualityFallback` rispetto alle sette priorità canoniche;
-5. eliminare la doppia ownership Retainer observation;
-6. ridurre/eliminare la pipeline planner legacy duplicata;
-7. introdurre una sola materializzazione runtime posseduta da Execution;
-8. rendere locator/highlighter/window passivi;
-9. semplificare Session/Guard/Runtime eliminando compensazioni non più necessarie;
-10. preservare progress Verified attraverso replan in modo esplicito;
-11. rimuovere diagnostica storica non più necessaria;
-12. solo dopo riprendere automazione o nuove feature.
+1. runtime test del nuovo contratto Planning → Execution;
+2. audit della pipeline legacy Resolver/TransferPlanner senza eliminazioni speculative;
+3. preservare progress Verified attraverso replan in modo esplicito;
+4. verificare lifecycle/necessità futura di `FreeCompanyObservationProbe`;
+5. riconfermare CharacterInventory → FC end-to-end;
+6. riconfermare rapid FC owner switch;
+7. solo dopo riprendere automazione o nuove feature.
 
-## 17. Regola finale per ogni modifica
+## 18. Checklist prima di ogni modifica
 
 Prima di scrivere codice chiedere:
 
@@ -469,6 +522,8 @@ Prima di scrivere codice chiedere:
 4. La modifica rende FROG più semplice o più difficile da ragionare?
 5. Split/merge/sort/relocation innocui restano innocui?
 6. Planner, Execution, Verifier e UI restano separati?
-7. Posso rimuovere codice invece di aggiungerne?
+7. Sto per eliminare qualcosa solo perché oggi non è usato?
+8. Esiste evidenza che quel codice sia davvero obsoleto e non scaffolding futuro?
+9. Posso preservare compatibilità senza compromettere gli invarianti?
 
 Se una risposta non è chiara, non modificare ancora il codice.
