@@ -178,6 +178,12 @@ public sealed class PlanExecutionRuntime
                 false,
                 error);
 
+        if (execution.VerifiedDecision is not null)
+        {
+            verifiedHistory.Add(
+                execution.VerifiedDecision);
+        }
+
         if (execution.Status ==
             PlanExecutionCoordinatorStatus.ReplanRequired)
         {
@@ -213,12 +219,6 @@ public sealed class PlanExecutionRuntime
                 currentCharacterId);
 
             return;
-        }
-
-        if (execution.VerifiedDecision is not null)
-        {
-            verifiedHistory.Add(
-                execution.VerifiedDecision);
         }
 
         if (execution.Status ==
