@@ -1,21 +1,25 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace FROG.Core.Inventory;
 
 public readonly record struct PlanExecutionMaterializedAction(
     PlannerAction Action,
-    int CoveredActionCount);
+    IReadOnlyList<int> CoveredActionIndices);
 
 /// <summary>
-/// Collapses consecutive planner MOVE actions that represent the same logical
-/// transfer while ignoring only the physical source container for storages
-/// whose execution semantics are logical across their internal containers.
+/// Builds the next logical execution action from the immutable planner plan.
+/// Retainer and CharacterInventory MOVE actions are materialized across the
+/// full commutable route group, so physical container/order changes do not
+/// split one logical item transfer into stale planner chunks.
 /// </summary>
 public sealed class PlanExecutionMaterializer
 {
     public PlanExecutionMaterializedAction Materialize(
         PlannerPlan plan,
-        int firstActionIndex)
+        int firstActionIndex,
+        IReadOnlyCollection<int>? completedActionIndices = null)
     {
         if (firstActionIndex < 0 ||
             firstActionIndex >= plan.Actions.Count)
@@ -24,27 +28,49 @@ public sealed class PlanExecutionMaterializer
                 nameof(firstActionIndex));
         }
 
+        var completed =
+            completedActionIndices is null
+                ? new HashSet<int>()
+                : completedActionIndices.ToHashSet();
+
         var first =
             plan.Actions[firstActionIndex];
 
-        if (!CanMaterializeAcrossContainers(
+        if (completed.Contains(
+                firstActionIndex) ||
+            !CanMaterializeAcrossContainers(
                 first))
         {
             return new PlanExecutionMaterializedAction(
                 first,
-                1);
+                new[] { firstActionIndex });
         }
+
+        var groupEnd =
+            FindExecutionGroupEnd(
+                plan,
+                firstActionIndex,
+                first);
+
+        var covered =
+            new List<int>
+            {
+                firstActionIndex
+            };
 
         var quantity =
             first.Quantity;
 
-        var covered =
-            1;
-
         for (var index = firstActionIndex + 1;
-             index < plan.Actions.Count;
+             index < groupEnd;
              index++)
         {
+            if (completed.Contains(
+                    index))
+            {
+                continue;
+            }
+
             var candidate =
                 plan.Actions[index];
 
@@ -52,7 +78,7 @@ public sealed class PlanExecutionMaterializer
                     first,
                     candidate))
             {
-                break;
+                continue;
             }
 
             quantity =
@@ -60,14 +86,15 @@ public sealed class PlanExecutionMaterializer
                     quantity +
                     candidate.Quantity);
 
-            covered++;
+            covered.Add(
+                index);
         }
 
-        if (covered == 1)
+        if (covered.Count == 1)
         {
             return new PlanExecutionMaterializedAction(
                 first,
-                1);
+                covered);
         }
 
         return new PlanExecutionMaterializedAction(
@@ -76,6 +103,33 @@ public sealed class PlanExecutionMaterializer
                 Quantity = quantity
             },
             covered);
+    }
+
+    private static int FindExecutionGroupEnd(
+        PlannerPlan plan,
+        int startIndex,
+        PlannerAction first)
+    {
+        var end =
+            startIndex + 1;
+
+        while (end < plan.Actions.Count)
+        {
+            var candidate =
+                plan.Actions[end];
+
+            if (candidate.Type != PlannerActionType.Move ||
+                !IsSameExecutionGroup(
+                    first,
+                    candidate))
+            {
+                break;
+            }
+
+            end++;
+        }
+
+        return end;
     }
 
     private static bool CanMaterializeAcrossContainers(
@@ -88,13 +142,11 @@ public sealed class PlanExecutionMaterializer
             StorageType.Retainer or
             StorageType.CharacterInventory;
 
-    private static bool IsSameLogicalMove(
+    private static bool IsSameExecutionGroup(
         PlannerAction first,
         PlannerAction candidate)
     {
-        if (!CanMaterializeAcrossContainers(
-                candidate) ||
-            first.Source is null ||
+        if (first.Source is null ||
             first.Destination is null ||
             candidate.Source is null ||
             candidate.Destination is null)
@@ -102,11 +154,7 @@ public sealed class PlanExecutionMaterializer
             return false;
         }
 
-        return first.BaseItemId ==
-                   candidate.BaseItemId &&
-               first.IsHq ==
-                   candidate.IsHq &&
-               first.Source.Storage ==
+        return first.Source.Storage ==
                    candidate.Source.Storage &&
                first.Source.OwnerId ==
                    candidate.Source.OwnerId &&
@@ -116,9 +164,21 @@ public sealed class PlanExecutionMaterializer
                    candidate.Destination.Storage &&
                first.Destination.OwnerId ==
                    candidate.Destination.OwnerId &&
-               first.Destination.Container ==
-                   candidate.Destination.Container &&
                first.Destination.ParentCharacterId ==
                    candidate.Destination.ParentCharacterId;
     }
+
+    private static bool IsSameLogicalMove(
+        PlannerAction first,
+        PlannerAction candidate) =>
+        candidate.Type == PlannerActionType.Move &&
+        candidate.Source is not null &&
+        candidate.Destination is not null &&
+        first.BaseItemId ==
+            candidate.BaseItemId &&
+        first.IsHq ==
+            candidate.IsHq &&
+        IsSameExecutionGroup(
+            first,
+            candidate);
 }
