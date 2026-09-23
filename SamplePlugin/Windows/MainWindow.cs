@@ -664,10 +664,10 @@ public class MainWindow : Window, IDisposable
         }
 
         ImGui.Text(
-            $"Verificate: {session.VerifiedActionCount}/{session.TotalActionCount}");
+            $"Verificate: {session.VerifiedDecisionCount}/{session.TotalDecisionCount}");
 
         ImGui.Text(
-            $"Rimanenti: {session.RemainingActionCount}");
+            $"Rimanenti: {session.RemainingDecisionCount}");
 
         if (execution.IsReplanning)
         {
