@@ -106,6 +106,19 @@ public sealed class PlanExecutionVerifier
         PlannerDecision decision,
         PlanExecutionBaseline baseline,
         InventoryIndex inventoryIndex,
+        ulong currentCharacterId) =>
+        Verify(
+            decision,
+            baseline,
+            Observe(
+                decision,
+                inventoryIndex),
+            currentCharacterId);
+
+    public PlanExecutionVerificationResult Verify(
+        PlannerDecision decision,
+        PlanExecutionBaseline baseline,
+        PlanExecutionObservation observation,
         ulong currentCharacterId)
     {
         if (decision.Type ==
@@ -128,11 +141,6 @@ public sealed class PlanExecutionVerifier
                 PlanExecutionVerificationStatus.Mismatch,
                 "MOVE privo di source o destination.");
         }
-
-        var observation =
-            Observe(
-                decision,
-                inventoryIndex);
 
         var diagnostics =
             FormatMoveDiagnostics(
