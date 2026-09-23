@@ -101,7 +101,7 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
             runtime.CurrentInstruction;
 
         var actionIndex =
-            runtime.Session.CurrentActionIndex -
+            runtime.Session.CurrentDecisionIndex -
             1;
 
         var nowMs =
