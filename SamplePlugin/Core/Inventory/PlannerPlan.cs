@@ -96,7 +96,8 @@ public sealed class PlannerPlan
             missing,
             capacityBlocked,
             capacityBlocks?.ToList() ??
-            new List<PlannerCapacityBlock>())
+            new List<PlannerCapacityBlock>(),
+            decisions: null)
     {
     }
 
@@ -107,12 +108,14 @@ public sealed class PlannerPlan
         PlannerPlanResult result,
         int missing,
         int capacityBlocked,
-        List<PlannerCapacityBlock> capacityBlocks)
+        List<PlannerCapacityBlock> capacityBlocks,
+        IReadOnlyList<PlannerDecision>? decisions)
     {
         InitialState = initialState;
         FinalState = finalState;
         this.actions = actions;
-        decisions =
+        this.decisions =
+            decisions ??
             PlannerDecisionCompiler.Compile(
                 actions);
         Result = result;
@@ -146,7 +149,8 @@ public sealed class PlannerPlan
             Result,
             Missing,
             CapacityBlocked,
-            capacityBlocks);
+            capacityBlocks,
+            decisions);
     }
 
     public PlannerPlan WithResult(
