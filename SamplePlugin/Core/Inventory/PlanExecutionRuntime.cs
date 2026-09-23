@@ -488,7 +488,7 @@ public sealed class PlanExecutionRuntime
             new PlanExecutionRuntimeSnapshot(
                 status,
                 session,
-                snapshot.CurrentInstruction,
+                null,
                 snapshot.Verification,
                 snapshot.Reconciliation,
                 isReplanning,
