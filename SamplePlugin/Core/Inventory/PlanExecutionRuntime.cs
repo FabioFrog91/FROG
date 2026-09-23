@@ -164,6 +164,13 @@ public sealed class PlanExecutionRuntime
             return;
         }
 
+        if (TryReplanUnavailableFreeCompanyHandoff(
+                session,
+                currentCharacterId))
+        {
+            return;
+        }
+
         var execution =
             executionCoordinator.Update(
                 plugin.InventoryIndex,
@@ -376,6 +383,80 @@ public sealed class PlanExecutionRuntime
             plan,
             currentCharacterId,
             $"REPLAN ESECUZIONE: lo spazio osservato ora consente tutti i movimenti bloccati noti ({plan.CapacityBlocked} unità, {requiredSlots} slot minimi). Piano ricalcolato dallo stato reale.");
+    }
+
+    // The verified alt-to-FC handoff must still be available while waiting to
+    // switch to the main character. A withdrawal before the switch invalidates
+    // the immediate FC-to-main moves, even though the SWITCH itself is valid.
+    private bool TryReplanUnavailableFreeCompanyHandoff(
+        PlanExecutionSession session,
+        ulong currentCharacterId)
+    {
+        var decisions =
+            session.Plan.Decisions;
+
+        var switchIndex =
+            session.VerifiedDecisionCount;
+
+        if (currentCharacterId == 0 ||
+            session.CurrentDecision?.Type !=
+                PlannerDecisionType.SwitchCharacter ||
+            switchIndex == 0 ||
+            decisions[switchIndex - 1].Destination?.Storage !=
+                StorageType.FreeCompanyChest)
+        {
+            return false;
+        }
+
+        var handoffMoves =
+            decisions
+                .Skip(switchIndex + 1)
+                .TakeWhile(decision =>
+                    decision.Type == PlannerDecisionType.Move &&
+                    decision.Source?.Storage ==
+                        StorageType.FreeCompanyChest &&
+                    decision.Destination?.Storage ==
+                        StorageType.CharacterInventory &&
+                    decision.Destination.OwnerId ==
+                        session.Plan.InitialState.MainCharacterId)
+                .ToArray();
+
+        foreach (var group in handoffMoves.GroupBy(decision =>
+                     new
+                     {
+                         decision.Source!.OwnerId,
+                         decision.BaseItemId,
+                         decision.IsHq
+                     }))
+        {
+            var needed =
+                group.Sum(decision =>
+                    decision.Quantity);
+
+            var available =
+                plugin.InventoryIndex.Items
+                    .Where(item =>
+                        item.Storage == StorageType.FreeCompanyChest &&
+                        item.OwnerId == group.Key.OwnerId &&
+                        item.BaseItemId == group.Key.BaseItemId &&
+                        item.IsHq == group.Key.IsHq &&
+                        ExecutionInventoryRules.IsExecutableContainer(item))
+                    .Sum(item =>
+                        item.Quantity);
+
+            if (available >= needed)
+                continue;
+
+            return TryStartPlanRefresh(
+                session.Plan,
+                currentCharacterId,
+                $"REPLAN ESECUZIONE: dopo il deposito verificato, la FC " +
+                $"contiene {available} unità di {group.Key.BaseItemId} " +
+                $"{(group.Key.IsHq ? "HQ" : "NQ")}, " +
+                $"ma il passaggio verso il main ne richiede {needed}.");
+        }
+
+        return false;
     }
 
     private void TryValidateNextDecision(
