@@ -23,9 +23,11 @@ public readonly record struct PlanExecutionCoordinatorSnapshot(
     string? ReplanReason);
 
 /// <summary>
-/// Owns execution state for logical planner decisions. Physical stack
-/// materialization is refreshed only while the logical MOVE has not started;
-/// verification/reconciliation own the state once a real delta is observed.
+/// Owns execution progress for logical planner decisions.
+///
+/// Physical stack guidance may be rematerialized while the logical quantities
+/// are unchanged. Once a real MOVE delta appears, cumulative source and
+/// destination deltas from the original baseline are authoritative.
 /// </summary>
 public sealed class PlanExecutionCoordinator
 {
@@ -67,9 +69,7 @@ public sealed class PlanExecutionCoordinator
 
     public void Reset()
     {
-        if (session is not null)
-            session.Reset();
-
+        session?.Reset();
         ClearCurrentDecisionState();
     }
 
@@ -138,113 +138,79 @@ public sealed class PlanExecutionCoordinator
                 inventoryIndex,
                 currentCharacterId);
 
-        if (!session.IsCurrentActionExecuted)
+        if (decision.Type ==
+            PlannerDecisionType.SwitchCharacter)
         {
-            if (decision.Type ==
-                PlannerDecisionType.SwitchCharacter)
-            {
-                if (verification.Status !=
-                    PlanExecutionVerificationStatus.Verified)
-                {
-                    return Snapshot(
-                        PlanExecutionCoordinatorStatus.Pending);
-                }
-
-                session.TryMarkCurrentExecuted(
-                    out _);
-            }
-            else
-            {
-                if (verification.Status ==
-                    PlanExecutionVerificationStatus.WaitingForObservation)
-                {
-                    RefreshGuidanceIfStillUnchanged(
-                        decision,
-                        inventoryIndex);
-
-                    return Snapshot(
-                        PlanExecutionCoordinatorStatus.Pending);
-                }
-
-                var observation =
-                    verifier.Observe(
-                        decision,
-                        inventoryIndex);
-
-                if (verification.Status ==
-                        PlanExecutionVerificationStatus.Mismatch &&
-                    !IsMismatchObservationSettled(
-                        observation))
-                {
-                    return Snapshot(
-                        PlanExecutionCoordinatorStatus.WaitingForObservation);
-                }
-
-                reconciliation =
-                    reconciler.Reconcile(
-                        decision,
-                        baseline,
-                        observation);
-
-                if (reconciliation.SourceDecrease <= 0 &&
-                    reconciliation.DestinationIncrease <= 0)
-                {
-                    reconciliation = null;
-
-                    RefreshGuidanceIfStillUnchanged(
-                        decision,
-                        inventoryIndex);
-
-                    return Snapshot(
-                        PlanExecutionCoordinatorStatus.Pending);
-                }
-
-                if (reconciliation.ObservedTransferredQuantity <= 0)
-                {
-                    return Snapshot(
-                        PlanExecutionCoordinatorStatus.WaitingForObservation);
-                }
-
-                session.TryMarkCurrentExecuted(
-                    out _);
-
-                if (reconciliation.HasVariance)
-                {
-                    return Snapshot(
-                        PlanExecutionCoordinatorStatus.ReplanRequired);
-                }
-            }
+            return UpdateSwitch(
+                verification);
         }
 
-        if (decision.Type ==
-                PlannerDecisionType.Move &&
-            reconciliation is null &&
-            verification.Status !=
-                PlanExecutionVerificationStatus.WaitingForObservation)
+        var observation =
+            verifier.Observe(
+                decision,
+                inventoryIndex);
+
+        if (!HasFreshMoveObservation(
+                baseline,
+                observation))
         {
-            var observation =
-                verifier.Observe(
-                    decision,
-                    inventoryIndex);
+            RefreshGuidanceIfLogicalStateUnchanged(
+                decision,
+                observation,
+                inventoryIndex);
 
-            reconciliation =
-                reconciler.Reconcile(
-                    decision,
-                    baseline,
-                    observation);
+            return Snapshot(
+                PlanExecutionCoordinatorStatus.WaitingForObservation);
+        }
 
-            if (reconciliation.HasVariance)
+        reconciliation =
+            reconciler.Reconcile(
+                decision,
+                baseline,
+                observation);
+
+        if (verification.Status ==
+            PlanExecutionVerificationStatus.Mismatch)
+        {
+            if (!IsMismatchObservationSettled(
+                    observation))
             {
                 return Snapshot(
-                    PlanExecutionCoordinatorStatus.ReplanRequired);
+                    PlanExecutionCoordinatorStatus.WaitingForObservation);
             }
+
+            replanReason =
+                verification.Message;
+
+            return Snapshot(
+                PlanExecutionCoordinatorStatus.ReplanRequired);
+        }
+
+        ResetPendingMismatch();
+
+        if (reconciliation.ReconciledQuantity <= 0)
+        {
+            reconciliation = null;
+
+            RefreshGuidanceIfLogicalStateUnchanged(
+                decision,
+                observation,
+                inventoryIndex);
+
+            return Snapshot(
+                PlanExecutionCoordinatorStatus.Pending);
         }
 
         if (verification.Status ==
             PlanExecutionVerificationStatus.Verified)
         {
-            session.TryMarkCurrentVerified();
+            if (!session.IsCurrentActionExecuted)
+            {
+                session.TryMarkCurrentExecuted(
+                    out _);
+            }
 
+            session.TryMarkCurrentVerified();
             ClearCurrentDecisionState();
 
             return Snapshot(
@@ -253,11 +219,78 @@ public sealed class PlanExecutionCoordinator
                     : PlanExecutionCoordinatorStatus.Verified);
         }
 
+        if (!session.IsCurrentActionExecuted)
+        {
+            session.TryMarkCurrentExecuted(
+                out _);
+        }
+
+        var remainingQuantity =
+            reconciliation.RemainingQuantity;
+
+        if (remainingQuantity <= 0)
+        {
+            replanReason =
+                "Il MOVE non risulta verificato ma non rimane quantità da materializzare.";
+
+            return Snapshot(
+                PlanExecutionCoordinatorStatus.ReplanRequired);
+        }
+
+        var materialization =
+            materializer.Materialize(
+                decision,
+                inventoryIndex.Items,
+                remainingQuantity);
+
+        if (!materialization.IsAvailable ||
+            materialization.Instruction is null)
+        {
+            currentInstruction = null;
+            replanReason =
+                materialization.Message;
+
+            return Snapshot(
+                PlanExecutionCoordinatorStatus.ReplanRequired);
+        }
+
+        currentInstruction =
+            materialization.Instruction;
+        replanReason = null;
+
         return Snapshot(
-            verification.Status ==
-                PlanExecutionVerificationStatus.WaitingForObservation
-                ? PlanExecutionCoordinatorStatus.WaitingForObservation
-                : PlanExecutionCoordinatorStatus.Executed);
+            PlanExecutionCoordinatorStatus.Executed);
+    }
+
+    private PlanExecutionCoordinatorSnapshot UpdateSwitch(
+        PlanExecutionVerificationResult switchVerification)
+    {
+        if (session is null)
+        {
+            return Snapshot(
+                PlanExecutionCoordinatorStatus.Idle);
+        }
+
+        if (switchVerification.Status !=
+            PlanExecutionVerificationStatus.Verified)
+        {
+            return Snapshot(
+                PlanExecutionCoordinatorStatus.Pending);
+        }
+
+        if (!session.IsCurrentActionExecuted)
+        {
+            session.TryMarkCurrentExecuted(
+                out _);
+        }
+
+        session.TryMarkCurrentVerified();
+        ClearCurrentDecisionState();
+
+        return Snapshot(
+            session.IsComplete
+                ? GetCompletedStatus()
+                : PlanExecutionCoordinatorStatus.Verified);
     }
 
     private bool EnsureCurrentDecision(
@@ -306,19 +339,13 @@ public sealed class PlanExecutionCoordinator
         return true;
     }
 
-    private void RefreshGuidanceIfStillUnchanged(
+    private void RefreshGuidanceIfLogicalStateUnchanged(
         PlannerDecision decision,
+        PlanExecutionObservation observation,
         InventoryIndex inventoryIndex)
     {
-        if (baseline is null)
-            return;
-
-        var observation =
-            verifier.Observe(
-                decision,
-                inventoryIndex);
-
-        if (observation.SourceQuantity !=
+        if (baseline is null ||
+            observation.SourceQuantity !=
                 baseline.SourceQuantity ||
             observation.DestinationQuantity !=
                 baseline.DestinationQuantity)
@@ -336,7 +363,31 @@ public sealed class PlanExecutionCoordinator
         {
             currentInstruction =
                 materialization.Instruction;
+
+            replanReason = null;
         }
+    }
+
+    private static bool HasFreshMoveObservation(
+        PlanExecutionBaseline baseline,
+        PlanExecutionObservation observation) =>
+        IsNewerObservation(
+            observation.SourceObservationRevision,
+            baseline.SourceObservationRevision) &&
+        IsNewerObservation(
+            observation.DestinationObservationRevision,
+            baseline.DestinationObservationRevision);
+
+    private static bool IsNewerObservation(
+        long? current,
+        long? baseline)
+    {
+        if (!current.HasValue)
+            return false;
+
+        return !baseline.HasValue ||
+               current.Value >
+               baseline.Value;
     }
 
     private PlanExecutionCoordinatorStatus GetCompletedStatus() =>
