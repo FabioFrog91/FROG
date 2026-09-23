@@ -80,14 +80,24 @@ public sealed class PlanExecutionCoordinator
     public bool TryMarkCurrentExecuted(
         out PlannerAction? executedAction)
     {
-        if (session is null)
+        if (session is null ||
+            session.IsComplete)
         {
             executedAction = null;
             return false;
         }
 
+        var materialized =
+            materializer.Materialize(
+                session.Plan,
+                session.CurrentActionIndex - 1);
+
+        executedAction =
+            materialized.Action;
+
         return session.TryMarkCurrentExecuted(
-            out executedAction);
+            materialized.CoveredActionCount,
+            out _);
     }
 
     public PlanExecutionCoordinatorSnapshot Update(
