@@ -214,7 +214,6 @@ internal sealed class GlobalAllocationPlanner
             var score =
                 planEvaluator.Evaluate(
                     candidate,
-                    requirements,
                     resolutionPolicy);
 
             if (bestPlan is null ||
