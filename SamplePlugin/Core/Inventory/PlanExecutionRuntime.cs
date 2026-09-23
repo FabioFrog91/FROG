@@ -134,6 +134,14 @@ public sealed class PlanExecutionRuntime
         ApplyPlannerCompletion(
             currentCharacterId);
 
+        if (isReplanning)
+        {
+            RefreshSnapshot(
+                PlanExecutionCoordinatorStatus.ReplanRequired);
+
+            return;
+        }
+
         var session =
             executionCoordinator.Session;
 
@@ -141,14 +149,6 @@ public sealed class PlanExecutionRuntime
         {
             RefreshSnapshot(
                 PlanExecutionCoordinatorStatus.Idle);
-
-            return;
-        }
-
-        if (isReplanning)
-        {
-            RefreshSnapshot(
-                PlanExecutionCoordinatorStatus.ReplanRequired);
 
             return;
         }
