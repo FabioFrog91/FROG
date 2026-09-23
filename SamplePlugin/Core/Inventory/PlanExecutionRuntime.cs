@@ -337,15 +337,10 @@ public sealed class PlanExecutionRuntime
             return;
         }
 
-        var firstActionIndex =
-            Math.Max(
-                0,
-                session.CurrentActionIndex - 1);
-
         var validity =
             planGuard.ValidateRemaining(
                 session.Plan,
-                firstActionIndex,
+                session.PendingActionIndices,
                 currentCharacterId,
                 plugin.InventoryIndex.Items);
 
