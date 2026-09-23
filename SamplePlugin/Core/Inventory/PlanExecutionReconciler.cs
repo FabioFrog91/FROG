@@ -23,8 +23,9 @@ public sealed record PlanExecutionReconciliationResult(
         ObservedTransferredQuantity - PlannedQuantity;
 
     public bool HasVariance =>
-        SourceDecrease != PlannedQuantity ||
-        DestinationIncrease != PlannedQuantity;
+        SourceDecrease != DestinationIncrease ||
+        SourceDecrease > PlannedQuantity ||
+        DestinationIncrease > PlannedQuantity;
 }
 
 /// <summary>
