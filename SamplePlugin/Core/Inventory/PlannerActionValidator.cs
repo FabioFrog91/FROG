@@ -39,13 +39,13 @@ public sealed class PlannerActionValidator
         if (action.Source == action.Destination)
             return Fail(out reason, "Source and destination cannot be the same storage.");
 
-        if (!IsCharacterAccessible(state.CurrentCharacterId, action.Source))
+        if (!InventoryRouteRules.IsCharacterAccessible(state.CurrentCharacterId, action.Source))
             return Fail(out reason, "The source is not accessible from the current character.");
 
-        if (!IsCharacterAccessible(state.CurrentCharacterId, action.Destination))
+        if (!InventoryRouteRules.IsCharacterAccessible(state.CurrentCharacterId, action.Destination))
             return Fail(out reason, "The destination is not accessible from the current character.");
 
-        if (!IsLegalRoute(action.Source, action.Destination))
+        if (!InventoryRouteRules.IsLegalRoute(action.Source, action.Destination))
             return Fail(out reason, "The requested storage-to-storage route is not physically legal.");
 
         if (state.GetQuantity(
@@ -94,48 +94,6 @@ public sealed class PlannerActionValidator
         }
 
         return true;
-    }
-
-    private static bool IsCharacterAccessible(
-        ulong currentCharacterId,
-        InventorySource source) =>
-        source.Storage switch
-        {
-            StorageType.CharacterInventory =>
-                source.OwnerId == currentCharacterId,
-
-            StorageType.Retainer =>
-                source.ParentCharacterId == currentCharacterId,
-
-            StorageType.FreeCompanyChest =>
-                true,
-
-            _ => false
-        };
-
-    private static bool IsLegalRoute(
-        InventorySource source,
-        InventorySource destination)
-    {
-        if (source.Storage == StorageType.Retainer)
-        {
-            return destination.Storage == StorageType.CharacterInventory &&
-                   destination.OwnerId == source.ParentCharacterId;
-        }
-
-        if (source.Storage == StorageType.CharacterInventory)
-        {
-            return destination.Storage == StorageType.FreeCompanyChest &&
-                   (destination.ParentCharacterId == 0 ||
-                    destination.ParentCharacterId == source.OwnerId);
-        }
-
-        if (source.Storage == StorageType.FreeCompanyChest)
-        {
-            return destination.Storage == StorageType.CharacterInventory;
-        }
-
-        return false;
     }
 
     private static bool Fail(
