@@ -28,50 +28,40 @@ public sealed record PlanExecutionReconciliationResult(
 }
 
 /// <summary>
-/// Explains an observed MOVE mismatch without mutating the immutable plan.
-/// The reconciled quantity is intentionally conservative: material counts as
-/// transferred only when it is observed leaving the source and entering the
-/// destination.
+/// Explains an observed logical MOVE mismatch without mutating the immutable
+/// planner decision. A quantity is transferred only when it is observed
+/// leaving the logical source and entering the logical destination.
 /// </summary>
 public sealed class PlanExecutionReconciler
 {
     public PlanExecutionReconciliationResult Reconcile(
-        PlannerAction action,
+        PlannerDecision decision,
         PlanExecutionBaseline baseline,
         PlanExecutionObservation observation)
     {
-        if (action.Type != PlannerActionType.Move ||
-            action.Source is null ||
-            action.Destination is null)
+        if (decision.Type !=
+                PlannerDecisionType.Move ||
+            decision.Source is null ||
+            decision.Destination is null)
         {
             return new PlanExecutionReconciliationResult(
                 PlanExecutionReconciliationStatus.NotSatisfied,
-                action.Quantity,
+                decision.Quantity,
                 0,
                 0,
-                Math.Max(0, action.Quantity),
+                Math.Max(
+                    0,
+                    decision.Quantity),
                 0,
                 0,
-                "L'azione non è un MOVE riconciliabile.");
+                "La decisione non è un MOVE riconciliabile.");
         }
-
-        var baselineSourceQuantity =
-            GetTransferSourceQuantity(
-                action,
-                baseline.SourceQuantity,
-                baseline.LogicalSourceQuantity);
-
-        var observedSourceQuantity =
-            GetTransferSourceQuantity(
-                action,
-                observation.SourceQuantity,
-                observation.LogicalSourceQuantity);
 
         var sourceDecrease =
             Math.Max(
                 0,
-                baselineSourceQuantity -
-                observedSourceQuantity);
+                baseline.SourceQuantity -
+                observation.SourceQuantity);
 
         var destinationIncrease =
             Math.Max(
@@ -86,20 +76,21 @@ public sealed class PlanExecutionReconciler
 
         var reconciledQuantity =
             Math.Min(
-                action.Quantity,
+                decision.Quantity,
                 observedTransferredQuantity);
 
         var remainingQuantity =
             Math.Max(
                 0,
-                action.Quantity -
+                decision.Quantity -
                 reconciledQuantity);
 
-        if (reconciledQuantity >= action.Quantity)
+        if (reconciledQuantity >=
+            decision.Quantity)
         {
             return new PlanExecutionReconciliationResult(
                 PlanExecutionReconciliationStatus.Satisfied,
-                action.Quantity,
+                decision.Quantity,
                 reconciledQuantity,
                 observedTransferredQuantity,
                 0,
@@ -112,7 +103,7 @@ public sealed class PlanExecutionReconciler
         {
             return new PlanExecutionReconciliationResult(
                 PlanExecutionReconciliationStatus.PartiallySatisfied,
-                action.Quantity,
+                decision.Quantity,
                 reconciledQuantity,
                 observedTransferredQuantity,
                 remainingQuantity,
@@ -123,21 +114,12 @@ public sealed class PlanExecutionReconciler
 
         return new PlanExecutionReconciliationResult(
             PlanExecutionReconciliationStatus.NotSatisfied,
-            action.Quantity,
+            decision.Quantity,
             0,
             observedTransferredQuantity,
-            action.Quantity,
+            decision.Quantity,
             sourceDecrease,
             destinationIncrease,
             "Nessuna quantità trasferita è confermata contemporaneamente da source e destination.");
     }
-
-    private static int GetTransferSourceQuantity(
-        PlannerAction action,
-        int sourceQuantity,
-        int logicalSourceQuantity) =>
-        action.Source?.Storage == StorageType.CharacterInventory ||
-        action.Source?.Storage == StorageType.Retainer
-            ? logicalSourceQuantity
-            : sourceQuantity;
 }
