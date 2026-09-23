@@ -79,7 +79,7 @@ public sealed class PlanExecutionCoordinator
         ClearCurrentDecisionState();
     }
 
-    public bool TryMarkCurrentExecuted(
+    public bool TryMarkCurrentDecisionExecuted(
         out PlannerDecision? executedDecision)
     {
         if (session is null)
@@ -88,7 +88,7 @@ public sealed class PlanExecutionCoordinator
             return false;
         }
 
-        return session.TryMarkCurrentExecuted(
+        return session.TryMarkCurrentDecisionExecuted(
             out executedDecision);
     }
 
@@ -204,13 +204,13 @@ public sealed class PlanExecutionCoordinator
         if (verification.Status ==
             PlanExecutionVerificationStatus.Verified)
         {
-            if (!session.IsCurrentActionExecuted)
+            if (!session.IsCurrentDecisionExecuted)
             {
-                session.TryMarkCurrentExecuted(
+                session.TryMarkCurrentDecisionExecuted(
                     out _);
             }
 
-            session.TryMarkCurrentVerified();
+            session.TryMarkCurrentDecisionVerified();
             ClearCurrentDecisionState();
 
             return Snapshot(
@@ -219,9 +219,9 @@ public sealed class PlanExecutionCoordinator
                     : PlanExecutionCoordinatorStatus.Verified);
         }
 
-        if (!session.IsCurrentActionExecuted)
+        if (!session.IsCurrentDecisionExecuted)
         {
-            session.TryMarkCurrentExecuted(
+            session.TryMarkCurrentDecisionExecuted(
                 out _);
         }
 
@@ -278,13 +278,13 @@ public sealed class PlanExecutionCoordinator
                 PlanExecutionCoordinatorStatus.Pending);
         }
 
-        if (!session.IsCurrentActionExecuted)
+        if (!session.IsCurrentDecisionExecuted)
         {
-            session.TryMarkCurrentExecuted(
+            session.TryMarkCurrentDecisionExecuted(
                 out _);
         }
 
-        session.TryMarkCurrentVerified();
+        session.TryMarkCurrentDecisionVerified();
         ClearCurrentDecisionState();
 
         return Snapshot(
@@ -302,7 +302,7 @@ public sealed class PlanExecutionCoordinator
 
         if (baseline is not null &&
             baseline.ActionIndex ==
-                session.CurrentActionIndex)
+                session.CurrentDecisionIndex)
         {
             return true;
         }
@@ -327,7 +327,7 @@ public sealed class PlanExecutionCoordinator
 
         baseline =
             verifier.CaptureBaseline(
-                session.CurrentActionIndex,
+                session.CurrentDecisionIndex,
                 decision,
                 inventoryIndex);
 
