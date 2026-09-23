@@ -40,6 +40,7 @@ public sealed class PlanExecutionCoordinator
 
     private PlanExecutionSession? session;
     private PlanExecutionBaseline? baseline;
+    private PlanExecutionObservation? lastCoherentObservation;
     private ExecutionInstruction? currentInstruction;
     private PlanExecutionVerificationResult? verification;
     private PlanExecutionReconciliationResult? reconciliation;
@@ -132,11 +133,38 @@ public sealed class PlanExecutionCoordinator
                 PlanExecutionCoordinatorStatus.Pending);
         }
 
+        var observation =
+            verifier.Observe(
+                decision,
+                inventoryIndex);
+
+        // Quantities remain anchored to the original MOVE baseline. Freshness
+        // advances independently whenever the last coherent quantities are
+        // observed again, so a pre-move refresh cannot confirm a later MOVE.
+        if (lastCoherentObservation is not null &&
+            observation.SourceQuantity ==
+                lastCoherentObservation.SourceQuantity &&
+            observation.DestinationQuantity ==
+                lastCoherentObservation.DestinationQuantity)
+        {
+            lastCoherentObservation =
+                observation;
+        }
+
+        var freshnessBaseline =
+            baseline with
+            {
+                SourceObservationRevision =
+                    lastCoherentObservation?.SourceObservationRevision,
+                DestinationObservationRevision =
+                    lastCoherentObservation?.DestinationObservationRevision
+            };
+
         verification =
             verifier.Verify(
                 decision,
-                baseline,
-                inventoryIndex,
+                freshnessBaseline,
+                observation,
                 currentCharacterId);
 
         if (decision.Type ==
@@ -147,13 +175,8 @@ public sealed class PlanExecutionCoordinator
                 verification);
         }
 
-        var observation =
-            verifier.Observe(
-                decision,
-                inventoryIndex);
-
         if (!HasFreshMoveObservation(
-                baseline,
+                freshnessBaseline,
                 observation))
         {
             RefreshGuidanceIfLogicalStateUnchanged(
@@ -263,6 +286,8 @@ public sealed class PlanExecutionCoordinator
 
         currentInstruction =
             materialization.Instruction;
+        lastCoherentObservation =
+            observation;
         replanReason = null;
 
         return Snapshot(
@@ -339,6 +364,17 @@ public sealed class PlanExecutionCoordinator
                 session.CurrentDecisionIndex,
                 decision,
                 inventoryIndex);
+
+        lastCoherentObservation =
+            new PlanExecutionObservation(
+                baseline.SourceQuantity,
+                baseline.LogicalSourceQuantity,
+                baseline.DestinationQuantity,
+                baseline.SourceObservedAtUtc,
+                baseline.DestinationObservedAtUtc,
+                baseline.SourceObservationRevision,
+                baseline.DestinationObservationRevision,
+                baseline.SourceLayoutFingerprint);
 
         verification = null;
         reconciliation = null;
@@ -441,6 +477,7 @@ public sealed class PlanExecutionCoordinator
     private void ClearCurrentDecisionState()
     {
         baseline = null;
+        lastCoherentObservation = null;
         currentInstruction = null;
         verification = null;
         reconciliation = null;
