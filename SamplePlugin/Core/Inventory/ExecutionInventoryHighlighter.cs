@@ -48,6 +48,7 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
     private long nextTargetRetryAtMs;
 
     private readonly List<NodeBinding> activeBindings = new();
+    private readonly List<NodeBinding> pendingRestores = new();
     private readonly List<ExecutionQuantityBadgeAnchor> quantityBadgeAnchors = new();
     private string activeVisualKey = string.Empty;
     private readonly List<string> debugEvents = new();
@@ -107,6 +108,8 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
     public void Update(
         ulong currentCharacterId)
     {
+        RestorePendingBindings();
+
         var runtime =
             executionRuntime.Snapshot;
 
@@ -266,13 +269,30 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
             RecordDebugEvent($"CLEAR reason={reason}; visual={activeVisualKey}; bindings={activeBindings.Count}");
             foreach (var binding in activeBindings)
             {
-                RecordDebugEvent($"RESTORE {binding.AddonName}/{binding.NodeId}: {binding.Restore(gameGui)}");
+                var result = binding.Restore(gameGui);
+                RecordDebugEvent($"RESTORE {binding.AddonName}/{binding.NodeId}: {result}");
+                if (result == "addon hidden")
+                    pendingRestores.Add(binding);
             }
         }
 
         activeBindings.Clear();
         quantityBadgeAnchors.Clear();
         activeVisualKey = string.Empty;
+    }
+
+    private void RestorePendingBindings()
+    {
+        for (var index = pendingRestores.Count - 1; index >= 0; index--)
+        {
+            var binding = pendingRestores[index];
+            var result = binding.Restore(gameGui);
+            if (result == "addon hidden")
+                continue;
+
+            RecordDebugEvent($"RESTORE DEFERRED {binding.AddonName}/{binding.NodeId}: {result}");
+            pendingRestores.RemoveAt(index);
+        }
     }
 
     public void Dispose()
