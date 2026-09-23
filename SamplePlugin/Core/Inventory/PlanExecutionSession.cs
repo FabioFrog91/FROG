@@ -31,27 +31,27 @@ public sealed class PlanExecutionSession
     public PlannerPlan Plan =>
         plan;
 
-    public int TotalActionCount =>
+    public int TotalDecisionCount =>
         plan.Decisions.Count;
 
-    public int VerifiedActionCount =>
+    public int VerifiedDecisionCount =>
         verifiedDecisionCount;
 
-    public int ExecutedActionCount =>
+    public int ExecutedDecisionCount =>
         verifiedDecisionCount +
         (currentDecisionExecuted
             ? 1
             : 0);
 
-    public int RemainingActionCount =>
-        TotalActionCount -
-        VerifiedActionCount;
+    public int RemainingDecisionCount =>
+        TotalDecisionCount -
+        VerifiedDecisionCount;
 
     public bool IsComplete =>
         verifiedDecisionCount >=
-        TotalActionCount;
+        TotalDecisionCount;
 
-    public bool IsCurrentActionExecuted =>
+    public bool IsCurrentDecisionExecuted =>
         currentDecisionExecuted;
 
     public PlannerDecision? CurrentDecision =>
@@ -60,9 +60,9 @@ public sealed class PlanExecutionSession
             : plan.Decisions[
                 verifiedDecisionCount];
 
-    public int CurrentActionIndex =>
+    public int CurrentDecisionIndex =>
         IsComplete
-            ? TotalActionCount
+            ? TotalDecisionCount
             : verifiedDecisionCount + 1;
 
     public IReadOnlyList<PlanExecutionStep> Steps =>
@@ -87,7 +87,7 @@ public sealed class PlanExecutionSession
                 nameof(plan));
     }
 
-    public bool TryMarkCurrentExecuted(
+    public bool TryMarkCurrentDecisionExecuted(
         out PlannerDecision? executedDecision)
     {
         executedDecision =
@@ -105,7 +105,7 @@ public sealed class PlanExecutionSession
         return true;
     }
 
-    public bool TryMarkCurrentVerified()
+    public bool TryMarkCurrentDecisionVerified()
     {
         if (!currentDecisionExecuted ||
             IsComplete)
