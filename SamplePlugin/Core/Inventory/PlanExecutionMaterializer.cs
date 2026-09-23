@@ -1,3 +1,4 @@
+using Dalamud.Game.Inventory;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -80,6 +81,8 @@ public sealed class PlanExecutionMaterializer
                     IsSameLogicalSource(
                         item,
                         decision.Source) &&
+                    IsExecutionContainer(
+                        item) &&
                     item.BaseItemId ==
                         decision.BaseItemId &&
                     item.IsHq ==
@@ -142,6 +145,32 @@ public sealed class PlanExecutionMaterializer
                 decision,
                 allocations));
     }
+
+    private static bool IsExecutionContainer(
+        InventoryItemSnapshot item) =>
+        item.Storage switch
+        {
+            StorageType.CharacterInventory =>
+                item.Container is
+                    (uint)GameInventoryType.Inventory1 or
+                    (uint)GameInventoryType.Inventory2 or
+                    (uint)GameInventoryType.Inventory3 or
+                    (uint)GameInventoryType.Inventory4,
+
+            StorageType.Retainer =>
+                item.Container >=
+                    (uint)GameInventoryType.RetainerPage1 &&
+                item.Container <=
+                    (uint)GameInventoryType.RetainerPage7,
+
+            StorageType.FreeCompanyChest =>
+                item.Container >=
+                    (uint)GameInventoryType.FreeCompanyPage1 &&
+                item.Container <=
+                    (uint)GameInventoryType.FreeCompanyPage5,
+
+            _ => false
+        };
 
     private static bool IsSameLogicalSource(
         InventoryItemSnapshot item,
