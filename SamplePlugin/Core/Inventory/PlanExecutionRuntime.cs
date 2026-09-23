@@ -51,7 +51,6 @@ public sealed class PlanExecutionRuntime
             null);
 
     public event Action? SessionStarted;
-    public event Action? ExecutionStarted;
 
     public PlanExecutionRuntimeSnapshot Snapshot =>
         snapshot;
@@ -78,7 +77,6 @@ public sealed class PlanExecutionRuntime
         OptimizationSettings settings)
     {
         verifiedHistory.Clear();
-        ExecutionStarted?.Invoke();
 
         requirementSet =
             CloneRequirements(
