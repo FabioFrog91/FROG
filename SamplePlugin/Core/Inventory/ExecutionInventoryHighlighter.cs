@@ -1125,15 +1125,34 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
         public void Restore(
             IGameGui gameGui)
         {
-            if (!TryResolveSameAddon(
-                    gameGui,
-                    out var node))
+            // A hidden addon can still retain the highlight. Restore its
+            // original colour as long as this is the same addon instance.
+            var wrapper =
+                gameGui.GetAddonByName(
+                    AddonName,
+                    1);
+
+            if (wrapper == IntPtr.Zero ||
+                wrapper.Address != AddonAddress)
             {
                 return;
             }
 
-            Original.Restore(
-                node);
+            var addon =
+                (AtkUnitBase*)wrapper.Address;
+
+            if (addon == null)
+                return;
+
+            var node =
+                addon->GetNodeById(
+                    NodeId);
+
+            if (node != null)
+            {
+                Original.Restore(
+                    node);
+            }
         }
     }
 }
