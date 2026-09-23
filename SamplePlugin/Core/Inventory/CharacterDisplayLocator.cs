@@ -111,6 +111,14 @@ public sealed class CharacterDisplayLocator
                     item.IsHq == action.IsHq &&
                     item.Quantity > 0));
 
+        if (currentItems is not null)
+        {
+            matchingStacks =
+                PrioritizeExactRuntimeStack(
+                    matchingStacks,
+                    action.Quantity);
+        }
+
         var remaining =
             action.Quantity;
 
@@ -193,6 +201,49 @@ public sealed class CharacterDisplayLocator
         return new CharacterDisplayLocation(
             true,
             positions);
+    }
+
+    private static IReadOnlyList<InventoryItemSnapshot> PrioritizeExactRuntimeStack(
+        IReadOnlyList<InventoryItemSnapshot> stacks,
+        int requestedQuantity)
+    {
+        if (requestedQuantity <= 0 ||
+            stacks.Count < 2)
+        {
+            return stacks;
+        }
+
+        var exactIndex = -1;
+
+        for (var index = 0;
+             index < stacks.Count;
+             index++)
+        {
+            if (stacks[index].Quantity ==
+                requestedQuantity)
+            {
+                exactIndex = index;
+                break;
+            }
+        }
+
+        if (exactIndex <= 0)
+            return stacks;
+
+        var prioritized =
+            stacks.ToList();
+
+        var exact =
+            prioritized[exactIndex];
+
+        prioritized.RemoveAt(
+            exactIndex);
+
+        prioritized.Insert(
+            0,
+            exact);
+
+        return prioritized;
     }
 
     private static int GetPhysicalContainerIndex(

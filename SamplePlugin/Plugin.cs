@@ -319,7 +319,8 @@ public sealed class Plugin : HostedPlugin
                 executionRuntime,
                 retainerDisplayLocator,
                 characterMonitor,
-                CharacterCatalog);
+                CharacterCatalog,
+                this);
 
         MainWindow =
             new MainWindowWithFcDebug(
