@@ -17,14 +17,15 @@ public enum PlanExecutionCoordinatorStatus
 public readonly record struct PlanExecutionCoordinatorSnapshot(
     PlanExecutionCoordinatorStatus Status,
     PlanExecutionSession? Session,
-    PlannerAction? CurrentAction,
+    ExecutionInstruction? CurrentInstruction,
     PlanExecutionVerificationResult? Verification,
-    PlanExecutionReconciliationResult? Reconciliation);
+    PlanExecutionReconciliationResult? Reconciliation,
+    string? ReplanReason);
 
 /// <summary>
-/// Owns the execution state machine for a single immutable planner result.
-/// UI and future executors can drive the same flow without embedding
-/// verification/reconciliation rules in presentation code.
+/// Owns execution state for logical planner decisions. Physical stack
+/// materialization is refreshed only while the logical MOVE has not started;
+/// verification/reconciliation own the state once a real delta is observed.
 /// </summary>
 public sealed class PlanExecutionCoordinator
 {
@@ -32,14 +33,24 @@ public sealed class PlanExecutionCoordinator
 
     private readonly PlanExecutionVerifier verifier = new();
     private readonly PlanExecutionReconciler reconciler = new();
-    private readonly PlanExecutionMaterializer materializer = new();
+    private readonly PlanExecutionMaterializer materializer;
 
     private PlanExecutionSession? session;
     private PlanExecutionBaseline? baseline;
+    private ExecutionInstruction? currentInstruction;
     private PlanExecutionVerificationResult? verification;
     private PlanExecutionReconciliationResult? reconciliation;
     private PlanExecutionObservation? pendingMismatchObservation;
     private long pendingMismatchSinceMs;
+    private string? replanReason;
+
+    public PlanExecutionCoordinator(
+        ExecutionOrderCompiler executionOrderCompiler)
+    {
+        materializer =
+            new PlanExecutionMaterializer(
+                executionOrderCompiler);
+    }
 
     public PlanExecutionSession? Session =>
         session;
@@ -51,10 +62,7 @@ public sealed class PlanExecutionCoordinator
             new PlanExecutionSession(
                 plan);
 
-        baseline = null;
-        verification = null;
-        reconciliation = null;
-        ResetPendingMismatch();
+        ClearCurrentDecisionState();
     }
 
     public void Reset()
@@ -62,42 +70,26 @@ public sealed class PlanExecutionCoordinator
         if (session is not null)
             session.Reset();
 
-        baseline = null;
-        verification = null;
-        reconciliation = null;
-        ResetPendingMismatch();
+        ClearCurrentDecisionState();
     }
 
     public void Clear()
     {
         session = null;
-        baseline = null;
-        verification = null;
-        reconciliation = null;
-        ResetPendingMismatch();
+        ClearCurrentDecisionState();
     }
 
     public bool TryMarkCurrentExecuted(
-        out PlannerAction? executedAction)
+        out PlannerDecision? executedDecision)
     {
-        if (session is null ||
-            session.IsComplete)
+        if (session is null)
         {
-            executedAction = null;
+            executedDecision = null;
             return false;
         }
 
-        var materialized =
-            materializer.Materialize(
-                session.Plan,
-                session.CurrentActionIndex - 1);
-
-        executedAction =
-            materialized.Action;
-
         return session.TryMarkCurrentExecuted(
-            materialized.CoveredActionCount,
-            out _);
+            out executedDecision);
     }
 
     public PlanExecutionCoordinatorSnapshot Update(
@@ -116,29 +108,22 @@ public sealed class PlanExecutionCoordinator
                 GetCompletedStatus());
         }
 
-        var currentActionIndex =
-            session.CurrentActionIndex - 1;
+        var decision =
+            session.CurrentDecision;
 
-        var materialized =
-            materializer.Materialize(
-                session.Plan,
-                currentActionIndex);
-
-        var action =
-            materialized.Action;
-
-        var coveredActionCount =
-            materialized.CoveredActionCount;
-
-        if (action is null)
+        if (decision is null)
         {
             return Snapshot(
                 GetCompletedStatus());
         }
 
-        EnsureBaseline(
-            action,
-            inventoryIndex);
+        if (!EnsureCurrentDecision(
+                decision,
+                inventoryIndex))
+        {
+            return Snapshot(
+                PlanExecutionCoordinatorStatus.ReplanRequired);
+        }
 
         if (baseline is null)
         {
@@ -148,14 +133,15 @@ public sealed class PlanExecutionCoordinator
 
         verification =
             verifier.Verify(
-                action,
+                decision,
                 baseline,
                 inventoryIndex,
                 currentCharacterId);
 
         if (!session.IsCurrentActionExecuted)
         {
-            if (action.Type == PlannerActionType.SwitchCharacter)
+            if (decision.Type ==
+                PlannerDecisionType.SwitchCharacter)
             {
                 if (verification.Status !=
                     PlanExecutionVerificationStatus.Verified)
@@ -165,7 +151,6 @@ public sealed class PlanExecutionCoordinator
                 }
 
                 session.TryMarkCurrentExecuted(
-                    coveredActionCount,
                     out _);
             }
             else
@@ -173,13 +158,17 @@ public sealed class PlanExecutionCoordinator
                 if (verification.Status ==
                     PlanExecutionVerificationStatus.WaitingForObservation)
                 {
+                    RefreshGuidanceIfStillUnchanged(
+                        decision,
+                        inventoryIndex);
+
                     return Snapshot(
                         PlanExecutionCoordinatorStatus.Pending);
                 }
 
                 var observation =
                     verifier.Observe(
-                        action,
+                        decision,
                         inventoryIndex);
 
                 if (verification.Status ==
@@ -193,7 +182,7 @@ public sealed class PlanExecutionCoordinator
 
                 reconciliation =
                     reconciler.Reconcile(
-                        action,
+                        decision,
                         baseline,
                         observation);
 
@@ -202,14 +191,14 @@ public sealed class PlanExecutionCoordinator
                 {
                     reconciliation = null;
 
+                    RefreshGuidanceIfStillUnchanged(
+                        decision,
+                        inventoryIndex);
+
                     return Snapshot(
                         PlanExecutionCoordinatorStatus.Pending);
                 }
 
-                // A source-only decrease can be a transient inventory
-                // observation (notably while FC pages are being scanned).
-                // Never advance or replan until at least one unit is
-                // confirmed on both sides of the requested transfer.
                 if (reconciliation.ObservedTransferredQuantity <= 0)
                 {
                     return Snapshot(
@@ -217,7 +206,6 @@ public sealed class PlanExecutionCoordinator
                 }
 
                 session.TryMarkCurrentExecuted(
-                    coveredActionCount,
                     out _);
 
                 if (reconciliation.HasVariance)
@@ -228,19 +216,20 @@ public sealed class PlanExecutionCoordinator
             }
         }
 
-        if (action.Type == PlannerActionType.Move &&
+        if (decision.Type ==
+                PlannerDecisionType.Move &&
             reconciliation is null &&
             verification.Status !=
                 PlanExecutionVerificationStatus.WaitingForObservation)
         {
             var observation =
                 verifier.Observe(
-                    action,
+                    decision,
                     inventoryIndex);
 
             reconciliation =
                 reconciler.Reconcile(
-                    action,
+                    decision,
                     baseline,
                     observation);
 
@@ -254,13 +243,9 @@ public sealed class PlanExecutionCoordinator
         if (verification.Status ==
             PlanExecutionVerificationStatus.Verified)
         {
-            session.TryMarkCurrentVerified(
-                coveredActionCount);
+            session.TryMarkCurrentVerified();
 
-            baseline = null;
-            verification = null;
-            reconciliation = null;
-            ResetPendingMismatch();
+            ClearCurrentDecisionState();
 
             return Snapshot(
                 session.IsComplete
@@ -275,35 +260,89 @@ public sealed class PlanExecutionCoordinator
                 : PlanExecutionCoordinatorStatus.Executed);
     }
 
-    private PlanExecutionCoordinatorStatus GetCompletedStatus() =>
-        session?.Plan.CapacityBlocked > 0
-            ? PlanExecutionCoordinatorStatus.WaitingForCapacity
-            : PlanExecutionCoordinatorStatus.Complete;
-
-    private void EnsureBaseline(
-        PlannerAction action,
+    private bool EnsureCurrentDecision(
+        PlannerDecision decision,
         InventoryIndex inventoryIndex)
     {
         if (session is null)
-            return;
+            return false;
 
         if (baseline is not null &&
             baseline.ActionIndex ==
                 session.CurrentActionIndex)
         {
-            return;
+            return true;
         }
+
+        var materialization =
+            materializer.Materialize(
+                decision,
+                inventoryIndex.Items);
+
+        if (!materialization.IsAvailable ||
+            materialization.Instruction is null)
+        {
+            currentInstruction = null;
+            replanReason =
+                materialization.Message;
+
+            return false;
+        }
+
+        currentInstruction =
+            materialization.Instruction;
 
         baseline =
             verifier.CaptureBaseline(
                 session.CurrentActionIndex,
-                action,
+                decision,
                 inventoryIndex);
 
         verification = null;
         reconciliation = null;
+        replanReason = null;
         ResetPendingMismatch();
+
+        return true;
     }
+
+    private void RefreshGuidanceIfStillUnchanged(
+        PlannerDecision decision,
+        InventoryIndex inventoryIndex)
+    {
+        if (baseline is null)
+            return;
+
+        var observation =
+            verifier.Observe(
+                decision,
+                inventoryIndex);
+
+        if (observation.SourceQuantity !=
+                baseline.SourceQuantity ||
+            observation.DestinationQuantity !=
+                baseline.DestinationQuantity)
+        {
+            return;
+        }
+
+        var materialization =
+            materializer.Materialize(
+                decision,
+                inventoryIndex.Items);
+
+        if (materialization.IsAvailable &&
+            materialization.Instruction is not null)
+        {
+            currentInstruction =
+                materialization.Instruction;
+        }
+    }
+
+    private PlanExecutionCoordinatorStatus GetCompletedStatus() =>
+        session?.Plan.CapacityBlocked > 0
+            ? PlanExecutionCoordinatorStatus.WaitingForCapacity
+            : PlanExecutionCoordinatorStatus.Complete;
 
     private bool IsMismatchObservationSettled(
         PlanExecutionObservation observation)
@@ -314,20 +353,23 @@ public sealed class PlanExecutionCoordinator
         if (pendingMismatchObservation is null ||
             pendingMismatchObservation.SourceQuantity !=
                 observation.SourceQuantity ||
-            pendingMismatchObservation.LogicalSourceQuantity !=
-                observation.LogicalSourceQuantity ||
             pendingMismatchObservation.DestinationQuantity !=
                 observation.DestinationQuantity ||
             pendingMismatchObservation.SourceLayoutFingerprint !=
                 observation.SourceLayoutFingerprint)
         {
-            pendingMismatchObservation = observation;
-            pendingMismatchSinceMs = nowMs;
+            pendingMismatchObservation =
+                observation;
+
+            pendingMismatchSinceMs =
+                nowMs;
+
             return false;
         }
 
-        return nowMs - pendingMismatchSinceMs >=
-            MismatchSettleIntervalMs;
+        return nowMs -
+               pendingMismatchSinceMs >=
+               MismatchSettleIntervalMs;
     }
 
     private void ResetPendingMismatch()
@@ -336,26 +378,23 @@ public sealed class PlanExecutionCoordinator
         pendingMismatchSinceMs = 0;
     }
 
-    private PlanExecutionCoordinatorSnapshot Snapshot(
-        PlanExecutionCoordinatorStatus status)
+    private void ClearCurrentDecisionState()
     {
-        PlannerAction? currentAction = null;
+        baseline = null;
+        currentInstruction = null;
+        verification = null;
+        reconciliation = null;
+        replanReason = null;
+        ResetPendingMismatch();
+    }
 
-        if (session is not null &&
-            !session.IsComplete)
-        {
-            currentAction =
-                materializer.Materialize(
-                    session.Plan,
-                    session.CurrentActionIndex - 1)
-                .Action;
-        }
-
-        return new PlanExecutionCoordinatorSnapshot(
+    private PlanExecutionCoordinatorSnapshot Snapshot(
+        PlanExecutionCoordinatorStatus status) =>
+        new(
             status,
             session,
-            currentAction,
+            currentInstruction,
             verification,
-            reconciliation);
-    }
+            reconciliation,
+            replanReason);
 }
