@@ -35,12 +35,14 @@ public sealed record PlannerCapacityAdvice(
 public sealed class PlannerPlan
 {
     private readonly List<PlannerAction> actions;
+    private readonly IReadOnlyList<PlannerDecision> decisions;
     private readonly List<PlannerCapacityBlock> capacityBlocks;
     private readonly List<PlannerCapacityAdvice> capacityAdvice;
 
     public PlannerState InitialState { get; }
     public PlannerState FinalState { get; }
     public IReadOnlyList<PlannerAction> Actions => actions;
+    public IReadOnlyList<PlannerDecision> Decisions => decisions;
     public PlannerPlanResult Result { get; }
     public int Missing { get; }
     public int CapacityBlocked { get; }
@@ -110,6 +112,9 @@ public sealed class PlannerPlan
         InitialState = initialState;
         FinalState = finalState;
         this.actions = actions;
+        decisions =
+            PlannerDecisionCompiler.Compile(
+                actions);
         Result = result;
         Missing = missing;
         CapacityBlocked = Math.Clamp(
