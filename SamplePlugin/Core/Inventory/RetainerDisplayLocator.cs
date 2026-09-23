@@ -21,69 +21,48 @@ public sealed record RetainerDisplayLocation(
 }
 
 /// <summary>
-/// Translates FFXIV's physical retainer storage (7 containers x 25 slots)
-/// into the user-visible retainer inventory (5 pages x 35 slots).
-/// Planner and verifier keep using the physical coordinates; this class is
-/// presentation-only and uses the game's ODR sort order for the owner.
+/// Pure presentation mapping from already materialized physical Retainer
+/// stacks to the game's visible ODR page/slot coordinates.
 /// </summary>
 public sealed class RetainerDisplayLocator
 {
     private const uint RetainerContainerFirst = 10000;
     private const uint RetainerContainerLast = 10006;
-    private const int PhysicalSlotsPerContainer = 25;
     private const int VisibleSlotsPerPage = 35;
 
     private readonly IOdrScanner odrScanner;
-    private readonly ExecutionOrderCompiler executionOrderCompiler;
 
     public RetainerDisplayLocator(
-        IOdrScanner odrScanner,
-        ExecutionOrderCompiler executionOrderCompiler)
+        IOdrScanner odrScanner)
     {
-        this.odrScanner = odrScanner;
-        this.executionOrderCompiler = executionOrderCompiler;
+        this.odrScanner =
+            odrScanner;
     }
 
     public RetainerDisplayLocation LocateSource(
-        PlannerPlan plan,
-        int actionIndex,
-        IReadOnlyList<InventoryItemSnapshot>? currentItems = null,
-        PlannerAction? executionAction = null)
+        ExecutionInstruction instruction)
     {
-        if (actionIndex < 0 ||
-            actionIndex >= plan.Actions.Count)
-        {
-            return RetainerDisplayLocation.Unavailable;
-        }
+        var decision =
+            instruction.Decision;
 
-        var action =
-            executionAction ??
-            plan.Actions[actionIndex];
-
-        if (action.Type != PlannerActionType.Move ||
-            action.Source is null ||
-            action.Source.Storage != StorageType.Retainer)
-        {
-            return RetainerDisplayLocation.Unavailable;
-        }
-
-        var source =
-            action.Source;
-
-        if (source.Container < RetainerContainerFirst ||
-            source.Container > RetainerContainerLast ||
-            source.ParentCharacterId == 0)
+        if (decision.Type !=
+                PlannerDecisionType.Move ||
+            decision.Source is null ||
+            decision.Source.Storage !=
+                StorageType.Retainer ||
+            decision.Source.ParentCharacterId == 0 ||
+            instruction.SourceStacks.Count == 0)
         {
             return RetainerDisplayLocation.Unavailable;
         }
 
         var sortOrder =
             odrScanner.GetSortOrder(
-                source.ParentCharacterId);
+                decision.Source.ParentCharacterId);
 
         if (sortOrder is null ||
             !sortOrder.RetainerInventories.TryGetValue(
-                source.OwnerId,
+                decision.Source.OwnerId,
                 out var retainerSortOrder))
         {
             return RetainerDisplayLocation.Unavailable;
@@ -95,116 +74,57 @@ public sealed class RetainerDisplayLocator
         if (coordinates.Count == 0)
             return RetainerDisplayLocation.Unavailable;
 
-        var previouslyPlannedFromSameSource =
-            currentItems is not null
-                ? 0
-                : plan.Actions
-                .Take(actionIndex)
-                .Where(previous =>
-                    previous.Type == PlannerActionType.Move &&
-                    previous.Source is not null &&
-                    IsSamePhysicalSource(
-                        previous.Source,
-                        source) &&
-                    previous.BaseItemId == action.BaseItemId &&
-                    previous.IsHq == action.IsHq)
-                .Sum(previous =>
-                    previous.Quantity);
-
-        var matchingStacks =
-            executionOrderCompiler.OrderStacksForExecution(
-                source,
-                (currentItems ?? plan.InitialState.Items)
-                .Where(item =>
-                    item.Storage == source.Storage &&
-                    item.OwnerId == source.OwnerId &&
-                    (currentItems is not null ||
-                     item.Container == source.Container) &&
-                    item.Container >= RetainerContainerFirst &&
-                    item.Container <= RetainerContainerLast &&
-                    item.BaseItemId == action.BaseItemId &&
-                    item.IsHq == action.IsHq &&
-                    item.Quantity > 0));
-
-        var remaining =
-            action.Quantity;
-
-        var quantityToSkip =
-            previouslyPlannedFromSameSource;
-
         var positions =
             new List<RetainerDisplayPosition>();
 
-        foreach (var stack in matchingStacks)
+        foreach (var allocation in
+                 instruction.SourceStacks)
         {
-            if (remaining <= 0)
-                break;
+            var item =
+                allocation.Item;
 
-            var available =
-                stack.Quantity;
-
-            if (quantityToSkip > 0)
-            {
-                var skipped =
-                    Math.Min(
-                        quantityToSkip,
-                        available);
-
-                quantityToSkip -=
-                    skipped;
-
-                available -=
-                    skipped;
-            }
-
-            if (available <= 0)
-                continue;
-
-            var moved =
-                Math.Min(
-                    remaining,
-                    available);
-
-            if (stack.Container < RetainerContainerFirst ||
-                stack.Container > RetainerContainerLast)
+            if (item.Storage != StorageType.Retainer ||
+                item.OwnerId !=
+                    decision.Source.OwnerId ||
+                item.ParentCharacterId !=
+                    decision.Source.ParentCharacterId ||
+                item.Container <
+                    RetainerContainerFirst ||
+                item.Container >
+                    RetainerContainerLast ||
+                allocation.Quantity <= 0)
             {
                 return RetainerDisplayLocation.Unavailable;
             }
 
             var physicalContainerIndex =
                 checked(
-                    (int)(stack.Container -
+                    (int)(item.Container -
                           RetainerContainerFirst));
 
             var displayIndex =
                 FindDisplayIndex(
                     coordinates,
                     physicalContainerIndex,
-                    stack.Slot);
+                    item.Slot);
 
             if (displayIndex < 0)
-            {
                 return RetainerDisplayLocation.Unavailable;
-            }
 
             positions.Add(
                 new RetainerDisplayPosition(
-                    Page:
-                        displayIndex /
+                    displayIndex /
                         VisibleSlotsPerPage +
                         1,
-                    Slot:
-                        displayIndex %
+                    displayIndex %
                         VisibleSlotsPerPage +
                         1,
-                    Quantity:
-                        moved));
-
-            remaining -= moved;
+                    allocation.Quantity));
         }
 
-        if (remaining > 0 ||
-            positions.Count == 0)
+        if (positions.Sum(position =>
+                position.Quantity) !=
+            decision.Quantity)
         {
             return RetainerDisplayLocation.Unavailable;
         }
@@ -237,13 +157,4 @@ public sealed class RetainerDisplayLocator
 
         return -1;
     }
-
-    private static bool IsSamePhysicalSource(
-        InventorySource left,
-        InventorySource right) =>
-        left.Storage == right.Storage &&
-        left.OwnerId == right.OwnerId &&
-        left.Container == right.Container &&
-        left.ParentCharacterId == right.ParentCharacterId;
-
 }
