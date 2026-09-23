@@ -42,7 +42,7 @@ Regole inderogabili:
 - Solution: `SamplePlugin.slnx`
 - Project: `SamplePlugin/SamplePlugin.csproj`
 - Namespace Core: `FROG.Core.Inventory`
-- Master corrente al 2026-09-23: `5301209166b685b3f89fc7c5b539fd0bb409c7a1`
+- Master corrente: verificare sempre il repository reale con `git log -1 --oneline`; non hardcodare qui uno SHA che diventerebbe stale dopo ogni merge.
 
 Workflow modifiche:
 
@@ -351,9 +351,9 @@ Contratto Planning → Execution implementato:
 
 PR #23/#24: BUILD/CI VERIFICATA. Comportamento NQ10/split multi-stack ancora da RUNTIME VERIFICARE.
 
-## 10. Resolver e pipeline legacy
+## 10. Resolver e pipeline di resolution
 
-Esiste ancora:
+Esiste:
 
 `ResolverCoordinator → TransferPlanner → RequirementResolver → TransferPlan`
 
@@ -361,15 +361,20 @@ oltre alla pipeline strategica:
 
 `GlobalPlannerCoordinator → GlobalTransferPlanner → PlannerPlan`.
 
-Non eliminare automaticamente la pipeline legacy.
+Audit concluso sul ruolo attuale:
 
-Audit ancora richiesto:
+- la pipeline Resolver produce preview/diagnostica di resolution, allocazioni, `TransferIntent`, missing e source policy;
+- non gestisce switch, route globali, FC hub, capacity o scoring strategico;
+- non guida Execution;
+- `GlobalTransferPlanner` resta l'unica autorità del piano strategico eseguibile;
+- `ResolverCoordinator.Resolve()` può restare UI-triggered finché il suo risultato è non critico e diagnostico/preview; Execution e replan non devono dipenderne;
+- non eliminare o rinominare questa pipeline solo perché non è il planner globale.
 
-- capire quali output sono diagnostica/resolution/source policy e quali duplicano realmente planning;
-- ricostruire eventuale ruolo futuro da codice/documentazione/storia Git;
-- una sola autorità finale deve decidere il piano strategico;
+Compatibilità/futuro:
+
 - `InventoryStackResolver` è stato esplicitamente preservato anche se oggi non mostra consumer, perché potrebbe essere scaffolding futuro;
-- l'overload compatibile `ExecutionOrderCompiler.OrderStacksForExecution(InventorySource,...)` è stato preservato per lo stesso motivo.
+- l'overload compatibile `ExecutionOrderCompiler.OrderStacksForExecution(InventorySource,...)` è stato preservato per lo stesso motivo;
+- ogni futura rimozione richiede evidenza di obsolescenza o conferma dell'utente se l'intento futuro resta ambiguo.
 
 ## 11. Execution corrente
 
@@ -444,7 +449,15 @@ Regole:
 - ODR non cambia source logica, quantità o score strategico;
 - fallback deterministico se ODR non disponibile.
 
-La traduzione Retainer fisico → pagina/slot visibile tramite `RetainerSortOrder.InventoryCoords` era runtime verificata prima del refactor; va riconfermata insieme al nuovo ExecutionInstruction.
+Stato attuale:
+
+- gli stack fisici della decisione corrente vengono ordinati usando ODR/live `ExecutionOrderCompiler`;
+- il vecchio post-compiler continua a poter riordinare `PlannerPlan.Actions`, ma `PlannerPlan.Decisions` resta immutabile;
+- quindi l'ordine tra decisioni logiche diverse e commutabili non è garantito dal vecchio riordino delle action fisiche;
+- questo è un possibile tema di ergonomia/ordine, non un bug di quantità o route;
+- non modificare l'ordine delle decisioni prima di evidenza runtime che mostri un requisito o una regressione concreta.
+
+La traduzione Retainer fisico → pagina/slot visibile tramite `RetainerSortOrder.InventoryCoords` era runtime verificata prima del refactor; va riconfermata insieme al nuovo `ExecutionInstruction`.
 
 ## 14. Lifecycle
 
