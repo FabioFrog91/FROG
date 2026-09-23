@@ -152,39 +152,45 @@ public sealed class PlanExecutionVerifier
                 $"In attesa di una nuova osservazione di source e destination. {diagnostics}");
         }
 
-        if (observation.SourceQuantity ==
-                baseline.SourceQuantity &&
-            observation.DestinationQuantity ==
-                baseline.DestinationQuantity)
+        var sourceDecrease =
+            baseline.SourceQuantity -
+            observation.SourceQuantity;
+
+        var destinationIncrease =
+            observation.DestinationQuantity -
+            baseline.DestinationQuantity;
+
+        if (sourceDecrease == 0 &&
+            destinationIncrease == 0)
         {
             return new PlanExecutionVerificationResult(
                 PlanExecutionVerificationStatus.WaitingForObservation,
                 $"Nuove osservazioni ricevute, ma nessun delta del MOVE è stato ancora osservato. {diagnostics}");
         }
 
-        var expectedSourceMaximum =
-            Math.Max(
-                0,
-                baseline.SourceQuantity -
-                decision.Quantity);
+        if (sourceDecrease < 0 ||
+            destinationIncrease < 0 ||
+            sourceDecrease !=
+                destinationIncrease ||
+            sourceDecrease >
+                decision.Quantity)
+        {
+            return new PlanExecutionVerificationResult(
+                PlanExecutionVerificationStatus.Mismatch,
+                $"Delta non coerente. {diagnostics}");
+        }
 
-        var expectedDestinationMinimum =
-            baseline.DestinationQuantity +
-            decision.Quantity;
-
-        if (observation.SourceQuantity <=
-                expectedSourceMaximum &&
-            observation.DestinationQuantity >=
-                expectedDestinationMinimum)
+        if (sourceDecrease ==
+            decision.Quantity)
         {
             return new PlanExecutionVerificationResult(
                 PlanExecutionVerificationStatus.Verified,
-                $"Delta source/destination osservato. {diagnostics}");
+                $"Delta source/destination completo osservato. {diagnostics}");
         }
 
         return new PlanExecutionVerificationResult(
-            PlanExecutionVerificationStatus.Mismatch,
-            $"Delta non coerente. {diagnostics}");
+            PlanExecutionVerificationStatus.WaitingForObservation,
+            $"Trasferimento parziale coerente: {sourceDecrease}/{decision.Quantity}. {diagnostics}");
     }
 
     private static string FormatMoveDiagnostics(
