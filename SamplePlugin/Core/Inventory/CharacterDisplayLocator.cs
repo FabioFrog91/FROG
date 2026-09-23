@@ -114,7 +114,7 @@ public sealed class CharacterDisplayLocator
 
         if (positions.Sum(position =>
                 position.Quantity) !=
-            decision.Quantity)
+            instruction.Quantity)
         {
             return CharacterDisplayLocation.Unavailable;
         }
