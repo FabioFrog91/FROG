@@ -240,7 +240,8 @@ public sealed class ExecutionWindow : Window, IDisposable
                 plan,
                 actionIndex,
                 action.Source,
-                plugin.InventoryIndex.Items)}");
+                plugin.InventoryIndex.Items,
+                action)}");
 
         ImGui.Spacing();
 
@@ -574,6 +575,9 @@ public sealed class ExecutionWindow : Window, IDisposable
                         action.Source,
                         step.Index == session.CurrentActionIndex
                             ? plugin.InventoryIndex.Items
+                            : null,
+                        step.Index == session.CurrentActionIndex
+                            ? runtime.CurrentAction
                             : null),
                     GetSourceName(action.Destination),
                     action.Destination.Storage,
@@ -594,7 +598,8 @@ public sealed class ExecutionWindow : Window, IDisposable
         PlannerPlan plan,
         int actionIndex,
         InventorySource source,
-        IReadOnlyList<InventoryItemSnapshot>? currentItems = null)
+        IReadOnlyList<InventoryItemSnapshot>? currentItems = null,
+        PlannerAction? executionAction = null)
     {
         if (source.Storage !=
             StorageType.Retainer)
@@ -607,7 +612,8 @@ public sealed class ExecutionWindow : Window, IDisposable
             retainerDisplayLocator.LocateSource(
                 plan,
                 actionIndex,
-                currentItems);
+                currentItems,
+                executionAction);
 
         if (!displayLocation.IsAvailable)
         {

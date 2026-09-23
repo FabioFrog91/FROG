@@ -26,7 +26,7 @@ public sealed class PlanExecutionSession
 {
     private readonly PlannerPlan plan;
     private int verifiedActionCount;
-    private bool currentActionExecuted;
+    private int currentExecutedActionCount;
 
     public PlannerPlan Plan => plan;
 
@@ -38,7 +38,7 @@ public sealed class PlanExecutionSession
 
     public int ExecutedActionCount =>
         verifiedActionCount +
-        (currentActionExecuted ? 1 : 0);
+        currentExecutedActionCount;
 
     public int RemainingActionCount =>
         TotalActionCount - VerifiedActionCount;
@@ -47,7 +47,7 @@ public sealed class PlanExecutionSession
         verifiedActionCount >= TotalActionCount;
 
     public bool IsCurrentActionExecuted =>
-        currentActionExecuted;
+        currentExecutedActionCount > 0;
 
     public PlannerAction? CurrentAction =>
         IsComplete
@@ -67,8 +67,9 @@ public sealed class PlanExecutionSession
                     action,
                     index < verifiedActionCount
                         ? PlanExecutionStepStatus.Verified
-                        : index == verifiedActionCount &&
-                          currentActionExecuted
+                        : index >= verifiedActionCount &&
+                          index < verifiedActionCount +
+                              currentExecutedActionCount
                             ? PlanExecutionStepStatus.Executed
                             : PlanExecutionStepStatus.Pending))
             .ToArray();
@@ -82,37 +83,58 @@ public sealed class PlanExecutionSession
     }
 
     public bool TryMarkCurrentExecuted(
+        int actionCount,
         out PlannerAction? executedAction)
     {
         executedAction = CurrentAction;
 
         if (executedAction is null ||
-            currentActionExecuted)
+            currentExecutedActionCount > 0 ||
+            actionCount <= 0 ||
+            verifiedActionCount + actionCount >
+                TotalActionCount)
         {
             return false;
         }
 
-        currentActionExecuted = true;
+        currentExecutedActionCount =
+            actionCount;
+
         return true;
     }
 
-    public bool TryMarkCurrentVerified()
+    public bool TryMarkCurrentExecuted(
+        out PlannerAction? executedAction) =>
+        TryMarkCurrentExecuted(
+            1,
+            out executedAction);
+
+    public bool TryMarkCurrentVerified(
+        int actionCount)
     {
-        if (!currentActionExecuted ||
-            IsComplete)
+        if (currentExecutedActionCount <= 0 ||
+            currentExecutedActionCount != actionCount ||
+            verifiedActionCount + actionCount >
+                TotalActionCount)
         {
             return false;
         }
 
-        verifiedActionCount++;
-        currentActionExecuted = false;
+        verifiedActionCount +=
+            actionCount;
+
+        currentExecutedActionCount = 0;
 
         return true;
     }
+
+    public bool TryMarkCurrentVerified() =>
+        TryMarkCurrentVerified(
+            1);
 
     public void Reset()
     {
         verifiedActionCount = 0;
-        currentActionExecuted = false;
+        currentExecutedActionCount = 0;
     }
 }

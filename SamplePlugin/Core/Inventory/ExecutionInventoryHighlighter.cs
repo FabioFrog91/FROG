@@ -127,6 +127,7 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
                 BuildTarget(
                     runtime.Session.Plan,
                     actionIndex,
+                    runtime.CurrentAction,
                     currentCharacterId,
                     plugin.InventoryIndex.Items);
 
@@ -173,6 +174,7 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
                     BuildTarget(
                         runtime.Session.Plan,
                         actionIndex,
+                        runtime.CurrentAction,
                         currentCharacterId,
                         plugin.InventoryIndex.Items);
 
@@ -295,6 +297,7 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
     private HighlightTarget? BuildTarget(
         PlannerPlan plan,
         int actionIndex,
+        PlannerAction action,
         ulong currentCharacterId,
         IReadOnlyList<InventoryItemSnapshot> currentItems)
     {
@@ -303,9 +306,6 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
         {
             return null;
         }
-
-        var action =
-            plan.Actions[actionIndex];
 
         if (action.Type != PlannerActionType.Move ||
             action.Source is null ||
@@ -326,7 +326,8 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
                 retainerDisplayLocator.LocateSource(
                     plan,
                     actionIndex,
-                    currentItems);
+                    currentItems,
+                    action);
 
             if (!location.IsAvailable)
                 return null;
@@ -357,7 +358,8 @@ public sealed unsafe class ExecutionInventoryHighlighter : IDisposable
                 characterDisplayLocator.LocateSource(
                     plan,
                     actionIndex,
-                    currentItems);
+                    currentItems,
+                    action);
 
             if (!location.IsAvailable)
                 return null;

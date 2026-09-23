@@ -32,6 +32,7 @@ public sealed class PlanExecutionCoordinator
 
     private readonly PlanExecutionVerifier verifier = new();
     private readonly PlanExecutionReconciler reconciler = new();
+    private readonly PlanExecutionMaterializer materializer = new();
 
     private PlanExecutionSession? session;
     private PlanExecutionBaseline? baseline;
@@ -79,14 +80,24 @@ public sealed class PlanExecutionCoordinator
     public bool TryMarkCurrentExecuted(
         out PlannerAction? executedAction)
     {
-        if (session is null)
+        if (session is null ||
+            session.IsComplete)
         {
             executedAction = null;
             return false;
         }
 
+        var materialized =
+            materializer.Materialize(
+                session.Plan,
+                session.CurrentActionIndex - 1);
+
+        executedAction =
+            materialized.Action;
+
         return session.TryMarkCurrentExecuted(
-            out executedAction);
+            materialized.CoveredActionCount,
+            out _);
     }
 
     public PlanExecutionCoordinatorSnapshot Update(
@@ -105,8 +116,19 @@ public sealed class PlanExecutionCoordinator
                 GetCompletedStatus());
         }
 
+        var currentActionIndex =
+            session.CurrentActionIndex - 1;
+
+        var materialized =
+            materializer.Materialize(
+                session.Plan,
+                currentActionIndex);
+
         var action =
-            session.CurrentAction;
+            materialized.Action;
+
+        var coveredActionCount =
+            materialized.CoveredActionCount;
 
         if (action is null)
         {
@@ -143,6 +165,7 @@ public sealed class PlanExecutionCoordinator
                 }
 
                 session.TryMarkCurrentExecuted(
+                    coveredActionCount,
                     out _);
             }
             else
@@ -194,6 +217,7 @@ public sealed class PlanExecutionCoordinator
                 }
 
                 session.TryMarkCurrentExecuted(
+                    coveredActionCount,
                     out _);
 
                 if (reconciliation.HasVariance)
@@ -230,7 +254,8 @@ public sealed class PlanExecutionCoordinator
         if (verification.Status ==
             PlanExecutionVerificationStatus.Verified)
         {
-            session.TryMarkCurrentVerified();
+            session.TryMarkCurrentVerified(
+                coveredActionCount);
 
             baseline = null;
             verification = null;
@@ -312,11 +337,25 @@ public sealed class PlanExecutionCoordinator
     }
 
     private PlanExecutionCoordinatorSnapshot Snapshot(
-        PlanExecutionCoordinatorStatus status) =>
-        new(
+        PlanExecutionCoordinatorStatus status)
+    {
+        PlannerAction? currentAction = null;
+
+        if (session is not null &&
+            !session.IsComplete)
+        {
+            currentAction =
+                materializer.Materialize(
+                    session.Plan,
+                    session.CurrentActionIndex - 1)
+                .Action;
+        }
+
+        return new PlanExecutionCoordinatorSnapshot(
             status,
             session,
-            session?.CurrentAction,
+            currentAction,
             verification,
             reconciliation);
+    }
 }
