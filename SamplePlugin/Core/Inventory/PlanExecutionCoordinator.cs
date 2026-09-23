@@ -20,6 +20,7 @@ public readonly record struct PlanExecutionCoordinatorSnapshot(
     ExecutionInstruction? CurrentInstruction,
     PlanExecutionVerificationResult? Verification,
     PlanExecutionReconciliationResult? Reconciliation,
+    PlannerDecision? VerifiedDecision,
     string? ReplanReason);
 
 /// <summary>
@@ -142,6 +143,7 @@ public sealed class PlanExecutionCoordinator
             PlannerDecisionType.SwitchCharacter)
         {
             return UpdateSwitch(
+                decision,
                 verification);
         }
 
@@ -211,12 +213,17 @@ public sealed class PlanExecutionCoordinator
             }
 
             session.TryMarkCurrentDecisionVerified();
+
+            var verifiedDecision =
+                decision;
+
             ClearCurrentDecisionState();
 
             return Snapshot(
                 session.IsComplete
                     ? GetCompletedStatus()
-                    : PlanExecutionCoordinatorStatus.Verified);
+                    : PlanExecutionCoordinatorStatus.Verified,
+                verifiedDecision);
         }
 
         if (!session.IsCurrentDecisionExecuted)
@@ -263,6 +270,7 @@ public sealed class PlanExecutionCoordinator
     }
 
     private PlanExecutionCoordinatorSnapshot UpdateSwitch(
+        PlannerDecision decision,
         PlanExecutionVerificationResult switchVerification)
     {
         if (session is null)
@@ -290,7 +298,8 @@ public sealed class PlanExecutionCoordinator
         return Snapshot(
             session.IsComplete
                 ? GetCompletedStatus()
-                : PlanExecutionCoordinatorStatus.Verified);
+                : PlanExecutionCoordinatorStatus.Verified,
+            decision);
     }
 
     private bool EnsureCurrentDecision(
@@ -440,12 +449,14 @@ public sealed class PlanExecutionCoordinator
     }
 
     private PlanExecutionCoordinatorSnapshot Snapshot(
-        PlanExecutionCoordinatorStatus status) =>
+        PlanExecutionCoordinatorStatus status,
+        PlannerDecision? verifiedDecision = null) =>
         new(
             status,
             session,
             currentInstruction,
             verification,
             reconciliation,
+            verifiedDecision,
             replanReason);
 }
