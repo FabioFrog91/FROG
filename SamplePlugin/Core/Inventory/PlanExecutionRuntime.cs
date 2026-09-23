@@ -6,7 +6,7 @@ namespace FROG.Core.Inventory;
 public readonly record struct PlanExecutionRuntimeSnapshot(
     PlanExecutionCoordinatorStatus Status,
     PlanExecutionSession? Session,
-    PlannerAction? CurrentAction,
+    ExecutionInstruction? CurrentInstruction,
     PlanExecutionVerificationResult? Verification,
     PlanExecutionReconciliationResult? Reconciliation,
     bool IsReplanning,
@@ -28,7 +28,7 @@ public sealed class PlanExecutionRuntime
     private readonly PlannerSourceBuilder plannerSourceBuilder;
     private readonly GlobalPlannerCoordinator globalPlannerCoordinator;
     private readonly PlanExecutionPlanGuard planGuard;
-    private readonly PlanExecutionCoordinator executionCoordinator = new();
+    private readonly PlanExecutionCoordinator executionCoordinator;
 
     private RequirementSet? requirementSet;
     private OptimizationSettings? optimizationSettings;
@@ -55,12 +55,16 @@ public sealed class PlanExecutionRuntime
         Plugin plugin,
         PlannerSourceBuilder plannerSourceBuilder,
         GlobalPlannerCoordinator globalPlannerCoordinator,
-        PlanExecutionPlanGuard planGuard)
+        PlanExecutionPlanGuard planGuard,
+        ExecutionOrderCompiler executionOrderCompiler)
     {
         this.plugin = plugin;
         this.plannerSourceBuilder = plannerSourceBuilder;
         this.globalPlannerCoordinator = globalPlannerCoordinator;
         this.planGuard = planGuard;
+        executionCoordinator =
+            new PlanExecutionCoordinator(
+                executionOrderCompiler);
     }
 
     public void Start(
@@ -85,35 +89,41 @@ public sealed class PlanExecutionRuntime
                 ? Plugin.PlayerState.ContentId
                 : 0;
 
-        var validity =
-            planGuard.ValidateRemaining(
-                plan,
-                firstActionIndex: 0,
-                currentCharacterId,
-                plugin.InventoryIndex.Items);
+        var firstDecision =
+            plan.Decisions.FirstOrDefault();
 
-        if (!validity.IsValid)
+        if (firstDecision is not null)
         {
-            executionCoordinator.Clear();
-
-            if (TryStartPlanRefresh(
+            var validity =
+                planGuard.ValidateCurrent(
                     plan,
+                    firstDecision,
                     currentCharacterId,
-                    $"REPLAN ESECUZIONE: il piano precedente non è più valido rispetto allo stato reale. {validity.Message}"))
+                    plugin.InventoryIndex.Items);
+
+            if (!validity.IsValid)
             {
+                executionCoordinator.Clear();
+
+                if (TryStartPlanRefresh(
+                        plan,
+                        currentCharacterId,
+                        $"REPLAN ESECUZIONE: la decisione corrente non è più valida rispetto allo stato reale. {validity.Message}"))
+                {
+                    RefreshSnapshot(
+                        PlanExecutionCoordinatorStatus.ReplanRequired);
+
+                    return;
+                }
+
+                error =
+                    $"La decisione corrente non è più valida. {validity.Message}";
+
                 RefreshSnapshot(
                     PlanExecutionCoordinatorStatus.ReplanRequired);
 
                 return;
             }
-
-            error =
-                $"Il piano precedente non è più valido. {validity.Message}";
-
-            RefreshSnapshot(
-                PlanExecutionCoordinatorStatus.ReplanRequired);
-
-            return;
         }
 
         executionCoordinator.Start(
@@ -193,19 +203,35 @@ public sealed class PlanExecutionRuntime
             new PlanExecutionRuntimeSnapshot(
                 execution.Status,
                 execution.Session,
-                execution.CurrentAction,
+                execution.CurrentInstruction,
                 execution.Verification,
                 execution.Reconciliation,
                 false,
                 error);
 
         if (execution.Status ==
-                PlanExecutionCoordinatorStatus.ReplanRequired &&
-            execution.Reconciliation is not null)
+            PlanExecutionCoordinatorStatus.ReplanRequired)
         {
-            TryStartResidualReplan(
-                execution.Reconciliation,
-                currentCharacterId);
+            if (execution.Reconciliation is not null)
+            {
+                TryStartResidualReplan(
+                    execution.Reconciliation,
+                    currentCharacterId);
+            }
+            else if (!string.IsNullOrWhiteSpace(
+                         execution.ReplanReason))
+            {
+                var previousPlan =
+                    execution.Session?.Plan;
+
+                if (previousPlan is not null)
+                {
+                    TryStartPlanRefresh(
+                        previousPlan,
+                        currentCharacterId,
+                        $"REPLAN ESECUZIONE: {execution.ReplanReason}");
+                }
+            }
 
             return;
         }
@@ -223,7 +249,7 @@ public sealed class PlanExecutionRuntime
         if (execution.Status ==
             PlanExecutionCoordinatorStatus.Verified)
         {
-            TryInvalidateStaleRemainingPlan(
+            TryValidateNextDecision(
                 execution.Session,
                 currentCharacterId);
         }
@@ -326,26 +352,22 @@ public sealed class PlanExecutionRuntime
             $"REPLAN ESECUZIONE: lo spazio osservato ora consente tutti i movimenti bloccati noti ({plan.CapacityBlocked} unità, {requiredSlots} slot minimi). Piano ricalcolato dallo stato reale.");
     }
 
-    private void TryInvalidateStaleRemainingPlan(
+    private void TryValidateNextDecision(
         PlanExecutionSession? session,
         ulong currentCharacterId)
     {
         if (session is null ||
             session.IsComplete ||
-            currentCharacterId == 0)
+            currentCharacterId == 0 ||
+            session.CurrentDecision is null)
         {
             return;
         }
 
-        var firstActionIndex =
-            Math.Max(
-                0,
-                session.CurrentActionIndex - 1);
-
         var validity =
-            planGuard.ValidateRemaining(
+            planGuard.ValidateCurrent(
                 session.Plan,
-                firstActionIndex,
+                session.CurrentDecision,
                 currentCharacterId,
                 plugin.InventoryIndex.Items);
 
@@ -355,7 +377,7 @@ public sealed class PlanExecutionRuntime
         TryStartPlanRefresh(
             session.Plan,
             currentCharacterId,
-            $"REPLAN ESECUZIONE: lo stato reale ha invalidato il piano residuo. {validity.Message}");
+            $"REPLAN ESECUZIONE: la prossima decisione non è più valida rispetto allo stato reale. {validity.Message}");
     }
 
     private void TryStartResidualReplan(
@@ -466,7 +488,7 @@ public sealed class PlanExecutionRuntime
             new PlanExecutionRuntimeSnapshot(
                 status,
                 session,
-                session?.CurrentAction,
+                snapshot.CurrentInstruction,
                 snapshot.Verification,
                 snapshot.Reconciliation,
                 isReplanning,
@@ -475,7 +497,7 @@ public sealed class PlanExecutionRuntime
 
     private static PlanExecutionCoordinatorStatus GetInitialStatus(
         PlannerPlan plan) =>
-        plan.Actions.Count == 0 &&
+        plan.Decisions.Count == 0 &&
         plan.CapacityBlocked > 0
             ? PlanExecutionCoordinatorStatus.WaitingForCapacity
             : PlanExecutionCoordinatorStatus.Pending;
