@@ -1765,18 +1765,20 @@ internal sealed class GlobalAllocationPlanner
 
     private static int GetSatisfiedMainQuantity(
         Requirement requirement,
-        PlannerState state)
+        PlannerState state) =>
+        GetSatisfiedMainQuantity(
+            requirement,
+            state.GetMainInventoryQuantity(
+                requirement.BaseItemId, true),
+            state.GetMainInventoryQuantity(
+                requirement.BaseItemId, false));
+
+    // Shared by Planning's goal evaluation and Execution's residual guard.
+    internal static int GetSatisfiedMainQuantity(
+        Requirement requirement,
+        int hq,
+        int nq)
     {
-        var hq =
-            state.GetMainInventoryQuantity(
-                requirement.BaseItemId,
-                true);
-
-        var nq =
-            state.GetMainInventoryQuantity(
-                requirement.BaseItemId,
-                false);
-
         return requirement.QualityPolicy switch
         {
             RequirementQualityPolicy.HqOnly =>
