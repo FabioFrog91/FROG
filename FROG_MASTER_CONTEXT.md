@@ -505,6 +505,8 @@ Non eliminare componenti apparentemente dormienti se potrebbero essere scaffoldi
 
 Su `master` risultano unite PR #35–#38; PR #39 è aperta e pronta per revisione, **non ancora su master**. Distinguere sempre quale DLL/commit è stato caricato nei test.
 
+RUNTIME VERIFICATO storico: FC observation/data-sync, CharacterInventory RAW, retainer single-stack e FC → CharacterInventory sul vecchio contratto, capacità/stack nei casi testati, ODR/highlight storico e persistenza del planner manuale attraverso `Runtime.Clear`. Queste prove storiche non verificavano da sole il nuovo ExecutionInstruction.
+
 RUNTIME VERIFICATO dall'utente nei casi osservati:
 
 - Wattle Bark NQ10/HQ9 da retainer: distribuzione su più stack/pagine, split/merge/relocation innocue, partial MOVE (es. 3/10), rimaterializzazione del residuo e highlight che segue le istruzioni; completamento Retainer → Inventory.
