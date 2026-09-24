@@ -76,12 +76,9 @@ internal sealed class PlanExecutionProgressGuard
         // not raw stacks: Any/HqFirst/NqFirst may be met with either quality.
         foreach (var requirement in requirements.Requirements)
         {
-            if (TouchesCurrentMainMove(session.CurrentDecision,
-                    requirement.BaseItemId))
-            {
-                continue;
-            }
-
+            // Include the current delivery in the projection below. Skipping
+            // the whole item would conceal a loss of the other quality while
+            // an HQ/NQ MOVE for the same item is still pending.
             var hqKey = new LogicalKey(
                 StorageType.CharacterInventory, mainCharacterId,
                 requirement.BaseItemId, true);
@@ -184,16 +181,6 @@ internal sealed class PlanExecutionProgressGuard
             Key(current.Source, current.BaseItemId, current.IsHq) == key ||
          current.Destination is not null &&
             Key(current.Destination, current.BaseItemId, current.IsHq) == key);
-
-    private bool TouchesCurrentMainMove(
-        PlannerDecision? current,
-        uint baseItemId) =>
-        current?.Type == PlannerDecisionType.Move &&
-        current.BaseItemId == baseItemId &&
-        (current.Source?.Storage == StorageType.CharacterInventory &&
-            current.Source.OwnerId == mainCharacterId ||
-         current.Destination?.Storage == StorageType.CharacterInventory &&
-            current.Destination.OwnerId == mainCharacterId);
 
     private readonly record struct LogicalKey(
         StorageType Storage,
