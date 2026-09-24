@@ -1,6 +1,6 @@
 # FROG — Master Context canonico
 
-Ultimo aggiornamento: 2026-09-23.
+Ultimo aggiornamento: 2026-09-24.
 
 Questo documento è il contratto architetturale autorevole di FROG. Deve essere letto prima di proporre o applicare modifiche. Non è una cronologia: contiene solo regole, ownership, invarianti, stato verificato e lavoro aperto ancora rilevante.
 
@@ -207,7 +207,7 @@ Stato attuale:
 - una nuova sessione residua resta indipendente e non viene pre-marcata tramite vecchi indici;
 - Start manuale, Clear e ResetProgress azzerano correttamente lo storico.
 
-PR #30: BUILD/CI VERIFICATA. Preservazione dello storico attraverso replan ancora da RUNTIME VERIFICARE.
+PR #30: BUILD/CI VERIFICATA. Lo storico Verified preservato nei replan reali è stato RUNTIME VERIFICATO nei casi Wattle Bark e Ash Lumber descritti nella sezione 16; PR #39 (aperta, non su master) estende le condizioni in cui viene richiesto il replan.
 
 ### 4.7 Presentation
 
@@ -272,7 +272,7 @@ Stato attuale:
 - `ConsumedStacks` resta volutamente fisico;
 - `Freshness` resta basata sull'evidenza fisica iniziale usata dal piano.
 
-PR #25: BUILD/CI VERIFICATA. Runtime planner post-refactor ancora da riconfermare.
+PR #25: BUILD/CI VERIFICATA. Route reali con retainer, FC, alt e main sono state RUNTIME VERIFICATE; l'ordine lessicografico delle sette priorità non è stato testato sistematicamente.
 
 ## 7. Capacity
 
@@ -315,7 +315,7 @@ Snapshot sempre letto RAW tramite `StorageReader.TryReadActiveRetainer`.
 
 Il vecchio bridge `FrogInventoryStartup.OnInventoryChanged → SyncStorageSources` è stato rimosso; `InventoryMonitor` e `InventoryScanner` restano attivi per gli altri consumer CCL.
 
-PR #27: BUILD/CI VERIFICATA. Nuova ownership singola ancora da RUNTIME VERIFICARE.
+PR #27: BUILD/CI VERIFICATA. Acquisizione e aggiornamenti del retainer sono stati osservati in trasferimenti e split/relocation di Wattle Bark e Ash Lumber; non è un test esaustivo di ogni transizione dell'observer.
 
 ### FreeCompanyChest
 
@@ -359,7 +359,7 @@ Contratto Planning → Execution implementato:
 - esempio fisico `NQ 5 + NQ 3 + HQ 9 + NQ 2` sulla stessa route diventa decisione logica `NQ 10 + HQ 9`;
 - ODR non modifica le decisioni logiche.
 
-PR #23/#24: BUILD/CI VERIFICATA. Comportamento NQ10/split multi-stack ancora da RUNTIME VERIFICARE.
+PR #23/#24: BUILD/CI VERIFICATA. NQ10 distribuito su più stack/pagine retainer, split/merge/relocation e partial MOVE sono stati RUNTIME VERIFICATI con Wattle Bark; l'highlight ha seguito gli stack osservati.
 
 ## 10. Resolver e pipeline di resolution
 
@@ -407,7 +407,7 @@ Stato architetturale:
 - Coordinator mantiene baseline logico e può rimaterializzare residui parziali;
 - Runtime orchestra replan senza dipendere dalla UI.
 
-PR #24: BUILD/CI VERIFICATA. Nuovo execution contract non ancora RUNTIME VERIFICATO end-to-end.
+PR #24: BUILD/CI VERIFICATA. Il contratto PlannerDecision → ExecutionInstruction è stato RUNTIME VERIFICATO end-to-end nei percorsi Retainer → Inventory → FC → Main e FC → Main con verifiche bilaterali, partial MOVE e SWITCH manuale.
 
 ## 12. Presentation corrente
 
@@ -480,7 +480,9 @@ Ogni event handler, hook, timer, task e CTS deve avere:
 
 No force push, no stash/pop cieco, no cambio branch/path/procedura silenzioso.
 
-## 15. Future auto-movement — architettura prevista, NON implementata
+## 15. Future auto-movement — scelta e architettura, NON implementata
+
+DECISO: il primo movimento automatico sarà UI-based, nativo e seriale; non usare manipolazione headless diretta di memoria/API nella prima versione. Lo SWITCH del personaggio resta manuale. Il comando concreto per ciascuna finestra e il suo timing richiedono verifica delle API reali prima dell'implementazione. FROG non deve dipendere da Allagan Tools.
 
 L'automazione futura non deve cambiare la separazione dei moduli.
 
@@ -489,52 +491,47 @@ Requisiti previsti:
 1. preflight per singola `ExecutionInstruction`;
 2. un'azione gameplay alla volta;
 3. verification prima dell'azione successiva;
-4. timeout/manual-interference classification;
-5. AutoRetainer IPC suppression/restore;
-6. duplicate/idempotency protection;
-7. native UI automation separata dalla logica di planner/execution.
+4. classificare timeout, cambio contesto e interferenza manuale: fermarsi senza retry ciechi;
+5. pausa/ripristino cooperativo di AutoRetainer via IPC, anche in cancel/unload, senza ripristinare uno stato che FROG non ha cambiato;
+6. duplicate/idempotency protection finché l'esito del comando è incerto;
+7. native UI automation separata dalla logica di planner/execution;
+8. espandere un MOVE logico in movimenti fisici singoli se necessario, senza cambiare route o quantità residua.
 
 UI command != successo. Il successo resta proprietà di Verification.
 
 Non eliminare componenti apparentemente dormienti se potrebbero essere scaffolding per questa fase senza prima verificarne l'intento.
 
-## 16. Stato runtime realmente verificato
+## 16. Stato verificato al 2026-09-24
 
-RUNTIME VERIFICATO e non toccato dal refactor, salvo dove indicato:
+Su `master` risultano unite PR #35–#38; PR #39 è aperta e pronta per revisione, **non ancora su master**. Distinguere sempre quale DLL/commit è stato caricato nei test.
 
-- FC observation/data-sync storico;
-- CharacterInventory RAW observation;
-- reale Retainer → CharacterInventory single-stack sul vecchio execution contract;
-- FC → CharacterInventory nei casi storici;
-- planner manuale non cancellato da `Runtime.Clear`;
-- capacity/stack simulation nei casi storici;
-- ODR/highlight nelle casistiche storiche precedenti al nuovo ExecutionInstruction.
+RUNTIME VERIFICATO storico: FC observation/data-sync, CharacterInventory RAW, retainer single-stack e FC → CharacterInventory sul vecchio contratto, capacità/stack nei casi testati, ODR/highlight storico e persistenza del planner manuale attraverso `Runtime.Clear`. Queste prove storiche non verificavano da sole il nuovo ExecutionInstruction.
 
-DA RUNTIME VERIFICARE SUL MASTER CORRENTE:
+RUNTIME VERIFICATO dall'utente nei casi osservati:
 
-- contratto `PlannerDecision → ExecutionInstruction`;
-- caso NQ10 distribuito su più container;
-- split/merge/sort/relocation durante decisione corrente;
-- partial move e rimaterializzazione del residuo;
-- highlighter + DOVE sincronizzati alla stessa instruction;
-- Retainer initial acquisition via `OnActiveRetainerLoaded` + cambi RAW;
-- planner scoring post-PR #25;
-- CharacterInventory → FC end-to-end;
-- rapid FC owner switch completo;
-- preservazione esplicita dello storico Verified attraverso un replan reale;
+- Wattle Bark NQ10/HQ9 da retainer: distribuzione su più stack/pagine, split/merge/relocation innocue, partial MOVE (es. 3/10), rimaterializzazione del residuo e highlight che segue le istruzioni; completamento Retainer → Inventory.
+- Angel ↔ Tanko con FC come hub: SWITCH manuali, Inventory → FC → Main, qualità separate, verifica bilaterale e storico Verified preservato durante un replan reale.
+- PR #35 (unita): spostare più della quantità richiesta non provoca replan per il solo surplus; le tappe successive continuano a chiedere la quantità pianificata. I parziali coerenti restano sul residuo.
+- PR #38 (unita): nel percorso testato l'highlight si è spento al cambio di passo; la riduzione FC prima dello SWITCH ha prodotto un replan residuo preservando lo storico. Il ramo specifico di ripristino con addon nascosto dopo la pulizia finale della diagnostica non è stato riconfermato separatamente.
+- Branch PR #39: Ash Lumber tra retainer, inventory, FC e main. Restituire alla FC un HQ già Verified mentre un NQ MOVE era parziale ha mostrato un doppio conteggio della quota corrente; dopo la correzione i debug hanno mostrato piani residui coerenti (es. 2 NQ + 1 HQ), `Missing=0` e storico preservato dopo regressioni ripetute.
+- Branch PR #39: l'utente ha inoltre confermato riordino di pile senza replan spurio e FC condivisa da due personaggi. Il debug `Complete` dell'ultimo percorso Ash Lumber non è stato copiato: la conclusione è riferita dall'utente.
 
-## 17. Audit aperto — ordine corretto
+BUILD VERIFICATA: CI verde sul commit head della PR #39 `1a3c0c0c914ba1ba1481cfd8451a217f11c36669`. Non è uno stress test di lag/freshness asincrona. Priorità lessicografiche e tutti i casi capacity non sono stati testati sistematicamente.
 
-Prima di nuove feature:
+### Dopo il checkpoint frog5.txt del 23 settembre
 
-1. runtime test del nuovo contratto Planning → Execution;
-2. runtime test dello storico Verified attraverso un replan reale;
-3. runtime test della nuova ownership Retainer observation;
-4. riconfermare CharacterInventory → FC end-to-end;
-5. riconfermare rapid FC owner switch;
-6. solo dopo riprendere automazione o nuove feature.
+- PR #35, unita: il Verifier accetta un MOVE in surplus se source e destination osservano un trasferimento coerente; conserva la gestione parziale.
+- PR #36/#37, unite e poi superate da #38: diagnostica temporanea dell'highlight, identificazione del problema su addon nascosto e proposta di ripristino.
+- PR #38, unita: ripristino visivo anche su addon nascosto e rilevamento di FC mancante nella tappa verso il main; la diagnostica temporanea non è rimasta nel risultato finale.
+- PR #39, aperta e non unita: `PlanExecutionProgressGuard` rileva regressioni di tappe già raggiunte e della copertura proiettata sul main, con FC aggregata per item/qualità. Un MOVE parziale contribuisce solo con la quantità ancora da trasferire. `GlobalAllocationPlanner` sceglie i prelievi FC dallo stato simulato dopo i depositi, per evitare sorgenti obsolete in seguito ad accorpamenti. Resta necessario il review/merge prima che tutto questo sia su master.
 
-Audit codice concluso:
+## 17. Audit aperto — prossimo lavoro
+
+1. Revisionare e, se approvata, unire PR #39 con merge normale; finché resta aperta, i suoi fix non appartengono a `master`.
+2. Se necessario prima dell'automazione, verificare separatamente addon nascosto/disabilitazione dopo #38, rapid FC owner switch e ritardi asincroni source/destination; registrare gli esiti reali.
+3. Per l'automazione UI-based, studiare API/eventi reali dei provider e scegliere un singolo MOVE controllato per il primo test, con preflight, anti-duplicato, verifica bilaterale, timeout e cleanup AutoRetainer.
+
+Audit codice già concluso:
 - pipeline Resolver/TransferPlanner classificata come preview/diagnostica, non autorità strategica;
 - FreeCompanyObservationProbe preservato ma reso opt-in;
 - progress Verified esplicito implementato senza accoppiare vecchi indici al nuovo piano.
