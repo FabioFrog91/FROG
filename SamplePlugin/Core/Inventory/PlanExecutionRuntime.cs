@@ -25,6 +25,8 @@ public readonly record struct PlanExecutionRuntimeSnapshot(
 public sealed class PlanExecutionRuntime
 {
     private const int CapacityPollIntervalMs = 250;
+    private const int ProgressSettleIntervalMs = 250;
+    private const int ProgressPollIntervalMs = 100;
 
     private readonly Plugin plugin;
     private readonly PlannerSourceBuilder plannerSourceBuilder;
@@ -38,6 +40,10 @@ public sealed class PlanExecutionRuntime
     private bool isReplanning;
     private string? error;
     private long lastCapacityPollAtMs;
+    private PlanExecutionProgressGuard? progressGuard;
+    private string? pendingProgressRegression;
+    private long pendingProgressSinceMs;
+    private long lastProgressPollAtMs;
 
     private PlanExecutionRuntimeSnapshot snapshot =
         new(
@@ -89,6 +95,7 @@ public sealed class PlanExecutionRuntime
         isReplanning = false;
         error = null;
         lastCapacityPollAtMs = 0;
+        ResetProgressGuard();
 
         var currentCharacterId =
             Plugin.PlayerState.IsLoaded
@@ -109,6 +116,7 @@ public sealed class PlanExecutionRuntime
         isReplanning = false;
         error = null;
         lastCapacityPollAtMs = 0;
+        ResetProgressGuard();
 
         snapshot =
             new PlanExecutionRuntimeSnapshot(
@@ -129,6 +137,13 @@ public sealed class PlanExecutionRuntime
         isReplanning = false;
         error = null;
         lastCapacityPollAtMs = 0;
+        ResetProgressGuard();
+        if (executionCoordinator.Session is { } currentSession &&
+            requirementSet is not null)
+        {
+            progressGuard = new PlanExecutionProgressGuard(
+                currentSession.Plan, requirementSet);
+        }
 
         RefreshSnapshot(
             executionCoordinator.Session is null
@@ -162,7 +177,7 @@ public sealed class PlanExecutionRuntime
             return;
         }
 
-        if (TryReplanUnavailableFreeCompanyHandoff(
+        if (TryReplanRegressedProgress(
                 session,
                 currentCharacterId))
         {
@@ -189,6 +204,15 @@ public sealed class PlanExecutionRuntime
         {
             verifiedHistory.Add(
                 execution.VerifiedDecision);
+        }
+
+        if (execution.Status == PlanExecutionCoordinatorStatus.Complete &&
+            pendingProgressRegression is not null)
+        {
+            snapshot = snapshot with
+            {
+                Status = PlanExecutionCoordinatorStatus.WaitingForObservation
+            };
         }
 
         if (execution.Status ==
@@ -317,6 +341,12 @@ public sealed class PlanExecutionRuntime
 
         executionCoordinator.Start(
             plan);
+        ResetProgressGuard();
+        if (requirementSet is not null)
+        {
+            progressGuard = new PlanExecutionProgressGuard(
+                plan, requirementSet);
+        }
 
         RefreshSnapshot(
             GetInitialStatus(
@@ -383,78 +413,61 @@ public sealed class PlanExecutionRuntime
             $"REPLAN ESECUZIONE: lo spazio osservato ora consente tutti i movimenti bloccati noti ({plan.CapacityBlocked} unità, {requiredSlots} slot minimi). Piano ricalcolato dallo stato reale.");
     }
 
-    // The verified alt-to-FC handoff must still be available while waiting to
-    // switch to the main character. A withdrawal before the switch invalidates
-    // the immediate FC-to-main moves, even though the SWITCH itself is valid.
-    private bool TryReplanUnavailableFreeCompanyHandoff(
+    // Recheck achieved progress after a stable observation. The guard uses
+    // aggregate logical quantities, so FC stacks do not retain provenance.
+    private bool TryReplanRegressedProgress(
         PlanExecutionSession session,
         ulong currentCharacterId)
     {
-        var decisions =
-            session.Plan.Decisions;
+        if (progressGuard is null ||
+            session.VerifiedDecisionCount == 0 ||
+            currentCharacterId == 0)
+            return false;
 
-        var switchIndex =
-            session.VerifiedDecisionCount;
+        var nowMs = Environment.TickCount64;
+        if (lastProgressPollAtMs != 0 &&
+            nowMs - lastProgressPollAtMs < ProgressPollIntervalMs)
+            return false;
 
-        if (currentCharacterId == 0 ||
-            session.CurrentDecision?.Type !=
-                PlannerDecisionType.SwitchCharacter ||
-            switchIndex == 0 ||
-            decisions[switchIndex - 1].Destination?.Storage !=
-                StorageType.FreeCompanyChest)
+        lastProgressPollAtMs = nowMs;
+        var regression = progressGuard.FindRegression(
+            session, plugin.InventoryIndex.Items);
+
+        if (regression is null)
         {
+            pendingProgressRegression = null;
+            pendingProgressSinceMs = 0;
             return false;
         }
 
-        var handoffMoves =
-            decisions
-                .Skip(switchIndex + 1)
-                .TakeWhile(decision =>
-                    decision.Type == PlannerDecisionType.Move &&
-                    decision.Source?.Storage ==
-                        StorageType.FreeCompanyChest &&
-                    decision.Destination?.Storage ==
-                        StorageType.CharacterInventory &&
-                    decision.Destination.OwnerId ==
-                        session.Plan.InitialState.MainCharacterId)
-                .ToArray();
-
-        foreach (var group in handoffMoves.GroupBy(decision =>
-                     new
-                     {
-                         decision.Source!.OwnerId,
-                         decision.BaseItemId,
-                         decision.IsHq
-                     }))
+        if (pendingProgressRegression != regression)
         {
-            var needed =
-                group.Sum(decision =>
-                    decision.Quantity);
-
-            var available =
-                plugin.InventoryIndex.Items
-                    .Where(item =>
-                        item.Storage == StorageType.FreeCompanyChest &&
-                        item.OwnerId == group.Key.OwnerId &&
-                        item.BaseItemId == group.Key.BaseItemId &&
-                        item.IsHq == group.Key.IsHq &&
-                        ExecutionInventoryRules.IsExecutableContainer(item))
-                    .Sum(item =>
-                        item.Quantity);
-
-            if (available >= needed)
-                continue;
-
-            return TryStartPlanRefresh(
-                session.Plan,
-                currentCharacterId,
-                $"REPLAN ESECUZIONE: dopo il deposito verificato, la FC " +
-                $"contiene {available} unità di {group.Key.BaseItemId} " +
-                $"{(group.Key.IsHq ? "HQ" : "NQ")}, " +
-                $"ma il passaggio verso il main ne richiede {needed}.");
+            pendingProgressRegression = regression;
+            pendingProgressSinceMs = nowMs;
+            return false;
         }
 
-        return false;
+        if (nowMs - pendingProgressSinceMs <
+            ProgressSettleIntervalMs)
+            return false;
+
+        if (!TryStartPlanRefresh(
+                session.Plan,
+                currentCharacterId,
+                $"REPLAN ESECUZIONE: {regression} " +
+                "Piano residuo ricalcolato dallo stato osservato."))
+            return false;
+
+        ResetProgressGuard();
+        return true;
+    }
+
+    private void ResetProgressGuard()
+    {
+        progressGuard = null;
+        pendingProgressRegression = null;
+        pendingProgressSinceMs = 0;
+        lastProgressPollAtMs = 0;
     }
 
     private void TryValidateNextDecision(
