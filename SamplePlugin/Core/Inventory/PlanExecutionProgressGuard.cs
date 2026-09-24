@@ -26,12 +26,27 @@ internal sealed class PlanExecutionProgressGuard
 
     public string? FindRegression(
         PlanExecutionSession session,
-        IReadOnlyList<InventoryItemSnapshot> observedItems)
+        IReadOnlyList<InventoryItemSnapshot> observedItems,
+        PlanExecutionReconciliationResult? currentReconciliation)
     {
         var remaining = plan.Decisions
             .Skip(session.VerifiedDecisionCount)
+            .Select((decision, index) =>
+                index == 0 &&
+                session.IsCurrentDecisionExecuted &&
+                currentReconciliation is not null &&
+                decision.Type == PlannerDecisionType.Move
+                    ? decision with
+                    {
+                        Quantity = Math.Clamp(
+                            currentReconciliation.RemainingQuantity,
+                            0,
+                            decision.Quantity)
+                    }
+                    : decision)
             .Where(decision =>
                 decision.Type == PlannerDecisionType.Move &&
+                decision.Quantity > 0 &&
                 decision.Source is not null &&
                 decision.Destination is not null)
             .ToArray();
