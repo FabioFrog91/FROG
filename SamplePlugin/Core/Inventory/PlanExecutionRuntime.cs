@@ -431,7 +431,9 @@ public sealed class PlanExecutionRuntime
 
         lastProgressPollAtMs = nowMs;
         var regression = progressGuard.FindRegression(
-            session, plugin.InventoryIndex.Items);
+            session,
+            plugin.InventoryIndex.Items,
+            executionCoordinator.CurrentReconciliation);
 
         if (regression is null)
         {
