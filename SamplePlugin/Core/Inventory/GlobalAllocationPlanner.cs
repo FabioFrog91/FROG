@@ -1250,6 +1250,7 @@ internal sealed class GlobalAllocationPlanner
         var freeCompanyMoves =
             BuildFreeCompanyToMainMoves(
                 resolutionPolicy,
+                state,
                 reservedFreeCompany,
                 bridgedToFreeCompany,
                 mainCharacterInventory);
@@ -1512,86 +1513,91 @@ internal sealed class GlobalAllocationPlanner
 
     private static IReadOnlyList<GroupedMove> BuildFreeCompanyToMainMoves(
         ResolutionPolicy resolutionPolicy,
+        PlannerState state,
         IReadOnlyList<AllocationPick> reservedFreeCompany,
         IReadOnlyList<BridgedQuantity> bridged,
         InventorySource mainInventory)
     {
-        var moves =
-            new List<GroupedMove>();
-
-        foreach (var group in reservedFreeCompany
-                     .GroupBy(pick =>
-                         new
-                         {
-                             pick.Source,
-                             pick.Item.BaseItemId,
-                             pick.Item.IsHq
-                         }))
-        {
-            moves.Add(
-                new GroupedMove(
-                    group.Key.Source,
-                    mainInventory,
-                    group.Key.BaseItemId,
-                    group.Key.IsHq,
-                    group.Sum(pick =>
-                        pick.Quantity),
-                    group.Key.Source.Container,
-                    group.Min(pick =>
-                        pick.Item.Slot)));
-        }
-
-        var bridgeSource =
+        var freeCompany =
             FindFreeCompany(
                 resolutionPolicy);
 
-        if (bridgeSource is not null)
+        if (freeCompany is null)
+            return Array.Empty<GroupedMove>();
+
+        // Deposits can merge with an existing stack and change its simulated
+        // container. Choose the pickup sources from the state after deposits,
+        // while keeping the originally allocated quantities.
+        var needed =
+            reservedFreeCompany
+                .Select(pick =>
+                    new BridgedQuantity(
+                        pick.Item.BaseItemId,
+                        pick.Item.IsHq,
+                        pick.Quantity))
+                .Concat(
+                    bridged)
+                .GroupBy(value =>
+                    new
+                    {
+                        value.BaseItemId,
+                        value.IsHq
+                    });
+
+        var moves =
+            new List<GroupedMove>();
+
+        foreach (var group in needed)
         {
-            foreach (var group in bridged
-                         .GroupBy(value =>
-                             new
-                             {
-                                 value.BaseItemId,
-                                 value.IsHq
-                             }))
+            var remaining =
+                group.Sum(value =>
+                    value.Quantity);
+
+            foreach (var item in state.Items
+                         .Where(item =>
+                             item.Storage == StorageType.FreeCompanyChest &&
+                             item.OwnerId == freeCompany.OwnerId &&
+                             item.BaseItemId == group.Key.BaseItemId &&
+                             item.IsHq == group.Key.IsHq)
+                         .OrderBy(item =>
+                             GetSourcePriority(
+                                 resolutionPolicy,
+                                 item))
+                         .ThenBy(item =>
+                             item.Container)
+                         .ThenBy(item =>
+                             item.Slot))
             {
-                var existing =
-                    moves.FindIndex(move =>
-                        SameSource(
-                            move.Source,
-                            bridgeSource) &&
-                        move.BaseItemId == group.Key.BaseItemId &&
-                        move.IsHq == group.Key.IsHq);
+                var source =
+                    FindPolicySource(
+                        resolutionPolicy,
+                        item);
+
+                if (source is null)
+                    continue;
 
                 var quantity =
-                    group.Sum(value =>
-                        value.Quantity);
+                    Math.Min(
+                        remaining,
+                        item.Quantity);
 
-                if (existing >= 0)
-                {
-                    var current =
-                        moves[existing];
+                if (quantity <= 0)
+                    break;
 
-                    moves[existing] =
-                        current with
-                        {
-                            Quantity =
-                                current.Quantity +
-                                quantity
-                        };
-                }
-                else
-                {
-                    moves.Add(
-                        new GroupedMove(
-                            bridgeSource,
-                            mainInventory,
-                            group.Key.BaseItemId,
-                            group.Key.IsHq,
-                            quantity,
-                            bridgeSource.Container,
-                            int.MaxValue));
-                }
+                moves.Add(
+                    new GroupedMove(
+                        source,
+                        mainInventory,
+                        group.Key.BaseItemId,
+                        group.Key.IsHq,
+                        quantity,
+                        item.Container,
+                        item.Slot));
+
+                remaining -= quantity;
+
+                if (remaining == 0)
+                    break;
             }
         }
 
@@ -1765,18 +1771,20 @@ internal sealed class GlobalAllocationPlanner
 
     private static int GetSatisfiedMainQuantity(
         Requirement requirement,
-        PlannerState state)
+        PlannerState state) =>
+        GetSatisfiedMainQuantity(
+            requirement,
+            state.GetMainInventoryQuantity(
+                requirement.BaseItemId, true),
+            state.GetMainInventoryQuantity(
+                requirement.BaseItemId, false));
+
+    // Shared by Planning's goal evaluation and Execution's residual guard.
+    internal static int GetSatisfiedMainQuantity(
+        Requirement requirement,
+        int hq,
+        int nq)
     {
-        var hq =
-            state.GetMainInventoryQuantity(
-                requirement.BaseItemId,
-                true);
-
-        var nq =
-            state.GetMainInventoryQuantity(
-                requirement.BaseItemId,
-                false);
-
         return requirement.QualityPolicy switch
         {
             RequirementQualityPolicy.HqOnly =>

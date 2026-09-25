@@ -59,6 +59,9 @@ public sealed class PlanExecutionCoordinator
     public PlanExecutionSession? Session =>
         session;
 
+    internal PlanExecutionReconciliationResult? CurrentReconciliation =>
+        reconciliation;
+
     public void Start(
         PlannerPlan plan)
     {
