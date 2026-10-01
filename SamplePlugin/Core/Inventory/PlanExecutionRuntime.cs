@@ -506,10 +506,6 @@ public sealed class PlanExecutionRuntime
                 "REGRESSION_CANDIDATE_EXECUTION",
                 snapshot);
 
-            ForensicTraceRecorder.RecordInventorySnapshot(
-                "REGRESSION_CANDIDATE_INVENTORY",
-                plugin.InventoryIndex.Items);
-
             return false;
         }
 
