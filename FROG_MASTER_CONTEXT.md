@@ -467,9 +467,10 @@ Stato attuale:
 - un ODR persistito è observation state, non autorità strategica: il live lo sostituisce quando disponibile;
 - un cambiamento ODR durante una sessione attiva aggiorna solo la cache persistita; non muta la sessione corrente. Un successivo piano/replan userà il dato aggiornato;
 - `PlannerPlan.WithActions` conserva deliberatamente le `Decisions` ed è ancora il percorso compatibile per riordinare sola evidenza fisica;
-- `PlannerPlan.WithExecutionOrderedActions` è il percorso esplicito del post-compiler ODR: ricompila le `Decisions` solo quando un gruppo commutabile Retainer/CharacterInventory è stato realmente riordinato;
+- `PlannerPlan.WithExecutionOrdering` è il percorso esplicito del post-compiler ODR: ricompila le `Decisions` solo quando un gruppo commutabile Retainer/CharacterInventory ha un ordine ODR completo ed è stato realmente riordinato;
 - il riordino non attraversa switch, source logiche, destination o route diverse;
 - `PlannerDecisionCompiler` continua ad aggregare lo stesso item/HQ dentro la stessa route, quindi un item distribuito su più stack/pagine resta una singola decisione logica;
+- il fallback RAW continua a poter riordinare sola evidenza fisica ma non diventa mai autorevole per l'ordine delle `Decisions`;
 - FreeCompanyChest non usa questa nuova propagazione dell'ordine visuale.
 
 Evidenza runtime 2026-10-01:
