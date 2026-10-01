@@ -100,12 +100,12 @@ internal sealed class PlanExecutionProgressGuard
             var nqKey = hqKey with { IsHq = false };
 
             var expected = Coverage(requirement,
-                Quantity(plan.FinalState.Items, hqKey),
-                Quantity(plan.FinalState.Items, nqKey));
+                MainCoverageQuantity(plan.FinalState.Items, hqKey),
+                MainCoverageQuantity(plan.FinalState.Items, nqKey));
             var projected = Coverage(requirement,
-                Quantity(observedItems, hqKey) +
+                MainCoverageQuantity(observedItems, hqKey) +
                     RemainingDelta(remaining, hqKey),
-                Quantity(observedItems, nqKey) +
+                MainCoverageQuantity(observedItems, nqKey) +
                     RemainingDelta(remaining, nqKey));
 
             if (projected < expected)
@@ -159,6 +159,17 @@ internal sealed class PlanExecutionProgressGuard
                 item.BaseItemId == key.BaseItemId &&
                 item.IsHq == key.IsHq &&
                 ExecutionInventoryRules.IsExecutableContainer(item))
+            .Sum(item => item.Quantity);
+
+
+    private static int MainCoverageQuantity(
+        IEnumerable<InventoryItemSnapshot> items,
+        LogicalKey key) =>
+        items.Where(item =>
+                item.Storage == key.Storage &&
+                item.OwnerId == key.OwnerId &&
+                item.BaseItemId == key.BaseItemId &&
+                item.IsHq == key.IsHq)
             .Sum(item => item.Quantity);
 
     private static int RemainingDelta(
