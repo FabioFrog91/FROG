@@ -881,14 +881,19 @@ public sealed class Plugin : HostedPlugin
                 $"Catalogo personaggi salvato da disco: {CharacterCatalogFilePath} ({CharacterCatalog.Entries.Count} identità)");
         }
 
-        if (ExecutionOrderCatalog.IsDirty)
-        {
-            ExecutionOrderCatalog.SaveToDisk(
-                ExecutionOrderFilePath);
+        SaveExecutionOrderCatalog();
+    }
 
-            Log.Information(
-                $"Ordine visibile inventari salvato: {ExecutionOrderFilePath} ({ExecutionOrderCatalog.CharacterCount} personaggi)");
-        }
+    internal void SaveExecutionOrderCatalog()
+    {
+        if (!ExecutionOrderCatalog.IsDirty)
+            return;
+
+        ExecutionOrderCatalog.SaveToDisk(
+            ExecutionOrderFilePath);
+
+        Log.Information(
+            $"Ordine visibile inventari salvato: {ExecutionOrderFilePath} ({ExecutionOrderCatalog.CharacterCount} personaggi)");
     }
 }
 
