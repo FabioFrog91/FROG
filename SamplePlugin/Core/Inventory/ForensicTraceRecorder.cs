@@ -19,6 +19,7 @@ public static class ForensicTraceRecorder
     private static readonly Stopwatch Elapsed = new();
     private static StreamWriter? writer;
     private static long sequence;
+    private static string? lastExecutionFingerprint;
 
     public static bool IsActive
     {
@@ -39,6 +40,7 @@ public static class ForensicTraceRecorder
 
             Buffer.Clear();
             sequence = 0;
+            lastExecutionFingerprint = null;
             Elapsed.Restart();
 
             var directory = Path.Combine(
@@ -195,6 +197,41 @@ public static class ForensicTraceRecorder
         }
 
         Record("PLAN", builder.ToString().TrimEnd());
+    }
+
+    public static void RecordExecutionSnapshotIfChanged(
+        string reason,
+        PlanExecutionRuntimeSnapshot snapshot)
+    {
+        if (!IsActive)
+            return;
+
+        var session = snapshot.Session;
+        var instruction = snapshot.CurrentInstruction;
+
+        var allocationFingerprint =
+            instruction is null
+                ? "-"
+                : string.Join(
+                    ";",
+                    instruction.SourceStacks.Select(allocation =>
+                        $"{allocation.Item.Storage}:{allocation.Item.OwnerId}:{allocation.Item.Container}:{allocation.Item.Slot}:{allocation.Item.BaseItemId}:{allocation.Item.IsHq}:{allocation.Quantity}"));
+
+        var fingerprint =
+            $"{snapshot.Status}|{snapshot.IsReplanning}|{snapshot.Error}|{session?.VerifiedDecisionCount}|{session?.CurrentDecisionIndex}|{session?.IsCurrentDecisionExecuted}|{instruction?.RemainingQuantity}|{allocationFingerprint}|{snapshot.Verification}|{snapshot.Reconciliation}|{snapshot.VerifiedHistory.Count}";
+
+        lock (Sync)
+        {
+            if (writer is null ||
+                fingerprint == lastExecutionFingerprint)
+            {
+                return;
+            }
+
+            lastExecutionFingerprint = fingerprint;
+        }
+
+        RecordExecutionSnapshot(reason, snapshot);
     }
 
     public static void RecordExecutionSnapshot(
