@@ -540,6 +540,10 @@ public sealed class Plugin : HostedPlugin
         int type,
         int code)
     {
+        ForensicTraceRecorder.Record(
+            "CLIENT",
+            $"LOGOUT type={type} code={code}");
+
         CancelLoginSyncRetry();
 
         characterCatalogSync?.SyncAll();
@@ -691,8 +695,16 @@ public sealed class Plugin : HostedPlugin
         if (!playerInventory.TryGetCurrentCharacter(
                 out var characterId))
         {
+            ForensicTraceRecorder.Record(
+                "SYNC",
+                "PLAYER_SYNC_SKIPPED current character unavailable");
+
             return;
         }
+
+        ForensicTraceRecorder.Record(
+            "SYNC",
+            $"PLAYER_SYNC_BEGIN character={characterId}");
 
         var observedAtUtc = DateTime.UtcNow;
 
@@ -710,6 +722,10 @@ public sealed class Plugin : HostedPlugin
                 characterId,
                 observedAtUtc);
 
+        ForensicTraceRecorder.Record(
+            "SYNC",
+            $"PLAYER_READ character={characterId} stacks={allSnapshots.Count} qty={allSnapshots.Sum(item => (long)item.Quantity)} observed={observedAtUtc:O}");
+
         InventoryIndex.ReplaceCharacterInventory(
             characterId,
             allSnapshots,
@@ -724,6 +740,10 @@ public sealed class Plugin : HostedPlugin
             .OrderBy(x => x.Container)
             .ThenBy(x => x.Slot)
             .ToList();
+
+        ForensicTraceRecorder.Record(
+            "SYNC",
+            $"PLAYER_SYNC_END character={characterId} indexStacks={LastSyncIndexSnapshots.Count} indexQty={LastSyncIndexSnapshots.Sum(item => (long)item.Quantity)}");
     }
 
     internal void SyncStorageSources(
@@ -731,11 +751,19 @@ public sealed class Plugin : HostedPlugin
     {
         var observedAtUtc = DateTime.UtcNow;
 
+        ForensicTraceRecorder.Record(
+            "SYNC",
+            $"RETAINER_SYNC_BEGIN observed={observedAtUtc:O}");
+
         if (storageReader.TryReadActiveRetainer(
                 observedAtUtc,
                 out var retainerSources,
                 out var retainerSnapshots))
         {
+            ForensicTraceRecorder.Record(
+                "SYNC",
+                $"RETAINER_READ sources={retainerSources.Count} stacks={retainerSnapshots.Count} qty={retainerSnapshots.Sum(item => (long)item.Quantity)}");
+
             foreach (var source in retainerSources)
             {
                 var sourceSnapshots = retainerSnapshots
@@ -750,6 +778,16 @@ public sealed class Plugin : HostedPlugin
                     sourceSnapshots,
                     observedAtUtc);
             }
+
+            ForensicTraceRecorder.Record(
+                "SYNC",
+                "RETAINER_SYNC_END");
+        }
+        else
+        {
+            ForensicTraceRecorder.Record(
+                "SYNC",
+                "RETAINER_SYNC_READER_REJECTED");
         }
     }
 
