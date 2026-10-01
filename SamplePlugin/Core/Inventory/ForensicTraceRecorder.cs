@@ -21,6 +21,7 @@ public static class ForensicTraceRecorder
     private static long sequence;
     private static string? lastExecutionFingerprint;
     private static readonly Dictionary<string, string> LastStateByKey = new();
+    private static readonly HashSet<uint> RelevantItemIds = new();
 
     public static bool IsActive
     {
@@ -43,6 +44,7 @@ public static class ForensicTraceRecorder
             sequence = 0;
             lastExecutionFingerprint = null;
             LastStateByKey.Clear();
+            RelevantItemIds.Clear();
             Elapsed.Restart();
 
             var directory = Path.Combine(
@@ -148,6 +150,16 @@ public static class ForensicTraceRecorder
         if (!IsActive)
             return;
 
+        lock (Sync)
+        {
+            if (writer is null)
+                return;
+
+            RelevantItemIds.Clear();
+            foreach (var requirement in requirements.Requirements)
+                RelevantItemIds.Add(requirement.BaseItemId);
+        }
+
         var builder = new StringBuilder();
         builder.AppendLine(
             $"{reason} name={requirements.Name} count={requirements.Requirements.Count}");
@@ -175,15 +187,37 @@ public static class ForensicTraceRecorder
             .ThenBy(item => item.Slot)
             .ToArray();
 
+        HashSet<uint> relevantIds;
+        lock (Sync)
+            relevantIds = RelevantItemIds.ToHashSet();
+
+        var relevant = materialized
+            .Where(item => relevantIds.Contains(item.BaseItemId))
+            .ToArray();
+
         var builder = new StringBuilder();
 
         builder.AppendLine(
-            $"{reason} stacks={materialized.Length} totalQty={materialized.Sum(item => (long)item.Quantity)} logicalKeys={materialized.GroupBy(item => new { item.BaseItemId, item.IsHq, item.Storage, item.OwnerId, item.ParentCharacterId }).Count()}");
+            $"{reason} stacks={materialized.Length} totalQty={materialized.Sum(item => (long)item.Quantity)} logicalKeys={materialized.GroupBy(item => new { item.BaseItemId, item.IsHq, item.Storage, item.OwnerId, item.ParentCharacterId }).Count()} relevantStacks={relevant.Length} relevantItemIds={relevantIds.Count}");
 
-        foreach (var item in materialized)
+        foreach (var source in materialized
+                     .GroupBy(item => new
+                     {
+                         item.Storage,
+                         item.OwnerId,
+                         item.ParentCharacterId,
+                         item.Container
+                     })
+                     .OrderBy(group => group.Key.Storage)
+                     .ThenBy(group => group.Key.OwnerId)
+                     .ThenBy(group => group.Key.Container))
         {
-            builder.AppendLine(FormatItem(item));
+            builder.AppendLine(
+                $"SOURCE storage={source.Key.Storage} owner={source.Key.OwnerId} parent={source.Key.ParentCharacterId} container={source.Key.Container} stacks={source.Count()} qty={source.Sum(item => (long)item.Quantity)}");
         }
+
+        foreach (var item in relevant)
+            builder.AppendLine(FormatItem(item));
 
         Record("INVENTORY_SNAPSHOT", builder.ToString().TrimEnd());
     }
@@ -205,13 +239,39 @@ public static class ForensicTraceRecorder
         builder.AppendLine(
             $"{operation} source={FormatSource(source)} beforeStacks={before.Count} beforeQty={before.Sum(item => (long)item.Quantity)} afterStacks={after.Count} afterQty={after.Sum(item => (long)item.Quantity)} obsRev={observationRevision?.ToString() ?? "-"} contentRev={contentRevision?.ToString() ?? "-"} providerRev={providerRevision?.ToString() ?? "-"}");
 
-        builder.AppendLine("BEFORE");
-        foreach (var item in before.OrderBy(item => item.Container).ThenBy(item => item.Slot))
-            builder.AppendLine(FormatItem(item));
+        if (!operation.EndsWith("_UNCHANGED", StringComparison.Ordinal))
+        {
+            var beforeBySlot = before.ToDictionary(item => item.Slot);
+            var afterBySlot = after.ToDictionary(item => item.Slot);
 
-        builder.AppendLine("AFTER");
-        foreach (var item in after.OrderBy(item => item.Container).ThenBy(item => item.Slot))
-            builder.AppendLine(FormatItem(item));
+            foreach (var slot in beforeBySlot.Keys
+                         .Union(afterBySlot.Keys)
+                         .OrderBy(value => value))
+            {
+                var hasBefore = beforeBySlot.TryGetValue(slot, out var beforeItem);
+                var hasAfter = afterBySlot.TryGetValue(slot, out var afterItem);
+
+                if (hasBefore && !hasAfter)
+                {
+                    builder.AppendLine($"REMOVED {FormatItem(beforeItem!)}");
+                    continue;
+                }
+
+                if (!hasBefore && hasAfter)
+                {
+                    builder.AppendLine($"ADDED {FormatItem(afterItem!)}");
+                    continue;
+                }
+
+                if (hasBefore &&
+                    hasAfter &&
+                    !SamePhysicalStack(beforeItem!, afterItem!))
+                {
+                    builder.AppendLine(
+                        $"CHANGED before=[{FormatItem(beforeItem!)}] after=[{FormatItem(afterItem!)}]");
+                }
+            }
+        }
 
         Record("INVENTORY_MUTATION", builder.ToString().TrimEnd());
     }
@@ -315,6 +375,20 @@ public static class ForensicTraceRecorder
         Record("EXECUTION", builder.ToString().TrimEnd());
     }
 
+    private static bool SamePhysicalStack(
+        InventoryItemSnapshot left,
+        InventoryItemSnapshot right) =>
+        left.BaseItemId == right.BaseItemId &&
+        left.RawItemId == right.RawItemId &&
+        left.IsHq == right.IsHq &&
+        left.Quantity == right.Quantity &&
+        left.Storage == right.Storage &&
+        left.OwnerId == right.OwnerId &&
+        left.ParentCharacterId == right.ParentCharacterId &&
+        left.Container == right.Container &&
+        left.Slot == right.Slot &&
+        left.IsVerified == right.IsVerified;
+
     private static string FormatItem(
         InventoryItemSnapshot item) =>
         $"ITEM base={item.BaseItemId} raw={item.RawItemId} hq={item.IsHq} qty={item.Quantity} storage={item.Storage} owner={item.OwnerId} parent={item.ParentCharacterId} container={item.Container} slot={item.Slot} observed={item.ObservedAtUtc:O} verified={item.IsVerified}";
@@ -352,7 +426,7 @@ public static class ForensicTraceRecorder
             var line =
                 i == 0
                     ? prefix + lines[i]
-                    : new string(' ', prefix.Length) + lines[i];
+                    : "  " + lines[i];
 
             Buffer.AppendLine(line);
             writer!.WriteLine(line);
