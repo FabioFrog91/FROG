@@ -421,6 +421,11 @@ public sealed class Plugin : HostedPlugin
                     OnFreeCompanyChestClosed));
 
             RunDisposeStep(
+                "chiusura forensic trace",
+                () => ForensicTraceRecorder.StopWithoutCopy(
+                    "plugin-dispose"));
+
+            RunDisposeStep(
                 "salvataggio stato persistente",
                 SaveInventoryIndex);
 
