@@ -82,6 +82,22 @@ public sealed class PlanExecutionRuntime
         RequirementSet requirements,
         OptimizationSettings settings)
     {
+        ForensicTraceRecorder.Record(
+            "EXECUTION",
+            "RUNTIME_START");
+
+        ForensicTraceRecorder.RecordPlan(
+            "RUNTIME_START_PLAN",
+            plan);
+
+        ForensicTraceRecorder.RecordRequirements(
+            "RUNTIME_START_REQUIREMENTS",
+            requirements);
+
+        ForensicTraceRecorder.RecordInventorySnapshot(
+            "RUNTIME_START_INVENTORY",
+            plugin.InventoryIndex.Items);
+
         verifiedHistory.Clear();
 
         requirementSet =
@@ -109,6 +125,14 @@ public sealed class PlanExecutionRuntime
 
     public void Clear()
     {
+        ForensicTraceRecorder.RecordExecutionSnapshot(
+            "RUNTIME_CLEAR_BEFORE",
+            snapshot);
+
+        ForensicTraceRecorder.Record(
+            "EXECUTION",
+            "RUNTIME_CLEAR");
+
         executionCoordinator.Clear();
         verifiedHistory.Clear();
         requirementSet = null;
@@ -200,10 +224,18 @@ public sealed class PlanExecutionRuntime
                 false,
                 error);
 
+        ForensicTraceRecorder.RecordExecutionSnapshotIfChanged(
+            "RUNTIME_UPDATE",
+            snapshot);
+
         if (execution.VerifiedDecision is not null)
         {
             verifiedHistory.Add(
                 execution.VerifiedDecision);
+
+            ForensicTraceRecorder.Record(
+                "EXECUTION",
+                $"VERIFIED_HISTORY_ADD count={verifiedHistory.Count} decision={execution.VerifiedDecision}");
         }
 
         if (execution.Status == PlanExecutionCoordinatorStatus.Complete &&
@@ -280,6 +312,10 @@ public sealed class PlanExecutionRuntime
 
         if (completion.Plan is null)
         {
+            ForensicTraceRecorder.Record(
+                "REPLAN",
+                $"PLANNER_COMPLETION_NO_PLAN error={completion.Error ?? "-"}");
+
             error =
                 completion.Error ??
                 "Il ricalcolo del piano non ha prodotto un risultato.";
@@ -292,6 +328,14 @@ public sealed class PlanExecutionRuntime
 
         error = null;
         lastCapacityPollAtMs = 0;
+
+        ForensicTraceRecorder.RecordPlan(
+            "AUTO_REPLAN_COMPLETION_PLAN",
+            completion.Plan);
+
+        ForensicTraceRecorder.RecordInventorySnapshot(
+            "AUTO_REPLAN_COMPLETION_CURRENT_INVENTORY",
+            plugin.InventoryIndex.Items);
 
         TryBeginExecutionPlan(
             completion.Plan,
@@ -437,6 +481,13 @@ public sealed class PlanExecutionRuntime
 
         if (regression is null)
         {
+            if (pendingProgressRegression is not null)
+            {
+                ForensicTraceRecorder.Record(
+                    "PROGRESS_GUARD",
+                    $"REGRESSION_CLEARED previous={pendingProgressRegression}");
+            }
+
             pendingProgressRegression = null;
             pendingProgressSinceMs = 0;
             return false;
@@ -446,6 +497,19 @@ public sealed class PlanExecutionRuntime
         {
             pendingProgressRegression = regression;
             pendingProgressSinceMs = nowMs;
+
+            ForensicTraceRecorder.Record(
+                "PROGRESS_GUARD",
+                $"REGRESSION_CANDIDATE reason={regression} settleMs={ProgressSettleIntervalMs}");
+
+            ForensicTraceRecorder.RecordExecutionSnapshot(
+                "REGRESSION_CANDIDATE_EXECUTION",
+                snapshot);
+
+            ForensicTraceRecorder.RecordInventorySnapshot(
+                "REGRESSION_CANDIDATE_INVENTORY",
+                plugin.InventoryIndex.Items);
+
             return false;
         }
 
@@ -558,6 +622,22 @@ public sealed class PlanExecutionRuntime
         var currentItems =
             plugin.InventoryIndex.Items;
 
+        ForensicTraceRecorder.Record(
+            "REPLAN",
+            $"REQUEST message={replanMessage} currentCharacter={currentCharacterId} main={mainCharacterId}");
+
+        ForensicTraceRecorder.RecordExecutionSnapshot(
+            "REPLAN_REQUEST_EXECUTION",
+            snapshot);
+
+        ForensicTraceRecorder.RecordInventorySnapshot(
+            "REPLAN_REQUEST_INVENTORY",
+            currentItems);
+
+        ForensicTraceRecorder.RecordPlan(
+            "REPLAN_PREVIOUS_PLAN",
+            previousPlan);
+
         var sources =
             plannerSourceBuilder.Build(
                 currentItems,
@@ -582,7 +662,17 @@ public sealed class PlanExecutionRuntime
                 autoStartExecution: true);
 
         if (!started)
+        {
+            ForensicTraceRecorder.Record(
+                "REPLAN",
+                "REQUEST_REJECTED planner did not start");
+
             return false;
+        }
+
+        ForensicTraceRecorder.Record(
+            "REPLAN",
+            "REQUEST_ACCEPTED planner started");
 
         isReplanning = true;
         error = null;
