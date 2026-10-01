@@ -110,12 +110,15 @@ public sealed class ExecutionOrderCompiler
             sortOrder.NormalInventories.TryGetValue(
                 "PlayerInventory",
                 out var liveCoordinates) &&
-            liveCoordinates.Count == CharacterInventorySlotCount)
+            TryCreateCoordinates(
+                liveCoordinates,
+                4,
+                35,
+                out var validLiveCoordinates))
         {
             CaptureCharacterCoordinates(
                 items,
-                ToCoordinates(
-                    liveCoordinates),
+                validLiveCoordinates,
                 ExecutionOrderDataSource.Live,
                 result);
 
@@ -150,13 +153,15 @@ public sealed class ExecutionOrderCompiler
             sortOrder.RetainerInventories.TryGetValue(
                 retainerId,
                 out var retainerSortOrder) &&
-            retainerSortOrder.InventoryCoords.Count ==
-                RetainerInventorySlotCount)
+            TryCreateCoordinates(
+                retainerSortOrder.InventoryCoords,
+                7,
+                25,
+                out var validLiveCoordinates))
         {
             CaptureRetainerCoordinates(
                 inventoryItems,
-                ToCoordinates(
-                    retainerSortOrder.InventoryCoords),
+                validLiveCoordinates,
                 ExecutionOrderDataSource.Live,
                 result);
 
@@ -273,14 +278,46 @@ public sealed class ExecutionOrderCompiler
         return -1;
     }
 
-    private static List<ExecutionOrderCoordinate> ToCoordinates(
-        IReadOnlyList<(int slotIndex, int containerIndex)> coordinates) =>
-        coordinates
-            .Select(coordinate =>
-                new ExecutionOrderCoordinate(
-                    coordinate.slotIndex,
-                    coordinate.containerIndex))
-            .ToList();
+    private static bool TryCreateCoordinates(
+        IReadOnlyList<(int slotIndex, int containerIndex)> coordinates,
+        int containerCount,
+        int slotsPerContainer,
+        out IReadOnlyList<ExecutionOrderCoordinate> result)
+    {
+        if (coordinates.Count !=
+            containerCount *
+            slotsPerContainer)
+        {
+            result =
+                Array.Empty<ExecutionOrderCoordinate>();
+
+            return false;
+        }
+
+        var captured =
+            coordinates
+                .Select(coordinate =>
+                    new ExecutionOrderCoordinate(
+                        coordinate.slotIndex,
+                        coordinate.containerIndex))
+                .ToList();
+
+        if (captured.Any(coordinate =>
+                coordinate.ContainerIndex < 0 ||
+                coordinate.ContainerIndex >= containerCount ||
+                coordinate.SlotIndex < 0 ||
+                coordinate.SlotIndex >= slotsPerContainer) ||
+            captured.Distinct().Count() != captured.Count)
+        {
+            result =
+                Array.Empty<ExecutionOrderCoordinate>();
+
+            return false;
+        }
+
+        result = captured;
+        return true;
+    }
 
     private static int GetCharacterContainerIndex(
         uint container) =>
