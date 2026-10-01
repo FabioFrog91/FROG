@@ -114,7 +114,8 @@ public sealed class ExecutionOrderCompiler
         {
             CaptureCharacterCoordinates(
                 items,
-                liveCoordinates,
+                ToCoordinates(
+                    liveCoordinates),
                 ExecutionOrderDataSource.Live,
                 result);
 
@@ -154,7 +155,8 @@ public sealed class ExecutionOrderCompiler
         {
             CaptureRetainerCoordinates(
                 inventoryItems,
-                retainerSortOrder.InventoryCoords,
+                ToCoordinates(
+                    retainerSortOrder.InventoryCoords),
                 ExecutionOrderDataSource.Live,
                 result);
 
@@ -178,39 +180,6 @@ public sealed class ExecutionOrderCompiler
 
     private static void CaptureCharacterCoordinates(
         IEnumerable<InventoryItemSnapshot> inventoryItems,
-        IReadOnlyList<(int slotIndex, int containerIndex)> coordinates,
-        ExecutionOrderDataSource source,
-        Dictionary<PhysicalStackKey, ExecutionOrderPosition> result)
-    {
-        foreach (var item in inventoryItems)
-        {
-            var containerIndex =
-                GetCharacterContainerIndex(
-                    item.Container);
-
-            if (containerIndex < 0)
-                continue;
-
-            var displayIndex =
-                FindDisplayIndex(
-                    coordinates,
-                    containerIndex,
-                    item.Slot);
-
-            if (displayIndex < 0)
-                continue;
-
-            result[
-                PhysicalStackKey.From(
-                    item)] =
-                new ExecutionOrderPosition(
-                    displayIndex,
-                    source);
-        }
-    }
-
-    private static void CaptureCharacterCoordinates(
-        IEnumerable<InventoryItemSnapshot> inventoryItems,
         IReadOnlyList<ExecutionOrderCoordinate> coordinates,
         ExecutionOrderDataSource source,
         Dictionary<PhysicalStackKey, ExecutionOrderPosition> result)
@@ -224,58 +193,12 @@ public sealed class ExecutionOrderCompiler
             if (containerIndex < 0)
                 continue;
 
-            var displayIndex =
-                FindDisplayIndex(
-                    coordinates,
-                    containerIndex,
-                    item.Slot);
-
-            if (displayIndex < 0)
-                continue;
-
-            result[
-                PhysicalStackKey.From(
-                    item)] =
-                new ExecutionOrderPosition(
-                    displayIndex,
-                    source);
-        }
-    }
-
-    private static void CaptureRetainerCoordinates(
-        IEnumerable<InventoryItemSnapshot> inventoryItems,
-        IReadOnlyList<(int slotIndex, int containerIndex)> coordinates,
-        ExecutionOrderDataSource source,
-        Dictionary<PhysicalStackKey, ExecutionOrderPosition> result)
-    {
-        foreach (var item in inventoryItems)
-        {
-            if (item.Container < RetainerContainerFirst ||
-                item.Container > RetainerContainerLast)
-            {
-                continue;
-            }
-
-            var containerIndex =
-                checked(
-                    (int)(item.Container -
-                          RetainerContainerFirst));
-
-            var displayIndex =
-                FindDisplayIndex(
-                    coordinates,
-                    containerIndex,
-                    item.Slot);
-
-            if (displayIndex < 0)
-                continue;
-
-            result[
-                PhysicalStackKey.From(
-                    item)] =
-                new ExecutionOrderPosition(
-                    displayIndex,
-                    source);
+            AddDisplayPosition(
+                item,
+                coordinates,
+                containerIndex,
+                source,
+                result);
         }
     }
 
@@ -293,49 +216,39 @@ public sealed class ExecutionOrderCompiler
                 continue;
             }
 
-            var containerIndex =
+            AddDisplayPosition(
+                item,
+                coordinates,
                 checked(
                     (int)(item.Container -
-                          RetainerContainerFirst));
-
-            var displayIndex =
-                FindDisplayIndex(
-                    coordinates,
-                    containerIndex,
-                    item.Slot);
-
-            if (displayIndex < 0)
-                continue;
-
-            result[
-                PhysicalStackKey.From(
-                    item)] =
-                new ExecutionOrderPosition(
-                    displayIndex,
-                    source);
+                          RetainerContainerFirst)),
+                source,
+                result);
         }
     }
 
-    private static int FindDisplayIndex(
-        IReadOnlyList<(int slotIndex, int containerIndex)> coordinates,
+    private static void AddDisplayPosition(
+        InventoryItemSnapshot item,
+        IReadOnlyList<ExecutionOrderCoordinate> coordinates,
         int containerIndex,
-        int slot)
+        ExecutionOrderDataSource source,
+        Dictionary<PhysicalStackKey, ExecutionOrderPosition> result)
     {
-        for (var index = 0;
-             index < coordinates.Count;
-             index++)
-        {
-            var coordinate =
-                coordinates[index];
+        var displayIndex =
+            FindDisplayIndex(
+                coordinates,
+                containerIndex,
+                item.Slot);
 
-            if (coordinate.containerIndex == containerIndex &&
-                coordinate.slotIndex == slot)
-            {
-                return index;
-            }
-        }
+        if (displayIndex < 0)
+            return;
 
-        return -1;
+        result[
+            PhysicalStackKey.From(
+                item)] =
+            new ExecutionOrderPosition(
+                displayIndex,
+                source);
     }
 
     private static int FindDisplayIndex(
@@ -359,6 +272,15 @@ public sealed class ExecutionOrderCompiler
 
         return -1;
     }
+
+    private static List<ExecutionOrderCoordinate> ToCoordinates(
+        IReadOnlyList<(int slotIndex, int containerIndex)> coordinates) =>
+        coordinates
+            .Select(coordinate =>
+                new ExecutionOrderCoordinate(
+                    coordinate.slotIndex,
+                    coordinate.containerIndex))
+            .ToList();
 
     private static int GetCharacterContainerIndex(
         uint container) =>
