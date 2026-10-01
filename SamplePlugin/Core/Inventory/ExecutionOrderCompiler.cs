@@ -18,18 +18,21 @@ public sealed class ExecutionOrderCompiler
     private const int RetainerInventorySlotCount = 7 * 25;
 
     private readonly IOdrScanner odrScanner;
+    private readonly ExecutionOrderCatalog catalog;
 
     public ExecutionOrderCompiler(
-        IOdrScanner odrScanner)
+        IOdrScanner odrScanner,
+        ExecutionOrderCatalog catalog)
     {
         this.odrScanner = odrScanner;
+        this.catalog = catalog;
     }
 
     public ExecutionOrderSnapshot Capture(
         IReadOnlyList<InventoryItemSnapshot> inventoryItems)
     {
-        var displayIndices =
-            new Dictionary<PhysicalStackKey, int>();
+        var displayPositions =
+            new Dictionary<PhysicalStackKey, ExecutionOrderPosition>();
 
         foreach (var characterId in inventoryItems
                      .Where(item =>
@@ -41,7 +44,7 @@ public sealed class ExecutionOrderCompiler
             CaptureCharacter(
                 characterId,
                 inventoryItems,
-                displayIndices);
+                displayPositions);
         }
 
         foreach (var retainerGroup in inventoryItems
@@ -59,11 +62,11 @@ public sealed class ExecutionOrderCompiler
                 retainerGroup.Key.OwnerId,
                 retainerGroup.Key.ParentCharacterId,
                 retainerGroup,
-                displayIndices);
+                displayPositions);
         }
 
         return new ExecutionOrderSnapshot(
-            displayIndices);
+            displayPositions);
     }
 
     public IReadOnlyList<InventoryItemSnapshot> OrderStacksForExecution(
@@ -92,7 +95,7 @@ public sealed class ExecutionOrderCompiler
     private void CaptureCharacter(
         ulong characterId,
         IReadOnlyList<InventoryItemSnapshot> inventoryItems,
-        Dictionary<PhysicalStackKey, int> result)
+        Dictionary<PhysicalStackKey, ExecutionOrderPosition> result)
     {
         var sortOrder =
             odrScanner.GetSortOrder(
@@ -138,7 +141,7 @@ public sealed class ExecutionOrderCompiler
         ulong retainerId,
         ulong parentCharacterId,
         IEnumerable<InventoryItemSnapshot> inventoryItems,
-        Dictionary<PhysicalStackKey, int> result)
+        Dictionary<PhysicalStackKey, ExecutionOrderPosition> result)
     {
         var sortOrder =
             odrScanner.GetSortOrder(
@@ -231,7 +234,7 @@ public sealed class ExecutionOrderSnapshot
     {
         this.displayIndices =
             new Dictionary<PhysicalStackKey, int>(
-                displayIndices);
+                displayPositions);
     }
 
     public PlannerPlan Compile(
