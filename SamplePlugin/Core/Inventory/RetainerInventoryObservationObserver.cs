@@ -64,6 +64,10 @@ internal sealed class RetainerInventoryObservationObserver : IDisposable
             return;
         }
 
+        ForensicTraceRecorder.Record(
+            "RAW_OBSERVER",
+            $"RETAINER_ACTIVE_LOADED retainer={retainerId}");
+
         plugin.SyncStorageSources(
             storageReader);
     }
@@ -77,6 +81,10 @@ internal sealed class RetainerInventoryObservationObserver : IDisposable
         {
             return;
         }
+
+        ForensicTraceRecorder.Record(
+            "RAW_OBSERVER",
+            $"RETAINER_RAW events={events.Count} details={string.Join(" || ", events.Select(value => value.ToString()))}");
 
         plugin.SyncStorageSources(
             storageReader);
