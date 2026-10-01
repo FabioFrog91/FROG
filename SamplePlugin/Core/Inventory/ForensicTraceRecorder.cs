@@ -240,7 +240,7 @@ public static class ForensicTraceRecorder
 
     private static string FormatItem(
         InventoryItemSnapshot item) =>
-        $"ITEM base={item.BaseItemId} raw={item.RawItemId} hq={item.IsHq} qty={item.Quantity} storage={item.Storage} owner={item.OwnerId} parent={item.ParentCharacterId} container={item.Container} slot={item.Slot} observed={item.ObservedAtUtc:O} current={item.IsCurrent}";
+        $"ITEM base={item.BaseItemId} raw={item.RawItemId} hq={item.IsHq} qty={item.Quantity} storage={item.Storage} owner={item.OwnerId} parent={item.ParentCharacterId} container={item.Container} slot={item.Slot} observed={item.ObservedAtUtc:O} verified={item.IsVerified}";
 
     private static string FormatSource(
         InventorySource? source) =>
