@@ -14,8 +14,10 @@ public sealed class ExecutionOrderCompiler
 {
     private const uint RetainerContainerFirst = 10000;
     private const uint RetainerContainerLast = 10006;
-    private const int CharacterInventorySlotCount = 4 * 35;
-    private const int RetainerInventorySlotCount = 7 * 25;
+    private const int CharacterInventoryContainerCount = 4;
+    private const int CharacterInventorySlotsPerContainer = 35;
+    private const int RetainerInventoryContainerCount = 7;
+    private const int RetainerInventorySlotsPerContainer = 25;
 
     private readonly IOdrScanner odrScanner;
     private readonly ExecutionOrderCatalog catalog;
@@ -112,8 +114,8 @@ public sealed class ExecutionOrderCompiler
                 out var liveCoordinates) &&
             TryCreateCoordinates(
                 liveCoordinates,
-                4,
-                35,
+                CharacterInventoryContainerCount,
+                CharacterInventorySlotsPerContainer,
                 out var validLiveCoordinates))
         {
             CaptureCharacterCoordinates(
@@ -155,8 +157,8 @@ public sealed class ExecutionOrderCompiler
                 out var retainerSortOrder) &&
             TryCreateCoordinates(
                 retainerSortOrder.InventoryCoords,
-                7,
-                25,
+                RetainerInventoryContainerCount,
+                RetainerInventorySlotsPerContainer,
                 out var validLiveCoordinates))
         {
             CaptureRetainerCoordinates(
