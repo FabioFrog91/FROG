@@ -98,6 +98,22 @@ public sealed class GlobalPlannerCoordinator : IDisposable
             return false;
         }
 
+        ForensicTraceRecorder.Record(
+            "PLANNER",
+            $"TRY_START main={mainCharacterId} current={currentCharacterId} autoStartExecution={autoStartExecution} replanMessage={replanMessage ?? "-"} inventorySync={inventorySyncAtUtc?.ToString("O") ?? "-"}");
+
+        ForensicTraceRecorder.RecordRequirements(
+            "GLOBAL_PLANNER_INPUT_REQUIREMENTS",
+            requirementSet);
+
+        ForensicTraceRecorder.RecordInventorySnapshot(
+            "GLOBAL_PLANNER_INPUT_FULL_INVENTORY",
+            inventoryItems);
+
+        ForensicTraceRecorder.Record(
+            "PLANNER",
+            $"RESOLUTION_SOURCES count={resolutionPolicy.Sources.Count} values={string.Join(" || ", resolutionPolicy.Sources)} criteria={string.Join(",", optimizationSettings.Criteria)}");
+
         var requirementSetSnapshot =
             CloneRequirements(
                 requirementSet);
@@ -114,6 +130,10 @@ public sealed class GlobalPlannerCoordinator : IDisposable
                     requiredItemIds.Contains(
                         item.BaseItemId))
                 .ToList();
+
+        ForensicTraceRecorder.RecordInventorySnapshot(
+            "GLOBAL_PLANNER_FILTERED_INVENTORY",
+            plannerItems);
 
         var executionOrderSnapshot =
             executionOrderCompiler.Capture(
@@ -308,16 +328,31 @@ public sealed class GlobalPlannerCoordinator : IDisposable
         {
             completedPlan =
                 await plannerTask;
+
+            if (completedPlan is not null)
+            {
+                ForensicTraceRecorder.RecordPlan(
+                    $"GLOBAL_PLANNER_TASK_COMPLETED generation={runGeneration}",
+                    completedPlan);
+            }
         }
         catch (OperationCanceledException)
             when (plannerCancellation.IsCancellationRequested)
         {
             cancelled = true;
+
+            ForensicTraceRecorder.Record(
+                "PLANNER",
+                $"TASK_CANCELLED generation={runGeneration}");
         }
         catch (Exception ex)
         {
             completedError =
                 ex.Message;
+
+            ForensicTraceRecorder.Record(
+                "PLANNER",
+                $"TASK_FAILED generation={runGeneration} error={ex}");
         }
 
         lock (syncLock)
@@ -344,6 +379,10 @@ public sealed class GlobalPlannerCoordinator : IDisposable
             if (cancelled ||
                 runGeneration != generation)
             {
+                ForensicTraceRecorder.Record(
+                    "PLANNER",
+                    $"COMPLETION_DISCARDED runGeneration={runGeneration} currentGeneration={generation} cancelled={cancelled}");
+
                 diagnostics = null;
                 return;
             }
@@ -355,6 +394,10 @@ public sealed class GlobalPlannerCoordinator : IDisposable
                     completedPlan,
                     completedError,
                     autoStartExecution);
+
+            ForensicTraceRecorder.Record(
+                "PLANNER",
+                $"COMPLETION_ACCEPTED generation={runGeneration} autoStartExecution={autoStartExecution} error={completedError ?? "-"} hasPlan={completedPlan is not null}");
         }
     }
 

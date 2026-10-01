@@ -97,15 +97,25 @@ public sealed class InventoryIndex
             if (sourceProviderRevision.TryGetValue(key, out var previousProviderRevision) &&
                 providerRevision <= previousProviderRevision)
             {
+                var existingObservationRevision =
+                    sourceObservationRevision.TryGetValue(key, out var observedRevision)
+                        ? observedRevision
+                        : 0;
+
+                var existingContentRevision =
+                    sourceContentRevision.TryGetValue(key, out var observedContentRevision)
+                        ? observedContentRevision
+                        : 0;
+
+                ForensicTraceRecorder.Record(
+                    "INVENTORY_OBSERVATION",
+                    $"APPLY_OBSERVATION_REJECTED_STALE source={source.Storage}/owner={source.OwnerId}/container={source.Container} providerRev={providerRevision} previousProviderRev={previousProviderRevision} obsRev={existingObservationRevision} contentRev={existingContentRevision}");
+
                 return new InventoryApplyObservationResult(
                     false,
                     false,
-                    sourceObservationRevision.TryGetValue(key, out var existingObservationRevision)
-                        ? existingObservationRevision
-                        : 0,
-                    sourceContentRevision.TryGetValue(key, out var existingContentRevision)
-                        ? existingContentRevision
-                        : 0);
+                    existingObservationRevision,
+                    existingContentRevision);
             }
 
             var existingSnapshots = items
@@ -151,6 +161,17 @@ public sealed class InventoryIndex
                     beforeFreeCompanyPages);
             }
 
+            ForensicTraceRecorder.RecordInventoryMutation(
+                contentChanged
+                    ? "APPLY_OBSERVATION_CHANGED"
+                    : "APPLY_OBSERVATION_UNCHANGED",
+                source,
+                existingSnapshots,
+                newSnapshots,
+                observationRevision,
+                contentRevision,
+                providerRevision);
+
             return new InventoryApplyObservationResult(
                 true,
                 contentChanged,
@@ -191,7 +212,19 @@ public sealed class InventoryIndex
             sourceProviderRevision.Remove(key);
 
             if (!contentChanged)
+            {
+                ForensicTraceRecorder.RecordInventoryMutation(
+                    "REPLACE_SOURCE_UNCHANGED",
+                    source,
+                    existingSnapshots,
+                    newSnapshots,
+                    sourceObservationRevision[key],
+                    sourceContentRevision.TryGetValue(key, out var unchangedContentRevision)
+                        ? unchangedContentRevision
+                        : 0);
+
                 return true;
+            }
 
             var beforeFreeCompanyPages =
                 BuildFreeCompanyPageAudit();
@@ -209,6 +242,14 @@ public sealed class InventoryIndex
             AddAuditEntry(
                 $"REPLACE_SOURCE {source.Storage} owner={source.OwnerId} container={source.Container}",
                 beforeFreeCompanyPages);
+
+            ForensicTraceRecorder.RecordInventoryMutation(
+                "REPLACE_SOURCE_CHANGED",
+                source,
+                existingSnapshots,
+                newSnapshots,
+                sourceObservationRevision[key],
+                sourceContentRevision[key]);
 
             return true;
         }
@@ -266,7 +307,13 @@ public sealed class InventoryIndex
             }
 
             if (changedContainers.Count == 0)
+            {
+                ForensicTraceRecorder.Record(
+                    "INVENTORY_OBSERVATION",
+                    $"REPLACE_CHARACTER_UNCHANGED character={characterId} obsRev={observationRevision} containers={string.Join(",", observedContainers)} stacks={newSnapshots.Count} qty={newSnapshots.Sum(item => (long)item.Quantity)}");
+
                 return true;
+            }
 
             items.RemoveAll(x =>
                 x.Storage == StorageType.CharacterInventory &&
@@ -285,6 +332,39 @@ public sealed class InventoryIndex
             }
 
             isDirty = true;
+
+            foreach (var container in observedContainers)
+            {
+                var beforeContainer =
+                    existingSnapshots
+                        .Where(item => item.Container == container)
+                        .ToList();
+
+                var afterContainer =
+                    newSnapshots
+                        .Where(item => item.Container == container)
+                        .ToList();
+
+                var source =
+                    new InventorySource(
+                        StorageType.CharacterInventory,
+                        characterId,
+                        container);
+
+                ForensicTraceRecorder.RecordInventoryMutation(
+                    changedContainers.Contains(container)
+                        ? "REPLACE_CHARACTER_CHANGED"
+                        : "REPLACE_CHARACTER_OBSERVED_UNCHANGED_CONTAINER",
+                    source,
+                    beforeContainer,
+                    afterContainer,
+                    observationRevision,
+                    sourceContentRevision.TryGetValue(
+                        (StorageType.CharacterInventory, characterId, container),
+                        out var characterContentRevision)
+                            ? characterContentRevision
+                            : 0);
+            }
 
             return true;
         }

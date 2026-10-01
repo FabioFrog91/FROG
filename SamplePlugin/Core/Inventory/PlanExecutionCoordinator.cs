@@ -65,6 +65,10 @@ public sealed class PlanExecutionCoordinator
     public void Start(
         PlannerPlan plan)
     {
+        ForensicTraceRecorder.Record(
+            "COORDINATOR",
+            $"START decisions={plan.Decisions.Count} capacityBlocked={plan.CapacityBlocked}");
+
         session =
             new PlanExecutionSession(
                 plan);
@@ -170,6 +174,11 @@ public sealed class PlanExecutionCoordinator
                 observation,
                 currentCharacterId);
 
+        ForensicTraceRecorder.RecordState(
+            "COORDINATOR",
+            $"decision-{session.CurrentDecisionIndex}-verify",
+            $"DECISION index={session.CurrentDecisionIndex} type={decision.Type} item={decision.BaseItemId} hq={decision.IsHq} qty={decision.Quantity} baseline={baseline} freshnessBaseline={freshnessBaseline} observation={observation} verification={verification}");
+
         if (decision.Type ==
             PlannerDecisionType.SwitchCharacter)
         {
@@ -182,6 +191,11 @@ public sealed class PlanExecutionCoordinator
                 freshnessBaseline,
                 observation))
         {
+            ForensicTraceRecorder.RecordState(
+                "COORDINATOR",
+                $"decision-{session.CurrentDecisionIndex}-freshness",
+                $"WAIT_FRESH_OBSERVATION sourceRev={observation.SourceObservationRevision} sourceBaselineRev={freshnessBaseline.SourceObservationRevision} destinationRev={observation.DestinationObservationRevision} destinationBaselineRev={freshnessBaseline.DestinationObservationRevision}");
+
             RefreshGuidanceIfLogicalStateUnchanged(
                 decision,
                 observation,
@@ -197,6 +211,11 @@ public sealed class PlanExecutionCoordinator
                 baseline,
                 observation);
 
+        ForensicTraceRecorder.RecordState(
+            "COORDINATOR",
+            $"decision-{session.CurrentDecisionIndex}-reconciliation",
+            $"RECONCILIATION index={session.CurrentDecisionIndex} baseline={baseline} observation={observation} result={reconciliation}");
+
         if (verification.Status ==
             PlanExecutionVerificationStatus.Mismatch)
         {
@@ -209,6 +228,10 @@ public sealed class PlanExecutionCoordinator
 
             replanReason =
                 verification.Message;
+
+            ForensicTraceRecorder.Record(
+                "COORDINATOR",
+                $"REPLAN_MISMATCH index={session.CurrentDecisionIndex} reason={replanReason} baseline={baseline} observation={observation} verification={verification} reconciliation={reconciliation}");
 
             return Snapshot(
                 PlanExecutionCoordinatorStatus.ReplanRequired);
@@ -283,6 +306,10 @@ public sealed class PlanExecutionCoordinator
             replanReason =
                 materialization.Message;
 
+            ForensicTraceRecorder.Record(
+                "COORDINATOR",
+                $"REMATERIALIZE_FAILED index={session.CurrentDecisionIndex} remaining={remainingQuantity} reason={replanReason}");
+
             return Snapshot(
                 PlanExecutionCoordinatorStatus.ReplanRequired);
         }
@@ -292,6 +319,10 @@ public sealed class PlanExecutionCoordinator
         lastCoherentObservation =
             observation;
         replanReason = null;
+
+        ForensicTraceRecorder.Record(
+            "COORDINATOR",
+            $"PARTIAL_PROGRESS index={session.CurrentDecisionIndex} remaining={remainingQuantity} instruction={currentInstruction}");
 
         return Snapshot(
             PlanExecutionCoordinatorStatus.Executed);
@@ -356,6 +387,10 @@ public sealed class PlanExecutionCoordinator
             replanReason =
                 materialization.Message;
 
+            ForensicTraceRecorder.Record(
+                "COORDINATOR",
+                $"INITIAL_MATERIALIZATION_FAILED index={session.CurrentDecisionIndex} decision={decision} reason={replanReason}");
+
             return false;
         }
 
@@ -367,6 +402,10 @@ public sealed class PlanExecutionCoordinator
                 session.CurrentDecisionIndex,
                 decision,
                 inventoryIndex);
+
+        ForensicTraceRecorder.Record(
+            "COORDINATOR",
+            $"INITIAL_MATERIALIZATION index={session.CurrentDecisionIndex} decision={decision} instruction={currentInstruction} baseline={baseline}");
 
         lastCoherentObservation =
             new PlanExecutionObservation(
@@ -413,6 +452,11 @@ public sealed class PlanExecutionCoordinator
                 materialization.Instruction;
 
             replanReason = null;
+
+            ForensicTraceRecorder.RecordState(
+                "COORDINATOR",
+                $"decision-{session?.CurrentDecisionIndex ?? 0}-guidance",
+                $"GUIDANCE_REFRESH instruction={currentInstruction} observation={observation}");
         }
     }
 

@@ -147,9 +147,63 @@ public class MainWindow : Window, IDisposable
         ImGui.TextWrapped(
             "Copia una lista Teamcraft negli appunti e importala direttamente in FROG.");
 
+        if (!ForensicTraceRecorder.IsActive)
+        {
+            if (ImGui.Button("START FORENSIC LOG"))
+            {
+                var tracePath =
+                    ForensicTraceRecorder.Start();
+
+                ForensicTraceRecorder.Record(
+                    "UI",
+                    $"START_FORENSIC_LOG path={tracePath}");
+
+                ForensicTraceRecorder.RecordInventorySnapshot(
+                    "TRACE_START_CURRENT_INDEX",
+                    plugin.InventoryIndex.Items);
+            }
+        }
+        else
+        {
+            if (ImGui.Button("STOP FORENSIC LOG + COPIA"))
+            {
+                ForensicTraceRecorder.RecordExecutionSnapshot(
+                    "TRACE_STOP_EXECUTION_STATE",
+                    executionRuntime.Snapshot);
+
+                ForensicTraceRecorder.RecordInventorySnapshot(
+                    "TRACE_STOP_CURRENT_INDEX",
+                    plugin.InventoryIndex.Items);
+
+                ImGui.SetClipboardText(
+                    ForensicTraceRecorder.StopAndGetText());
+            }
+
+            ImGui.TextWrapped(
+                $"FORENSIC LOG ATTIVO: {ForensicTraceRecorder.CurrentFilePath}");
+        }
+
         if (ImGui.Button("Importa da Clipboard"))
         {
+            if (!ForensicTraceRecorder.IsActive)
+            {
+                var tracePath =
+                    ForensicTraceRecorder.Start();
+
+                ForensicTraceRecorder.Record(
+                    "UI",
+                    $"AUTO_START_ON_IMPORT path={tracePath}");
+            }
+
             var text = ImGui.GetClipboardText();
+
+            ForensicTraceRecorder.Record(
+                "UI",
+                $"IMPORT_CLIPBOARD chars={text?.Length ?? 0}");
+
+            ForensicTraceRecorder.RecordInventorySnapshot(
+                "BEFORE_IMPORT",
+                plugin.InventoryIndex.Items);
 
             var importer =
                 new TeamcraftListImporter(
@@ -158,11 +212,19 @@ public class MainWindow : Window, IDisposable
             importedRequirementSet =
                 importer.Import(text);
 
+            ForensicTraceRecorder.RecordRequirements(
+                "IMPORT_RESULT",
+                importedRequirementSet);
+
             resolverCoordinator.Invalidate(
                 resetDiagnostics: true);
 
             globalPlannerCoordinator.ClearResult();
             ResetPlanExecutionSession();
+
+            ForensicTraceRecorder.Record(
+                "UI",
+                "IMPORT_RESET_RESOLVER_PLANNER_EXECUTION");
         }
 
         if (importedRequirementSet == null)
@@ -458,12 +520,28 @@ public class MainWindow : Window, IDisposable
         {
             if (ImGui.Button("CALCOLA PIANO GLOBALE"))
             {
+                ForensicTraceRecorder.Record(
+                    "UI",
+                    "CALCOLA_PIANO_GLOBALE");
+
+                ForensicTraceRecorder.RecordRequirements(
+                    "PLANNER_REQUEST_REQUIREMENTS",
+                    requirementSet);
+
+                ForensicTraceRecorder.RecordInventorySnapshot(
+                    "PLANNER_REQUEST_INVENTORY",
+                    plugin.InventoryIndex.Items);
+
                 StartGlobalPlannerTask(
                     requirementSet,
                     resolutionPolicy);
 
                 plannerState =
                     globalPlannerCoordinator.Snapshot;
+
+                ForensicTraceRecorder.Record(
+                    "PLANNER",
+                    $"START_REQUESTED isRunning={plannerState.IsRunning} error={plannerState.Error ?? "-"}");
             }
         }
         else
@@ -652,10 +730,30 @@ public class MainWindow : Window, IDisposable
 
             if (ImGui.Button("AVVIA ESECUZIONE"))
             {
+                ForensicTraceRecorder.Record(
+                    "UI",
+                    "AVVIA_ESECUZIONE");
+
+                ForensicTraceRecorder.RecordPlan(
+                    "EXECUTION_START_PLAN",
+                    plan);
+
+                ForensicTraceRecorder.RecordRequirements(
+                    "EXECUTION_START_REQUIREMENTS",
+                    requirementSet);
+
+                ForensicTraceRecorder.RecordInventorySnapshot(
+                    "EXECUTION_START_INVENTORY",
+                    plugin.InventoryIndex.Items);
+
                 executionRuntime.Start(
                     plan,
                     requirementSet,
                     optimizationSettings);
+
+                ForensicTraceRecorder.RecordExecutionSnapshot(
+                    "EXECUTION_AFTER_START",
+                    executionRuntime.Snapshot);
 
                 executionWindow.IsOpen = true;
             }
@@ -702,6 +800,14 @@ public class MainWindow : Window, IDisposable
 
         if (ImGui.Button("INTERROMPI ESECUZIONE"))
         {
+            ForensicTraceRecorder.RecordExecutionSnapshot(
+                "EXECUTION_BEFORE_INTERRUPT",
+                executionRuntime.Snapshot);
+
+            ForensicTraceRecorder.Record(
+                "UI",
+                "INTERROMPI_ESECUZIONE");
+
             executionRuntime.Clear();
             executionWindow.IsOpen = false;
         }
