@@ -97,22 +97,92 @@ public sealed class ExecutionOrderCompiler
         IReadOnlyList<InventoryItemSnapshot> inventoryItems,
         Dictionary<PhysicalStackKey, ExecutionOrderPosition> result)
     {
+        var items =
+            inventoryItems.Where(item =>
+                item.Storage == StorageType.CharacterInventory &&
+                item.OwnerId == characterId);
+
         var sortOrder =
             odrScanner.GetSortOrder(
                 characterId);
 
-        if (sortOrder is null ||
-            !sortOrder.NormalInventories.TryGetValue(
+        if (sortOrder is not null &&
+            sortOrder.NormalInventories.TryGetValue(
                 "PlayerInventory",
-                out var coordinates) ||
-            coordinates.Count != CharacterInventorySlotCount)
+                out var liveCoordinates) &&
+            liveCoordinates.Count == CharacterInventorySlotCount)
+        {
+            CaptureCharacterCoordinates(
+                items,
+                liveCoordinates,
+                ExecutionOrderDataSource.Live,
+                result);
+
+            return;
+        }
+
+        if (!catalog.TryGetCharacterInventory(
+                characterId,
+                out var persistedCoordinates))
         {
             return;
         }
 
-        foreach (var item in inventoryItems.Where(item =>
-                     item.Storage == StorageType.CharacterInventory &&
-                     item.OwnerId == characterId))
+        CaptureCharacterCoordinates(
+            items,
+            persistedCoordinates,
+            ExecutionOrderDataSource.Persisted,
+            result);
+    }
+
+    private void CaptureRetainer(
+        ulong retainerId,
+        ulong parentCharacterId,
+        IEnumerable<InventoryItemSnapshot> inventoryItems,
+        Dictionary<PhysicalStackKey, ExecutionOrderPosition> result)
+    {
+        var sortOrder =
+            odrScanner.GetSortOrder(
+                parentCharacterId);
+
+        if (sortOrder is not null &&
+            sortOrder.RetainerInventories.TryGetValue(
+                retainerId,
+                out var retainerSortOrder) &&
+            retainerSortOrder.InventoryCoords.Count ==
+                RetainerInventorySlotCount)
+        {
+            CaptureRetainerCoordinates(
+                inventoryItems,
+                retainerSortOrder.InventoryCoords,
+                ExecutionOrderDataSource.Live,
+                result);
+
+            return;
+        }
+
+        if (!catalog.TryGetRetainer(
+                parentCharacterId,
+                retainerId,
+                out var persistedCoordinates))
+        {
+            return;
+        }
+
+        CaptureRetainerCoordinates(
+            inventoryItems,
+            persistedCoordinates,
+            ExecutionOrderDataSource.Persisted,
+            result);
+    }
+
+    private static void CaptureCharacterCoordinates(
+        IEnumerable<InventoryItemSnapshot> inventoryItems,
+        IReadOnlyList<(int slotIndex, int containerIndex)> coordinates,
+        ExecutionOrderDataSource source,
+        Dictionary<PhysicalStackKey, ExecutionOrderPosition> result)
+    {
+        foreach (var item in inventoryItems)
         {
             var containerIndex =
                 GetCharacterContainerIndex(
@@ -133,34 +203,51 @@ public sealed class ExecutionOrderCompiler
             result[
                 PhysicalStackKey.From(
                     item)] =
-                displayIndex;
+                new ExecutionOrderPosition(
+                    displayIndex,
+                    source);
         }
     }
 
-    private void CaptureRetainer(
-        ulong retainerId,
-        ulong parentCharacterId,
+    private static void CaptureCharacterCoordinates(
         IEnumerable<InventoryItemSnapshot> inventoryItems,
+        IReadOnlyList<ExecutionOrderCoordinate> coordinates,
+        ExecutionOrderDataSource source,
         Dictionary<PhysicalStackKey, ExecutionOrderPosition> result)
     {
-        var sortOrder =
-            odrScanner.GetSortOrder(
-                parentCharacterId);
-
-        if (sortOrder is null ||
-            !sortOrder.RetainerInventories.TryGetValue(
-                retainerId,
-                out var retainerSortOrder))
+        foreach (var item in inventoryItems)
         {
-            return;
+            var containerIndex =
+                GetCharacterContainerIndex(
+                    item.Container);
+
+            if (containerIndex < 0)
+                continue;
+
+            var displayIndex =
+                FindDisplayIndex(
+                    coordinates,
+                    containerIndex,
+                    item.Slot);
+
+            if (displayIndex < 0)
+                continue;
+
+            result[
+                PhysicalStackKey.From(
+                    item)] =
+                new ExecutionOrderPosition(
+                    displayIndex,
+                    source);
         }
+    }
 
-        var coordinates =
-            retainerSortOrder.InventoryCoords;
-
-        if (coordinates.Count != RetainerInventorySlotCount)
-            return;
-
+    private static void CaptureRetainerCoordinates(
+        IEnumerable<InventoryItemSnapshot> inventoryItems,
+        IReadOnlyList<(int slotIndex, int containerIndex)> coordinates,
+        ExecutionOrderDataSource source,
+        Dictionary<PhysicalStackKey, ExecutionOrderPosition> result)
+    {
         foreach (var item in inventoryItems)
         {
             if (item.Container < RetainerContainerFirst ||
@@ -186,7 +273,46 @@ public sealed class ExecutionOrderCompiler
             result[
                 PhysicalStackKey.From(
                     item)] =
-                displayIndex;
+                new ExecutionOrderPosition(
+                    displayIndex,
+                    source);
+        }
+    }
+
+    private static void CaptureRetainerCoordinates(
+        IEnumerable<InventoryItemSnapshot> inventoryItems,
+        IReadOnlyList<ExecutionOrderCoordinate> coordinates,
+        ExecutionOrderDataSource source,
+        Dictionary<PhysicalStackKey, ExecutionOrderPosition> result)
+    {
+        foreach (var item in inventoryItems)
+        {
+            if (item.Container < RetainerContainerFirst ||
+                item.Container > RetainerContainerLast)
+            {
+                continue;
+            }
+
+            var containerIndex =
+                checked(
+                    (int)(item.Container -
+                          RetainerContainerFirst));
+
+            var displayIndex =
+                FindDisplayIndex(
+                    coordinates,
+                    containerIndex,
+                    item.Slot);
+
+            if (displayIndex < 0)
+                continue;
+
+            result[
+                PhysicalStackKey.From(
+                    item)] =
+                new ExecutionOrderPosition(
+                    displayIndex,
+                    source);
         }
     }
 
@@ -204,6 +330,28 @@ public sealed class ExecutionOrderCompiler
 
             if (coordinate.containerIndex == containerIndex &&
                 coordinate.slotIndex == slot)
+            {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
+    private static int FindDisplayIndex(
+        IReadOnlyList<ExecutionOrderCoordinate> coordinates,
+        int containerIndex,
+        int slot)
+    {
+        for (var index = 0;
+             index < coordinates.Count;
+             index++)
+        {
+            var coordinate =
+                coordinates[index];
+
+            if (coordinate.ContainerIndex == containerIndex &&
+                coordinate.SlotIndex == slot)
             {
                 return index;
             }
