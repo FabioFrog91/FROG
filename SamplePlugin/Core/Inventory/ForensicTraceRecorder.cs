@@ -90,6 +90,23 @@ public static class ForensicTraceRecorder
         }
     }
 
+    public static void StopWithoutCopy(
+        string reason)
+    {
+        lock (Sync)
+        {
+            if (writer is null)
+                return;
+
+            WriteCore(
+                "TRACE",
+                $"STOP_WITHOUT_COPY reason={reason} local={DateTime.Now:O} utc={DateTime.UtcNow:O}");
+
+            Elapsed.Stop();
+            StopWriter();
+        }
+    }
+
     public static void Record(
         string category,
         string message)
