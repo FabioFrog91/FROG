@@ -48,6 +48,10 @@ internal sealed class CharacterInventoryObservationObserver : IDisposable
             return;
         }
 
+        ForensicTraceRecorder.Record(
+            "RAW_OBSERVER",
+            $"CHARACTER_RAW events={events.Count} details={string.Join(" || ", events.Select(value => value.ToString()))}");
+
         plugin.SyncPlayerInventory();
     }
 
