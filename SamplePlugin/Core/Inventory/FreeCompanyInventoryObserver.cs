@@ -83,8 +83,15 @@ internal sealed class FreeCompanyInventoryObserver : IDisposable
 
         pending.Add(key);
 
+        var pendingMessage =
+            $"FC_PENDING page={FormatPage(inventoryType)} owner={trackedFreeCompanyId} fcGen={freeCompanyGeneration} seq={containerInfo.containerSequence} numItems={containerInfo.numItems} startOrFinish={containerInfo.startOrFinish}";
+
         FreeCompanyObservationDiagnostics.Add(
-            $"FC_PENDING page={FormatPage(inventoryType)} owner={trackedFreeCompanyId} fcGen={freeCompanyGeneration} seq={containerInfo.containerSequence} numItems={containerInfo.numItems} startOrFinish={containerInfo.startOrFinish}");
+            pendingMessage);
+
+        ForensicTraceRecorder.Record(
+            "FC_OBSERVER",
+            pendingMessage);
     }
 
     private void OnFreeCompanyPageScanned(
@@ -112,6 +119,10 @@ internal sealed class FreeCompanyInventoryObserver : IDisposable
         // A periodic completed scan is not a new observation by itself.
         // Freshness advances only for a pending acquisition, or for a real
         // content change on a page already acquired for this FC generation.
+        ForensicTraceRecorder.Record(
+            "FC_OBSERVER",
+            $"FC_SCAN page={FormatPage(inventoryType)} owner={freeCompanyId} fcGen={freeCompanyGeneration} scanRev={scanRevision} changed={changed} pending={hasPending} acquired={alreadyAcquired}");
+
         if (!hasPending && !(changed && alreadyAcquired))
         {
             if (changed && !alreadyAcquired)
@@ -178,8 +189,15 @@ internal sealed class FreeCompanyInventoryObserver : IDisposable
             return false;
         }
 
+        var observedMessage =
+            $"FC_OBSERVED page={FormatPage(page)} owner={freeCompanyId} fcGen={freeCompanyGeneration} scanRev={scanRevision} pending={hadPending} providerChanged={providerChanged} contentChanged={result.ContentChanged} obsRev={result.ObservationRevision} contentRev={result.ContentRevision} items={snapshots.Count} qty={snapshots.Sum(item => item.Quantity)}";
+
         FreeCompanyObservationDiagnostics.Add(
-            $"FC_OBSERVED page={FormatPage(page)} owner={freeCompanyId} fcGen={freeCompanyGeneration} scanRev={scanRevision} pending={hadPending} providerChanged={providerChanged} contentChanged={result.ContentChanged} obsRev={result.ObservationRevision} contentRev={result.ContentRevision} items={snapshots.Count} qty={snapshots.Sum(item => item.Quantity)}");
+            observedMessage);
+
+        ForensicTraceRecorder.Record(
+            "FC_OBSERVER",
+            observedMessage);
 
         return true;
     }
@@ -197,8 +215,15 @@ internal sealed class FreeCompanyInventoryObserver : IDisposable
         pending.Clear();
         acquiredPages.Clear();
 
+        var identityMessage =
+            $"FC_IDENTITY previous={previous} current={currentFreeCompanyId} fcGen={freeCompanyGeneration}";
+
         FreeCompanyObservationDiagnostics.Add(
-            $"FC_IDENTITY previous={previous} current={currentFreeCompanyId} fcGen={freeCompanyGeneration}");
+            identityMessage);
+
+        ForensicTraceRecorder.Record(
+            "FC_OBSERVER",
+            identityMessage);
     }
 
     private static bool IsFreeCompanyPage(
