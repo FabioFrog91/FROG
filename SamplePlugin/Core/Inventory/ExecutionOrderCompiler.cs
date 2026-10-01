@@ -355,7 +355,11 @@ public sealed class ExecutionOrderSnapshot
         var actions =
             plan.Actions.ToList();
 
-        var changed = false;
+        var decisionActions =
+            plan.Actions.ToList();
+
+        var actionsChanged = false;
+        var decisionOrderChanged = false;
 
         var consumedBySource =
             new Dictionary<ActionConsumptionKey, int>();
@@ -381,9 +385,7 @@ public sealed class ExecutionOrderSnapshot
                 end++;
             }
 
-            if (end - start > 1 &&
-                IsSupportedExecutionOrderSource(
-                    actions[start]))
+            if (end - start > 1)
             {
                 var consumedInsideGroup =
                     new Dictionary<ActionConsumptionKey, int>();
@@ -460,15 +462,30 @@ public sealed class ExecutionOrderSnapshot
                      index < orderedEntries.Count;
                      index++)
                 {
+                    var orderedAction =
+                        orderedEntries[index].Action;
+
                     if (!Equals(
                             actions[start + index],
-                            orderedEntries[index].Action))
+                            orderedAction))
                     {
-                        changed = true;
+                        actionsChanged = true;
                     }
 
                     actions[start + index] =
-                        orderedEntries[index].Action;
+                        orderedAction;
+
+                    if (hasCompleteVisibleOrder &&
+                        IsSupportedExecutionOrderSource(
+                            orderedAction) &&
+                        !Equals(
+                            decisionActions[start + index],
+                            orderedAction))
+                    {
+                        decisionOrderChanged = true;
+                        decisionActions[start + index] =
+                            orderedAction;
+                    }
                 }
             }
 
@@ -489,8 +506,15 @@ public sealed class ExecutionOrderSnapshot
             start = end;
         }
 
-        return changed
-            ? plan.WithExecutionOrderedActions(
+        if (decisionOrderChanged)
+        {
+            return plan.WithExecutionOrdering(
+                actions,
+                decisionActions);
+        }
+
+        return actionsChanged
+            ? plan.WithActions(
                 actions)
             : plan;
     }
