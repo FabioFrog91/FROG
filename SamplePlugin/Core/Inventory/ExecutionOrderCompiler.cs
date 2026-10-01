@@ -310,7 +310,7 @@ public sealed class ExecutionOrderSnapshot
                     candidates.All(entry =>
                         entry.Order.HasVisibleOrder);
 
-                var ordered =
+                var orderedEntries =
                     (hasCompleteVisibleOrder
                         ? candidates
                             .OrderBy(entry =>
@@ -330,16 +330,22 @@ public sealed class ExecutionOrderSnapshot
                         entry.Action.IsHq)
                     .ThenBy(entry =>
                         entry.OriginalIndex)
-                    .Select(entry =>
-                        entry.Action)
                     .ToList();
 
+                RecordActionOrder(
+                    actions[start],
+                    start,
+                    end,
+                    hasCompleteVisibleOrder,
+                    candidates,
+                    orderedEntries);
+
                 for (var index = 0;
-                     index < ordered.Count;
+                     index < orderedEntries.Count;
                      index++)
                 {
                     actions[start + index] =
-                        ordered[index];
+                        orderedEntries[index].Action;
                 }
             }
 
@@ -377,26 +383,124 @@ public sealed class ExecutionOrderSnapshot
                     item,
                     out _));
 
-        if (hasCompleteVisibleOrder)
+        var ordered =
+            hasCompleteVisibleOrder
+                ? materialized
+                    .OrderBy(item =>
+                        displayIndices[
+                            PhysicalStackKey.From(
+                                item)])
+                    .ThenBy(item =>
+                        item.Container)
+                    .ThenBy(item =>
+                        item.Slot)
+                    .ToList()
+                : materialized
+                    .OrderBy(item =>
+                        item.Container)
+                    .ThenBy(item =>
+                        item.Slot)
+                    .ToList();
+
+        RecordStackOrder(
+            materialized,
+            ordered,
+            hasCompleteVisibleOrder);
+
+        return ordered;
+    }
+
+    private void RecordActionOrder(
+        PlannerAction groupStart,
+        int start,
+        int end,
+        bool hasCompleteVisibleOrder,
+        IReadOnlyList<OrderedAction> candidates,
+        IReadOnlyList<OrderedAction> ordered)
+    {
+        if (!ForensicTraceRecorder.IsActive ||
+            groupStart.Source is null ||
+            groupStart.Destination is null)
         {
-            return materialized
-                .OrderBy(item =>
-                    displayIndices[
-                        PhysicalStackKey.From(
-                            item)])
-                .ThenBy(item =>
-                    item.Container)
-                .ThenBy(item =>
-                    item.Slot)
-                .ToList();
+            return;
         }
 
-        return materialized
-            .OrderBy(item =>
-                item.Container)
-            .ThenBy(item =>
-                item.Slot)
-            .ToList();
+        var key =
+            $"PLAN:{groupStart.Source.Storage}:{groupStart.Source.OwnerId}:{groupStart.Source.ParentCharacterId}>" +
+            $"{groupStart.Destination.Storage}:{groupStart.Destination.OwnerId}:{groupStart.Destination.ParentCharacterId}:{start}:{end}";
+
+        var candidateText =
+            string.Join(
+                " || ",
+                candidates.Select(entry =>
+                    $"item={entry.Action.BaseItemId} hq={entry.Action.IsHq} qty={entry.Action.Quantity} " +
+                    $"rawContainer={entry.Action.Source?.Container} rawSlot={entry.Order.PhysicalSlot} " +
+                    $"odrFound={entry.Order.HasVisibleOrder} odrDisplayIndex={(entry.Order.HasVisibleOrder ? entry.Order.DisplayIndex : -1)} " +
+                    $"originalIndex={entry.OriginalIndex}"));
+
+        var orderedText =
+            string.Join(
+                " -> ",
+                ordered.Select(entry =>
+                    $"{entry.Action.BaseItemId}{(entry.Action.IsHq ? "HQ" : "NQ")}" +
+                    $"[raw={entry.Action.Source?.Container}:{entry.Order.PhysicalSlot},odr={(entry.Order.HasVisibleOrder ? entry.Order.DisplayIndex : -1)}]"));
+
+        ForensicTraceRecorder.RecordState(
+            "EXECUTION_ORDER",
+            key,
+            $"ACTION_GROUP source={groupStart.Source.Storage}/owner={groupStart.Source.OwnerId}/parent={groupStart.Source.ParentCharacterId} " +
+            $"destination={groupStart.Destination.Storage}/owner={groupStart.Destination.OwnerId}/parent={groupStart.Destination.ParentCharacterId} " +
+            $"range={start}-{end - 1} mode={(hasCompleteVisibleOrder ? "ODR" : "RAW_FALLBACK")} candidates={candidateText} selected={orderedText}");
+    }
+
+    private void RecordStackOrder(
+        IReadOnlyList<InventoryItemSnapshot> input,
+        IReadOnlyList<InventoryItemSnapshot> ordered,
+        bool hasCompleteVisibleOrder)
+    {
+        if (!ForensicTraceRecorder.IsActive ||
+            input.Count == 0)
+        {
+            return;
+        }
+
+        var first = input[0];
+        var key =
+            $"STACKS:{first.Storage}:{first.OwnerId}:{first.ParentCharacterId}:{first.BaseItemId}:{first.IsHq}";
+
+        var inputText =
+            string.Join(
+                " || ",
+                input.Select(item =>
+                {
+                    var found =
+                        TryGetDisplayIndex(
+                            item,
+                            out var displayIndex);
+
+                    return
+                        $"raw={item.Container}:{item.Slot} qty={item.Quantity} odrFound={found} odrDisplayIndex={(found ? displayIndex : -1)}";
+                }));
+
+        var orderedText =
+            string.Join(
+                " -> ",
+                ordered.Select(item =>
+                {
+                    var found =
+                        TryGetDisplayIndex(
+                            item,
+                            out var displayIndex);
+
+                    return
+                        $"{item.Container}:{item.Slot}[qty={item.Quantity},odr={(found ? displayIndex : -1)}]";
+                }));
+
+        ForensicTraceRecorder.RecordState(
+            "EXECUTION_ORDER",
+            key,
+            $"STACK_ORDER item={first.BaseItemId} hq={first.IsHq} storage={first.Storage} owner={first.OwnerId} parent={first.ParentCharacterId} " +
+            $"mode={(hasCompleteVisibleOrder ? "ODR" : "RAW_FALLBACK")} input={inputText} selected={orderedText}");
     }
 
     private ActionOrder GetActionOrder(
