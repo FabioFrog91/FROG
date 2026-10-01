@@ -374,14 +374,14 @@ public sealed class ExecutionOrderCompiler
 
 public sealed class ExecutionOrderSnapshot
 {
-    private readonly IReadOnlyDictionary<PhysicalStackKey, int>
-        displayIndices;
+    private readonly IReadOnlyDictionary<PhysicalStackKey, ExecutionOrderPosition>
+        displayPositions;
 
     public ExecutionOrderSnapshot(
-        IReadOnlyDictionary<PhysicalStackKey, int> displayIndices)
+        IReadOnlyDictionary<PhysicalStackKey, ExecutionOrderPosition> displayPositions)
     {
-        this.displayIndices =
-            new Dictionary<PhysicalStackKey, int>(
+        this.displayPositions =
+            new Dictionary<PhysicalStackKey, ExecutionOrderPosition>(
                 displayPositions);
     }
 
@@ -393,6 +393,8 @@ public sealed class ExecutionOrderSnapshot
 
         var actions =
             plan.Actions.ToList();
+
+        var changed = false;
 
         var consumedBySource =
             new Dictionary<ActionConsumptionKey, int>();
@@ -418,7 +420,9 @@ public sealed class ExecutionOrderSnapshot
                 end++;
             }
 
-            if (end - start > 1)
+            if (end - start > 1 &&
+                IsSupportedExecutionOrderSource(
+                    actions[start]))
             {
                 var consumedInsideGroup =
                     new Dictionary<ActionConsumptionKey, int>();
@@ -495,6 +499,13 @@ public sealed class ExecutionOrderSnapshot
                      index < orderedEntries.Count;
                      index++)
                 {
+                    if (!Equals(
+                            actions[start + index],
+                            orderedEntries[index].Action))
+                    {
+                        changed = true;
+                    }
+
                     actions[start + index] =
                         orderedEntries[index].Action;
                 }
@@ -517,8 +528,10 @@ public sealed class ExecutionOrderSnapshot
             start = end;
         }
 
-        return plan.WithActions(
-            actions);
+        return changed
+            ? plan.WithExecutionOrderedActions(
+                actions)
+            : plan;
     }
 
     public IReadOnlyList<InventoryItemSnapshot> OrderStacks(
@@ -538,9 +551,9 @@ public sealed class ExecutionOrderSnapshot
             hasCompleteVisibleOrder
                 ? materialized
                     .OrderBy(item =>
-                        displayIndices[
+                        displayPositions[
                             PhysicalStackKey.From(
-                                item)])
+                                item)].DisplayIndex)
                     .ThenBy(item =>
                         item.Container)
                     .ThenBy(item =>
@@ -682,7 +695,8 @@ public sealed class ExecutionOrderSnapshot
                 false,
                 int.MaxValue,
                 source.Container,
-                int.MaxValue);
+                int.MaxValue,
+                ExecutionOrderDataSource.None);
         }
 
         var hasCompleteVisibleOrder =
@@ -695,9 +709,9 @@ public sealed class ExecutionOrderSnapshot
             hasCompleteVisibleOrder
                 ? matchingStacks
                     .OrderBy(item =>
-                        displayIndices[
+                        displayPositions[
                             PhysicalStackKey.From(
-                                item)])
+                                item)].DisplayIndex)
                     .ThenBy(item =>
                         item.Slot)
                 : matchingStacks
@@ -730,7 +744,8 @@ public sealed class ExecutionOrderSnapshot
                 false,
                 int.MaxValue,
                 source.Container,
-                int.MaxValue);
+                int.MaxValue,
+                ExecutionOrderDataSource.None);
         }
 
         var displayIndex =
@@ -748,7 +763,11 @@ public sealed class ExecutionOrderSnapshot
                 ? displayIndex
                 : int.MaxValue,
             source.Container,
-            firstConsumedStack.Slot);
+            firstConsumedStack.Slot,
+            hasVisibleOrder
+                ? GetDisplaySource(
+                    firstConsumedStack)
+                : ExecutionOrderDataSource.None);
     }
 
     private static int GetConsumedQuantity(
@@ -774,11 +793,39 @@ public sealed class ExecutionOrderSnapshot
 
     private bool TryGetDisplayIndex(
         InventoryItemSnapshot item,
-        out int displayIndex) =>
-        displayIndices.TryGetValue(
+        out int displayIndex)
+    {
+        if (displayPositions.TryGetValue(
+                PhysicalStackKey.From(
+                    item),
+                out var position))
+        {
+            displayIndex =
+                position.DisplayIndex;
+
+            return true;
+        }
+
+        displayIndex =
+            int.MaxValue;
+
+        return false;
+    }
+
+    private ExecutionOrderDataSource GetDisplaySource(
+        InventoryItemSnapshot item) =>
+        displayPositions.TryGetValue(
             PhysicalStackKey.From(
                 item),
-            out displayIndex);
+            out var position)
+                ? position.Source
+                : ExecutionOrderDataSource.None;
+
+    private static bool IsSupportedExecutionOrderSource(
+        PlannerAction action) =>
+        action.Source?.Storage is
+            StorageType.Retainer or
+            StorageType.CharacterInventory;
 
     private static bool IsSameExecutionGroup(
         PlannerAction first,
@@ -833,14 +880,16 @@ public sealed class ExecutionOrderSnapshot
         bool HasVisibleOrder,
         int DisplayIndex,
         uint PhysicalContainer,
-        int PhysicalSlot)
+        int PhysicalSlot,
+        ExecutionOrderDataSource DataSource)
     {
         public static ActionOrder Unavailable { get; } =
             new(
                 false,
                 int.MaxValue,
                 uint.MaxValue,
-                int.MaxValue);
+                int.MaxValue,
+                ExecutionOrderDataSource.None);
     }
 
     private readonly record struct OrderedAction(
@@ -848,6 +897,17 @@ public sealed class ExecutionOrderSnapshot
         int OriginalIndex,
         ActionOrder Order);
 }
+
+public enum ExecutionOrderDataSource
+{
+    None,
+    Live,
+    Persisted
+}
+
+public readonly record struct ExecutionOrderPosition(
+    int DisplayIndex,
+    ExecutionOrderDataSource Source);
 
 public readonly record struct PhysicalStackKey(
     StorageType Storage,
