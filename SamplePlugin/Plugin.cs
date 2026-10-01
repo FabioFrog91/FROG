@@ -62,6 +62,7 @@ public sealed class Plugin : HostedPlugin
     private const string CommandName = "/frog";
     private const string InventoryIndexFileName = "inventory-index.json";
     private const string CharacterCatalogFileName = "character-catalog.json";
+    private const string ExecutionOrderFileName = "execution-order.json";
 
     private const int LoginRetryIntervalMilliseconds = 500;
     private const int LoginRetryMaxAttempts = 10;
@@ -80,6 +81,8 @@ public sealed class Plugin : HostedPlugin
 
     public CharacterCatalog CharacterCatalog { get; } = new();
 
+    public ExecutionOrderCatalog ExecutionOrderCatalog { get; } = new();
+
     public WindowSystem WindowSystem { get; } = new("FROG");
 
     private ConfigWindow ConfigWindow { get; }
@@ -96,6 +99,11 @@ public sealed class Plugin : HostedPlugin
         Path.Combine(
             PluginInterface.ConfigDirectory.FullName,
             CharacterCatalogFileName);
+
+    private string ExecutionOrderFilePath =>
+        Path.Combine(
+            PluginInterface.ConfigDirectory.FullName,
+            ExecutionOrderFileName);
 
     internal IReadOnlyList<InventoryItemSnapshot> LastSyncSnapshots { get; private set; }
         = Array.Empty<InventoryItemSnapshot>();
@@ -152,6 +160,21 @@ public sealed class Plugin : HostedPlugin
             Log.Error(
                 ex,
                 $"Errore durante il caricamento del catalogo personaggi: {CharacterCatalogFilePath}");
+        }
+
+        try
+        {
+            ExecutionOrderCatalog.LoadFromDisk(
+                ExecutionOrderFilePath);
+
+            Log.Information(
+                $"Ordine visibile inventari caricato da disco: {ExecutionOrderFilePath} ({ExecutionOrderCatalog.CharacterCount} personaggi)");
+        }
+        catch (Exception ex)
+        {
+            Log.Error(
+                ex,
+                $"Errore durante il caricamento dell'ordine visibile inventari: {ExecutionOrderFilePath}");
         }
 
         ConfigWindow = new ConfigWindow(this);
@@ -213,6 +236,11 @@ public sealed class Plugin : HostedPlugin
 
         containerBuilder
             .RegisterInstance(CharacterCatalog)
+            .AsSelf()
+            .SingleInstance();
+
+        containerBuilder
+            .RegisterInstance(ExecutionOrderCatalog)
             .AsSelf()
             .SingleInstance();
 
@@ -830,7 +858,10 @@ public sealed class Plugin : HostedPlugin
         SaveInventoryIndex();
     }
 
-    internal void SaveInventoryIndex()
+    internal void SaveInventoryIndex() =>
+        SavePersistentState();
+
+    internal void SavePersistentState()
     {
         if (InventoryIndex.IsDirty)
         {
@@ -848,6 +879,15 @@ public sealed class Plugin : HostedPlugin
 
             Log.Information(
                 $"Catalogo personaggi salvato da disco: {CharacterCatalogFilePath} ({CharacterCatalog.Entries.Count} identità)");
+        }
+
+        if (ExecutionOrderCatalog.IsDirty)
+        {
+            ExecutionOrderCatalog.SaveToDisk(
+                ExecutionOrderFilePath);
+
+            Log.Information(
+                $"Ordine visibile inventari salvato: {ExecutionOrderFilePath} ({ExecutionOrderCatalog.CharacterCount} personaggi)");
         }
     }
 }
