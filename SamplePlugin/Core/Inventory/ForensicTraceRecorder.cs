@@ -308,6 +308,12 @@ public static class ForensicTraceRecorder
             ? "-"
             : $"{source.Storage}/owner={source.OwnerId}/parent={source.ParentCharacterId}/container={source.Container}";
 
+    private static string FormatSource(
+        PlannerLogicalSource? source) =>
+        source is null
+            ? "-"
+            : $"{source.Storage}/owner={source.OwnerId}/parent={source.ParentCharacterId}";
+
     private static void WriteCore(
         string category,
         string message)
