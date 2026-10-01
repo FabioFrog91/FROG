@@ -55,7 +55,7 @@ public sealed class ExecutionOrderObservationObserver : IDisposable
             "EXECUTION_ORDER",
             $"ODR_CACHE_REFRESH character={characterId}");
 
-        plugin.SavePersistentState();
+        plugin.SaveExecutionOrderCatalog();
     }
 
     public void Dispose()
