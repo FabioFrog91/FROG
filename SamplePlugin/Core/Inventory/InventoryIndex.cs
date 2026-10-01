@@ -24,6 +24,7 @@ public sealed class InventoryIndex
 
     private long nextObservationRevision;
     private long nextContentRevision;
+    private long contentRevision;
     private bool isDirty;
 
     public IReadOnlyList<InventoryItemSnapshot> Items
@@ -55,6 +56,21 @@ public sealed class InventoryIndex
             lock (syncLock)
             {
                 return isDirty;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Monotonic revision of planner-relevant index contents for this plugin
+    /// session. Observation freshness alone does not advance this value.
+    /// </summary>
+    public long ContentRevision
+    {
+        get
+        {
+            lock (syncLock)
+            {
+                return contentRevision;
             }
         }
     }
@@ -144,6 +160,7 @@ public sealed class InventoryIndex
 
                 contentRevision = ++nextContentRevision;
                 sourceContentRevision[key] = contentRevision;
+                this.contentRevision++;
                 isDirty = true;
 
                 AddAuditEntry(
@@ -204,6 +221,7 @@ public sealed class InventoryIndex
             items.AddRange(newSnapshots);
 
             sourceContentRevision[key] = ++nextContentRevision;
+            contentRevision++;
             isDirty = true;
 
             AddAuditEntry(
@@ -277,6 +295,8 @@ public sealed class InventoryIndex
             var contentRevision =
                 ++nextContentRevision;
 
+            this.contentRevision++;
+
             foreach (var container in changedContainers)
             {
                 sourceContentRevision[
@@ -297,6 +317,7 @@ public sealed class InventoryIndex
             items.Clear();
             items.AddRange(snapshots);
             ClearRuntimeObservationState();
+            contentRevision++;
             isDirty = true;
         }
     }
@@ -355,6 +376,7 @@ public sealed class InventoryIndex
             items.Clear();
             items.AddRange(snapshots);
             ClearRuntimeObservationState();
+            contentRevision++;
             isDirty = false;
 
             AddAuditEntry(

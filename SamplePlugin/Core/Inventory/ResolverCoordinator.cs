@@ -9,7 +9,7 @@ public readonly record struct ResolverCoordinatorSnapshot(
     InventorySourceCatalog? SourceCatalog,
     ResolutionPolicy? ResolutionPolicy,
     TransferPlan? Plan,
-    DateTime? SyncAtUtc,
+    long InventoryContentRevision,
     ulong CharacterId,
     long ComputeCalls,
     double LastElapsedMilliseconds,
@@ -37,7 +37,7 @@ public sealed class ResolverCoordinator
     private InventorySourceCatalog? cachedSourceCatalog;
     private ResolutionPolicy? cachedResolutionPolicy;
     private TransferPlan? cachedPlan;
-    private DateTime? cachedSyncAtUtc;
+    private long cachedInventoryContentRevision;
     private ulong cachedCharacterId;
 
     private long computeCalls;
@@ -59,7 +59,7 @@ public sealed class ResolverCoordinator
             cachedSourceCatalog,
             cachedResolutionPolicy,
             cachedPlan,
-            cachedSyncAtUtc,
+            cachedInventoryContentRevision,
             cachedCharacterId,
             computeCalls,
             lastElapsedMilliseconds,
@@ -71,12 +71,12 @@ public sealed class ResolverCoordinator
         RequirementSet requirementSet,
         ulong currentCharacterId,
         InventoryIndex inventoryIndex,
-        DateTime? syncAtUtc)
+        long inventoryContentRevision)
     {
         if (IsCacheValid(
                 requirementSet,
                 currentCharacterId,
-                syncAtUtc))
+                inventoryContentRevision))
         {
             return Snapshot;
         }
@@ -146,8 +146,8 @@ public sealed class ResolverCoordinator
         cachedPlan =
             plan;
 
-        cachedSyncAtUtc =
-            syncAtUtc;
+        cachedInventoryContentRevision =
+            inventoryContentRevision;
 
         cachedCharacterId =
             currentCharacterId;
@@ -177,7 +177,7 @@ public sealed class ResolverCoordinator
     private bool IsCacheValid(
         RequirementSet requirementSet,
         ulong currentCharacterId,
-        DateTime? syncAtUtc) =>
+        long inventoryContentRevision) =>
         cachedPlan is not null &&
         cachedSources is not null &&
         cachedSourceCatalog is not null &&
@@ -185,7 +185,7 @@ public sealed class ResolverCoordinator
         ReferenceEquals(
             cachedRequirementSet,
             requirementSet) &&
-        cachedSyncAtUtc == syncAtUtc &&
+        cachedInventoryContentRevision == inventoryContentRevision &&
         cachedCharacterId == currentCharacterId;
 
     private void ClearCachedResult()
@@ -195,7 +195,7 @@ public sealed class ResolverCoordinator
         cachedSourceCatalog = null;
         cachedResolutionPolicy = null;
         cachedPlan = null;
-        cachedSyncAtUtc = null;
+        cachedInventoryContentRevision = 0;
         cachedCharacterId = 0;
     }
 

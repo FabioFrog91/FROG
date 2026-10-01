@@ -236,7 +236,7 @@ public class MainWindow : Window, IDisposable
                 importedRequirementSet,
                 currentCharacterId,
                 plugin.InventoryIndex,
-                plugin.LastSyncAtUtc);
+                plugin.InventoryIndex.ContentRevision);
 
         var sources =
             resolverState.Sources;
