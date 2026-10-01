@@ -599,7 +599,7 @@ public sealed class ExecutionOrderSnapshot
                 candidates.Select(entry =>
                     $"item={entry.Action.BaseItemId} hq={entry.Action.IsHq} qty={entry.Action.Quantity} " +
                     $"rawContainer={entry.Action.Source?.Container} rawSlot={entry.Order.PhysicalSlot} " +
-                    $"odrFound={entry.Order.HasVisibleOrder} odrDisplayIndex={(entry.Order.HasVisibleOrder ? entry.Order.DisplayIndex : -1)} " +
+                    $"odrFound={entry.Order.HasVisibleOrder} odrDisplayIndex={(entry.Order.HasVisibleOrder ? entry.Order.DisplayIndex : -1)} odrSource={entry.Order.DataSource} " +
                     $"originalIndex={entry.OriginalIndex}"));
 
         var orderedText =
@@ -607,14 +607,14 @@ public sealed class ExecutionOrderSnapshot
                 " -> ",
                 ordered.Select(entry =>
                     $"{entry.Action.BaseItemId}{(entry.Action.IsHq ? "HQ" : "NQ")}" +
-                    $"[raw={entry.Action.Source?.Container}:{entry.Order.PhysicalSlot},odr={(entry.Order.HasVisibleOrder ? entry.Order.DisplayIndex : -1)}]"));
+                    $"[raw={entry.Action.Source?.Container}:{entry.Order.PhysicalSlot},odr={(entry.Order.HasVisibleOrder ? entry.Order.DisplayIndex : -1)},source={entry.Order.DataSource}]"));
 
         ForensicTraceRecorder.RecordState(
             "EXECUTION_ORDER",
             key,
             $"ACTION_GROUP source={groupStart.Source.Storage}/owner={groupStart.Source.OwnerId}/parent={groupStart.Source.ParentCharacterId} " +
             $"destination={groupStart.Destination.Storage}/owner={groupStart.Destination.OwnerId}/parent={groupStart.Destination.ParentCharacterId} " +
-            $"range={start}-{end - 1} mode={(hasCompleteVisibleOrder ? "ODR" : "RAW_FALLBACK")} candidates={candidateText} selected={orderedText}");
+            $"range={start}-{end - 1} mode={DescribeActionMode(hasCompleteVisibleOrder, candidates)} candidates={candidateText} selected={orderedText}");
     }
 
     private void RecordStackOrder(
@@ -643,7 +643,7 @@ public sealed class ExecutionOrderSnapshot
                             out var displayIndex);
 
                     return
-                        $"raw={item.Container}:{item.Slot} qty={item.Quantity} odrFound={found} odrDisplayIndex={(found ? displayIndex : -1)}";
+                        $"raw={item.Container}:{item.Slot} qty={item.Quantity} odrFound={found} odrDisplayIndex={(found ? displayIndex : -1)} odrSource={GetDisplaySource(item)}";
                 }));
 
         var orderedText =
@@ -657,15 +657,61 @@ public sealed class ExecutionOrderSnapshot
                             out var displayIndex);
 
                     return
-                        $"{item.Container}:{item.Slot}[qty={item.Quantity},odr={(found ? displayIndex : -1)}]";
+                        $"{item.Container}:{item.Slot}[qty={item.Quantity},odr={(found ? displayIndex : -1)},source={GetDisplaySource(item)}]";
                 }));
 
         ForensicTraceRecorder.RecordState(
             "EXECUTION_ORDER",
             key,
             $"STACK_ORDER item={first.BaseItemId} hq={first.IsHq} storage={first.Storage} owner={first.OwnerId} parent={first.ParentCharacterId} " +
-            $"mode={(hasCompleteVisibleOrder ? "ODR" : "RAW_FALLBACK")} input={inputText} selected={orderedText}");
+            $"mode={DescribeStackMode(hasCompleteVisibleOrder, input)} input={inputText} selected={orderedText}");
     }
+
+    private static string DescribeActionMode(
+        bool hasCompleteVisibleOrder,
+        IReadOnlyList<OrderedAction> candidates)
+    {
+        if (!hasCompleteVisibleOrder)
+            return "RAW_FALLBACK";
+
+        var sources =
+            candidates
+                .Select(entry =>
+                    entry.Order.DataSource)
+                .Distinct()
+                .ToArray();
+
+        return DescribeSources(
+            sources);
+    }
+
+    private string DescribeStackMode(
+        bool hasCompleteVisibleOrder,
+        IReadOnlyList<InventoryItemSnapshot> stacks)
+    {
+        if (!hasCompleteVisibleOrder)
+            return "RAW_FALLBACK";
+
+        var sources =
+            stacks
+                .Select(GetDisplaySource)
+                .Distinct()
+                .ToArray();
+
+        return DescribeSources(
+            sources);
+    }
+
+    private static string DescribeSources(
+        IReadOnlyList<ExecutionOrderDataSource> sources) =>
+        sources.Count == 1
+            ? sources[0] switch
+            {
+                ExecutionOrderDataSource.Live => "ODR_LIVE",
+                ExecutionOrderDataSource.Persisted => "ODR_PERSISTED",
+                _ => "RAW_FALLBACK"
+            }
+            : "ODR_MIXED";
 
     private ActionOrder GetActionOrder(
         PlannerPlan plan,
