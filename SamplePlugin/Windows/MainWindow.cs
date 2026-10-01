@@ -193,10 +193,6 @@ public class MainWindow : Window, IDisposable
                 ForensicTraceRecorder.Record(
                     "UI",
                     $"AUTO_START_ON_IMPORT path={tracePath}");
-
-                ForensicTraceRecorder.RecordInventorySnapshot(
-                    "TRACE_AUTO_START_CURRENT_INDEX",
-                    plugin.InventoryIndex.Items);
             }
 
             var text = ImGui.GetClipboardText();
