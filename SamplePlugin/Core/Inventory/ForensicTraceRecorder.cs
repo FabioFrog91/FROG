@@ -20,6 +20,7 @@ public static class ForensicTraceRecorder
     private static StreamWriter? writer;
     private static long sequence;
     private static string? lastExecutionFingerprint;
+    private static readonly Dictionary<string, string> LastStateByKey = new();
 
     public static bool IsActive
     {
@@ -41,6 +42,7 @@ public static class ForensicTraceRecorder
             Buffer.Clear();
             sequence = 0;
             lastExecutionFingerprint = null;
+            LastStateByKey.Clear();
             Elapsed.Restart();
 
             var directory = Path.Combine(
@@ -97,6 +99,27 @@ public static class ForensicTraceRecorder
             if (writer is null)
                 return;
 
+            WriteCore(category, message);
+        }
+    }
+
+    public static void RecordState(
+        string category,
+        string key,
+        string message)
+    {
+        lock (Sync)
+        {
+            if (writer is null)
+                return;
+
+            if (LastStateByKey.TryGetValue(key, out var previous) &&
+                previous == message)
+            {
+                return;
+            }
+
+            LastStateByKey[key] = message;
             WriteCore(category, message);
         }
     }
