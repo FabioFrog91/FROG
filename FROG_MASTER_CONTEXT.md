@@ -357,7 +357,7 @@ Contratto Planning → Execution implementato:
 - le action fisiche del planner restano disponibili per score/audit/simulazione;
 - le decisioni logiche aggregano container fisici della stessa route/item/qualità;
 - esempio fisico `NQ 5 + NQ 3 + HQ 9 + NQ 2` sulla stessa route diventa decisione logica `NQ 10 + HQ 9`;
-- ODR non modifica le decisioni logiche.
+- ODR non modifica il contenuto semantico delle decisioni logiche (source, destination, item, qualità, quantità, route); può soltanto riordinare decisioni commutabili quando l'ordine visivo è completo e autorevole.
 
 PR #23/#24: BUILD/CI VERIFICATA. NQ10 distribuito su più stack/pagine retainer, split/merge/relocation e partial MOVE sono stati RUNTIME VERIFICATI con Wattle Bark; l'highlight ha seguito gli stack osservati.
 
@@ -465,18 +465,25 @@ Stato attuale:
 - l'ordine visibile osservato da `IOdrScanner` viene persistito separatamente dall'`InventoryIndex` per CharacterInventory e Retainer;
 - priorità della fonte ordine: ODR live → ultimo ODR persistito valido → fallback RAW deterministico;
 - un ODR persistito è observation state, non autorità strategica: il live lo sostituisce quando disponibile;
-- un cambiamento ODR durante una sessione attiva aggiorna solo la cache persistita; non muta la sessione corrente. Un successivo piano/replan userà il dato aggiornato;
+- current decision e prefix già Verified restano congelati durante una sessione attiva;
+- quando ODR live/persistito completo diventa disponibile, `ExecutionOrderCompiler` può riordinare soltanto il suffix pending contiguo della stessa source logica e destination/route; la sessione applica esclusivamente una permutazione delle stesse decisioni;
+- il riordino runtime non attraversa SWITCH, cambio Retainer/Character, source/destination diverse o FC; non cambia quantità, item, qualità, route o scoring;
+- se anche una sola decisione del blocco non ha quantità fisica coerente o ODR completo, il suffix non viene toccato;
+- l'item corrente resta indivisibile e immutato anche se distribuito su più stack/pagine; l'ODR live continua a ordinare soltanto i suoi stack fisici;
+- un cambiamento ODR aggiorna inoltre la cache persistita, così il successivo piano può nascere già ordinato;
 - `PlannerPlan.WithActions` conserva deliberatamente le `Decisions` ed è ancora il percorso compatibile per riordinare sola evidenza fisica;
 - `PlannerPlan.WithExecutionOrdering` è il percorso esplicito del post-compiler ODR: ricompila le `Decisions` solo quando un gruppo commutabile Retainer/CharacterInventory ha un ordine ODR completo ed è stato realmente riordinato;
 - il riordino non attraversa switch, source logiche, destination o route diverse;
 - `PlannerDecisionCompiler` continua ad aggregare lo stesso item/HQ dentro la stessa route, quindi un item distribuito su più stack/pagine resta una singola decisione logica;
 - il fallback RAW continua a poter riordinare sola evidenza fisica ma non diventa mai autorevole per l'ordine delle `Decisions`;
-- FreeCompanyChest non usa questa nuova propagazione dell'ordine visuale.
+- FreeCompanyChest non usa né la propagazione ODR del planning né il refresh runtime del suffix pending.
+- `PlanExecutionProgressGuard` usa la sequenza effettiva della sessione per prefix/suffix, mantenendo però il `PlannerPlan.FinalState` come riferimento strategico finale.
 
-Evidenza runtime 2026-10-01:
+Evidenza runtime 2026-10-01 / 2026-10-16:
 - il forensic ha mostrato che al planning l'ODR dei retainer non correnti può essere assente e il post-compiler cade in `RAW_FALLBACK`;
 - dopo l'apertura del retainer lo stesso ordine diventa disponibile live e può differire sensibilmente dall'ordine RAW;
-- questo giustifica la persistenza dell'ultimo ODR valido e la propagazione esplicita dell'ordine alle decisioni commutabili.
+- il test 2026-10-16 ha confermato che ordinare soltanto gli stack dell'item corrente non basta: una decisione successiva può avere un display index precedente e causare ritorni di pagina;
+- questo giustifica sia la persistenza dell'ultimo ODR valido sia il refresh runtime, limitato al solo suffix futuro commutabile e senza mutare current/Verified.
 
 La traduzione Retainer fisico → pagina/slot visibile tramite `RetainerSortOrder.InventoryCoords` resta da riconfermare runtime insieme alla nuova persistenza.
 
