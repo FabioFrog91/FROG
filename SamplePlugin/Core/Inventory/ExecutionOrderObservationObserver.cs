@@ -31,31 +31,6 @@ public sealed class ExecutionOrderObservationObserver : IDisposable
 
         odrScanner.OnSortOrderChanged +=
             OnSortOrderChanged;
-
-        ObserveCachedSortOrder();
-    }
-
-    private void ObserveCachedSortOrder()
-    {
-        var characterId =
-            playerState.IsLoaded
-                ? playerState.ContentId
-                : 0;
-
-        if (characterId == 0)
-            return;
-
-        var sortOrder =
-            odrScanner.GetSortOrder(
-                characterId);
-
-        if (sortOrder is null)
-            return;
-
-        ObserveAndPersist(
-            characterId,
-            sortOrder,
-            "ODR_CACHE_SEED");
     }
 
     private void OnSortOrderChanged(
@@ -69,17 +44,6 @@ public sealed class ExecutionOrderObservationObserver : IDisposable
         if (characterId == 0)
             return;
 
-        ObserveAndPersist(
-            characterId,
-            sortOrder,
-            "ODR_CACHE_REFRESH");
-    }
-
-    private void ObserveAndPersist(
-        ulong characterId,
-        InventorySortOrder sortOrder,
-        string traceEvent)
-    {
         if (!catalog.Observe(
                 characterId,
                 sortOrder))
@@ -89,7 +53,7 @@ public sealed class ExecutionOrderObservationObserver : IDisposable
 
         ForensicTraceRecorder.Record(
             "EXECUTION_ORDER",
-            $"{traceEvent} character={characterId}");
+            $"ODR_CACHE_REFRESH character={characterId}");
 
         plugin.SaveExecutionOrderCatalog();
     }
