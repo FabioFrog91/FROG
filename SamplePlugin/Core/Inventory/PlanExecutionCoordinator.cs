@@ -36,6 +36,7 @@ public sealed class PlanExecutionCoordinator
 
     private readonly PlanExecutionVerifier verifier = new();
     private readonly PlanExecutionReconciler reconciler = new();
+    private readonly ExecutionOrderCompiler executionOrderCompiler;
     private readonly PlanExecutionMaterializer materializer;
 
     private PlanExecutionSession? session;
@@ -51,6 +52,9 @@ public sealed class PlanExecutionCoordinator
     public PlanExecutionCoordinator(
         ExecutionOrderCompiler executionOrderCompiler)
     {
+        this.executionOrderCompiler =
+            executionOrderCompiler;
+
         materializer =
             new PlanExecutionMaterializer(
                 executionOrderCompiler);
@@ -116,6 +120,9 @@ public sealed class PlanExecutionCoordinator
             return Snapshot(
                 GetCompletedStatus());
         }
+
+        RefreshPendingExecutionOrder(
+            inventoryIndex);
 
         var decision =
             session.CurrentDecision;
@@ -326,6 +333,39 @@ public sealed class PlanExecutionCoordinator
 
         return Snapshot(
             PlanExecutionCoordinatorStatus.Executed);
+    }
+
+    private void RefreshPendingExecutionOrder(
+        InventoryIndex inventoryIndex)
+    {
+        if (session is null ||
+            session.IsComplete)
+        {
+            return;
+        }
+
+        var startIndex =
+            session.VerifiedDecisionCount + 1;
+
+        if (!executionOrderCompiler.TryOrderPendingDecisionBlock(
+                session.Decisions,
+                startIndex,
+                inventoryIndex.Items,
+                out var orderedBlock))
+        {
+            return;
+        }
+
+        if (!session.TryApplyPendingOrder(
+                startIndex,
+                orderedBlock))
+        {
+            return;
+        }
+
+        ForensicTraceRecorder.Record(
+            "EXECUTION_ORDER",
+            $"SESSION_PENDING_ORDER_REFRESH current={session.CurrentDecisionIndex} start={startIndex + 1} count={orderedBlock.Count}");
     }
 
     private PlanExecutionCoordinatorSnapshot UpdateSwitch(
