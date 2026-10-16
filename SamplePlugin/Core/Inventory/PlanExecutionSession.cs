@@ -25,14 +25,18 @@ public sealed record PlanExecutionStep(
 public sealed class PlanExecutionSession
 {
     private readonly PlannerPlan plan;
+    private readonly List<PlannerDecision> decisions;
     private int verifiedDecisionCount;
     private bool currentDecisionExecuted;
 
     public PlannerPlan Plan =>
         plan;
 
+    public IReadOnlyList<PlannerDecision> Decisions =>
+        decisions;
+
     public int TotalDecisionCount =>
-        plan.Decisions.Count;
+        decisions.Count;
 
     public int VerifiedDecisionCount =>
         verifiedDecisionCount;
@@ -57,7 +61,7 @@ public sealed class PlanExecutionSession
     public PlannerDecision? CurrentDecision =>
         IsComplete
             ? null
-            : plan.Decisions[
+            : decisions[
                 verifiedDecisionCount];
 
     public int CurrentDecisionIndex =>
@@ -66,7 +70,7 @@ public sealed class PlanExecutionSession
             : verifiedDecisionCount + 1;
 
     public IReadOnlyList<PlanExecutionStep> Steps =>
-        plan.Decisions
+        decisions
             .Select((decision, index) =>
                 new PlanExecutionStep(
                     index + 1,
@@ -85,6 +89,49 @@ public sealed class PlanExecutionSession
         this.plan =
             plan ?? throw new ArgumentNullException(
                 nameof(plan));
+
+        decisions =
+            plan.Decisions.ToList();
+    }
+
+    public bool TryApplyPendingOrder(
+        int startIndex,
+        IReadOnlyList<PlannerDecision> orderedDecisions)
+    {
+        if (orderedDecisions is null ||
+            orderedDecisions.Count < 2 ||
+            startIndex < verifiedDecisionCount + 1 ||
+            startIndex < 0 ||
+            startIndex + orderedDecisions.Count >
+                decisions.Count)
+        {
+            return false;
+        }
+
+        var current =
+            decisions
+                .Skip(startIndex)
+                .Take(orderedDecisions.Count)
+                .ToList();
+
+        if (!HaveSameDecisions(
+                current,
+                orderedDecisions) ||
+            current.SequenceEqual(
+                orderedDecisions))
+        {
+            return false;
+        }
+
+        for (var index = 0;
+             index < orderedDecisions.Count;
+             index++)
+        {
+            decisions[startIndex + index] =
+                orderedDecisions[index];
+        }
+
+        return true;
     }
 
     public bool TryMarkCurrentDecisionExecuted(
@@ -123,5 +170,37 @@ public sealed class PlanExecutionSession
     {
         verifiedDecisionCount = 0;
         currentDecisionExecuted = false;
+
+        decisions.Clear();
+        decisions.AddRange(
+            plan.Decisions);
+    }
+
+    private static bool HaveSameDecisions(
+        IReadOnlyList<PlannerDecision> current,
+        IReadOnlyList<PlannerDecision> candidate)
+    {
+        if (current.Count != candidate.Count)
+            return false;
+
+        var remaining =
+            current.ToList();
+
+        foreach (var decision in candidate)
+        {
+            var index =
+                remaining.FindIndex(existing =>
+                    Equals(
+                        existing,
+                        decision));
+
+            if (index < 0)
+                return false;
+
+            remaining.RemoveAt(
+                index);
+        }
+
+        return remaining.Count == 0;
     }
 }
