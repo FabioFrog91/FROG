@@ -29,7 +29,7 @@ internal sealed class PlanExecutionProgressGuard
         IReadOnlyList<InventoryItemSnapshot> observedItems,
         PlanExecutionReconciliationResult? currentReconciliation)
     {
-        var remaining = session.Decisions
+        var remaining = plan.Decisions
             .Skip(session.VerifiedDecisionCount)
             .Select((decision, index) =>
                 index == 0 &&
@@ -53,7 +53,7 @@ internal sealed class PlanExecutionProgressGuard
 
         // Only intermediate destinations already reached by this session need
         // protection. A future destination can legitimately be empty today.
-        var reached = session.Decisions
+        var reached = plan.Decisions
             .Take(session.VerifiedDecisionCount)
             .Where(decision =>
                 decision.Type == PlannerDecisionType.Move &&
