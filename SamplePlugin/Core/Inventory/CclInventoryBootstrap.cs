@@ -68,6 +68,11 @@ public static class CclInventoryBootstrap
             .AsSelf()
             .SingleInstance();
 
+        builder.RegisterType<ExecutionOrderObservationObserver>()
+            .AsSelf()
+            .SingleInstance()
+            .AutoActivate();
+
         builder.RegisterType<ExecutionOrderCompiler>()
             .AsSelf()
             .SingleInstance();

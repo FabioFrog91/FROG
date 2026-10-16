@@ -180,6 +180,20 @@ public sealed class PlannerPlan
             capacityBlocks,
             decisions);
 
+    public PlannerPlan WithExecutionOrdering(
+        IEnumerable<PlannerAction> reorderedActions,
+        IEnumerable<PlannerAction> decisionOrderedActions) =>
+        new(
+            InitialState,
+            FinalState,
+            reorderedActions.ToList(),
+            Result,
+            Missing,
+            CapacityBlocked,
+            capacityBlocks,
+            PlannerDecisionCompiler.Compile(
+                decisionOrderedActions.ToList()));
+
     private static List<PlannerCapacityAdvice> BuildCapacityAdvice(
         IReadOnlyList<PlannerCapacityBlock> blocks) =>
         blocks

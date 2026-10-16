@@ -461,13 +461,24 @@ Regole:
 
 Stato attuale:
 
-- gli stack fisici della decisione corrente vengono ordinati usando ODR/live `ExecutionOrderCompiler`;
-- il vecchio post-compiler continua a poter riordinare `PlannerPlan.Actions`, ma `PlannerPlan.Decisions` resta immutabile;
-- quindi l'ordine tra decisioni logiche diverse e commutabili non è garantito dal vecchio riordino delle action fisiche;
-- questo è un possibile tema di ergonomia/ordine, non un bug di quantità o route;
-- non modificare l'ordine delle decisioni prima di evidenza runtime che mostri un requisito o una regressione concreta.
+- gli stack fisici della decisione corrente vengono ordinati usando `ExecutionOrderCompiler`;
+- l'ordine visibile osservato da `IOdrScanner` viene persistito separatamente dall'`InventoryIndex` per CharacterInventory e Retainer;
+- priorità della fonte ordine: ODR live → ultimo ODR persistito valido → fallback RAW deterministico;
+- un ODR persistito è observation state, non autorità strategica: il live lo sostituisce quando disponibile;
+- un cambiamento ODR durante una sessione attiva aggiorna solo la cache persistita; non muta la sessione corrente. Un successivo piano/replan userà il dato aggiornato;
+- `PlannerPlan.WithActions` conserva deliberatamente le `Decisions` ed è ancora il percorso compatibile per riordinare sola evidenza fisica;
+- `PlannerPlan.WithExecutionOrdering` è il percorso esplicito del post-compiler ODR: ricompila le `Decisions` solo quando un gruppo commutabile Retainer/CharacterInventory ha un ordine ODR completo ed è stato realmente riordinato;
+- il riordino non attraversa switch, source logiche, destination o route diverse;
+- `PlannerDecisionCompiler` continua ad aggregare lo stesso item/HQ dentro la stessa route, quindi un item distribuito su più stack/pagine resta una singola decisione logica;
+- il fallback RAW continua a poter riordinare sola evidenza fisica ma non diventa mai autorevole per l'ordine delle `Decisions`;
+- FreeCompanyChest non usa questa nuova propagazione dell'ordine visuale.
 
-La traduzione Retainer fisico → pagina/slot visibile tramite `RetainerSortOrder.InventoryCoords` era runtime verificata prima del refactor; va riconfermata insieme al nuovo `ExecutionInstruction`.
+Evidenza runtime 2026-10-01:
+- il forensic ha mostrato che al planning l'ODR dei retainer non correnti può essere assente e il post-compiler cade in `RAW_FALLBACK`;
+- dopo l'apertura del retainer lo stesso ordine diventa disponibile live e può differire sensibilmente dall'ordine RAW;
+- questo giustifica la persistenza dell'ultimo ODR valido e la propagazione esplicita dell'ordine alle decisioni commutabili.
+
+La traduzione Retainer fisico → pagina/slot visibile tramite `RetainerSortOrder.InventoryCoords` resta da riconfermare runtime insieme alla nuova persistenza.
 
 ## 14. Lifecycle
 
