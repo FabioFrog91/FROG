@@ -71,23 +71,6 @@ public sealed class ExecutionOrderCompiler
             displayPositions);
     }
 
-    public bool TryOrderPendingDecisionBlock(
-        IReadOnlyList<PlannerDecision> decisions,
-        int startIndex,
-        IReadOnlyList<InventoryItemSnapshot> inventoryItems,
-        out IReadOnlyList<PlannerDecision> orderedBlock)
-    {
-        var snapshot =
-            Capture(
-                inventoryItems);
-
-        return snapshot.TryOrderPendingDecisionBlock(
-            decisions,
-            startIndex,
-            inventoryItems,
-            out orderedBlock);
-    }
-
     public IReadOnlyList<InventoryItemSnapshot> OrderStacksForExecution(
         InventorySource source,
         IEnumerable<InventoryItemSnapshot> stacks) =>
@@ -536,96 +519,6 @@ public sealed class ExecutionOrderSnapshot
             : plan;
     }
 
-    public bool TryOrderPendingDecisionBlock(
-        IReadOnlyList<PlannerDecision> decisions,
-        int startIndex,
-        IReadOnlyList<InventoryItemSnapshot> inventoryItems,
-        out IReadOnlyList<PlannerDecision> orderedBlock)
-    {
-        orderedBlock =
-            Array.Empty<PlannerDecision>();
-
-        if (startIndex < 0 ||
-            startIndex >= decisions.Count)
-        {
-            return false;
-        }
-
-        var first =
-            decisions[startIndex];
-
-        if (first.Type != PlannerDecisionType.Move ||
-            first.Source is null ||
-            first.Destination is null ||
-            !IsSupportedExecutionOrderSource(
-                first))
-        {
-            return false;
-        }
-
-        var end =
-            startIndex + 1;
-
-        while (end < decisions.Count &&
-               decisions[end].Type ==
-                   PlannerDecisionType.Move &&
-               IsSameExecutionGroup(
-                   first,
-                   decisions[end]))
-        {
-            end++;
-        }
-
-        if (end - startIndex < 2)
-            return false;
-
-        var candidates =
-            decisions
-                .Skip(startIndex)
-                .Take(end - startIndex)
-                .Select((decision, originalIndex) =>
-                    new OrderedDecision(
-                        decision,
-                        originalIndex,
-                        GetDecisionOrder(
-                            decision,
-                            inventoryItems)))
-                .ToList();
-
-        if (candidates.Any(entry =>
-                !entry.Order.HasVisibleOrder))
-        {
-            return false;
-        }
-
-        var ordered =
-            candidates
-                .OrderBy(entry =>
-                    entry.Order.DisplayIndex)
-                .ThenBy(entry =>
-                    entry.Decision.BaseItemId)
-                .ThenBy(entry =>
-                    entry.Decision.IsHq)
-                .ThenBy(entry =>
-                    entry.OriginalIndex)
-                .ToList();
-
-        RecordDecisionOrder(
-            first,
-            startIndex,
-            end,
-            candidates,
-            ordered);
-
-        orderedBlock =
-            ordered
-                .Select(entry =>
-                    entry.Decision)
-                .ToArray();
-
-        return true;
-    }
-
     public IReadOnlyList<InventoryItemSnapshot> OrderStacks(
         IEnumerable<InventoryItemSnapshot> stacks)
     {
@@ -664,130 +557,6 @@ public sealed class ExecutionOrderSnapshot
             hasCompleteVisibleOrder);
 
         return ordered;
-    }
-
-    private DecisionOrder GetDecisionOrder(
-        PlannerDecision decision,
-        IReadOnlyList<InventoryItemSnapshot> inventoryItems)
-    {
-        if (decision.Source is null ||
-            decision.Quantity <= 0)
-        {
-            return DecisionOrder.Unavailable;
-        }
-
-        var matchingStacks =
-            inventoryItems
-                .Where(item =>
-                    item.Storage ==
-                        decision.Source.Storage &&
-                    item.OwnerId ==
-                        decision.Source.OwnerId &&
-                    (decision.Source.Storage !=
-                         StorageType.Retainer ||
-                     item.ParentCharacterId ==
-                         decision.Source.ParentCharacterId) &&
-                    item.BaseItemId ==
-                        decision.BaseItemId &&
-                    item.IsHq ==
-                        decision.IsHq &&
-                    item.Quantity > 0 &&
-                    ExecutionInventoryRules.IsExecutableContainer(
-                        item))
-                .ToList();
-
-        if (matchingStacks.Count == 0 ||
-            matchingStacks.Sum(item =>
-                item.Quantity) <
-            decision.Quantity ||
-            matchingStacks.Any(item =>
-                !TryGetDisplayIndex(
-                    item,
-                    out _)))
-        {
-            return DecisionOrder.Unavailable;
-        }
-
-        var ordered =
-            matchingStacks
-                .Select(item =>
-                    new
-                    {
-                        Item = item,
-                        Position =
-                            displayPositions[
-                                PhysicalStackKey.From(
-                                    item)]
-                    })
-                .OrderBy(entry =>
-                    entry.Position.DisplayIndex)
-                .ThenBy(entry =>
-                    entry.Item.Container)
-                .ThenBy(entry =>
-                    entry.Item.Slot)
-                .ToList();
-
-        var first =
-            ordered[0];
-
-        return new DecisionOrder(
-            true,
-            first.Position.DisplayIndex,
-            first.Position.Source);
-    }
-
-    private void RecordDecisionOrder(
-        PlannerDecision groupStart,
-        int start,
-        int end,
-        IReadOnlyList<OrderedDecision> candidates,
-        IReadOnlyList<OrderedDecision> ordered)
-    {
-        if (!ForensicTraceRecorder.IsActive ||
-            groupStart.Source is null ||
-            groupStart.Destination is null)
-        {
-            return;
-        }
-
-        var candidateText =
-            string.Join(
-                " || ",
-                candidates.Select(entry =>
-                    $"item={entry.Decision.BaseItemId} hq={entry.Decision.IsHq} qty={entry.Decision.Quantity} " +
-                    $"odrDisplayIndex={entry.Order.DisplayIndex} odrSource={entry.Order.DataSource} originalIndex={entry.OriginalIndex}"));
-
-        var orderedText =
-            string.Join(
-                " -> ",
-                ordered.Select(entry =>
-                    $"{entry.Decision.BaseItemId}{(entry.Decision.IsHq ? "HQ" : "NQ")}" +
-                    $"[odr={entry.Order.DisplayIndex},source={entry.Order.DataSource}]"));
-
-        var key =
-            $"RUNTIME:{groupStart.Source.Storage}:{groupStart.Source.OwnerId}:{groupStart.Source.ParentCharacterId}>" +
-            $"{groupStart.Destination.Storage}:{groupStart.Destination.OwnerId}:{groupStart.Destination.ParentCharacterId}:{start}:{end}";
-
-        ForensicTraceRecorder.RecordState(
-            "EXECUTION_ORDER",
-            key,
-            $"DECISION_BLOCK_REFRESH source={groupStart.Source.Storage}/owner={groupStart.Source.OwnerId}/parent={groupStart.Source.ParentCharacterId} " +
-            $"destination={groupStart.Destination.Storage}/owner={groupStart.Destination.OwnerId}/parent={groupStart.Destination.ParentCharacterId} " +
-            $"range={start + 1}-{end} mode={DescribeDecisionMode(candidates)} candidates={candidateText} selected={orderedText}");
-    }
-
-    private static string DescribeDecisionMode(
-        IReadOnlyList<OrderedDecision> candidates)
-    {
-        var sources =
-            candidates
-                .Select(entry =>
-                    entry.Order.DataSource)
-                .Distinct()
-                .ToArray();
-
-        return DescribeSources(
-            sources);
     }
 
     private void RecordActionOrder(
@@ -1084,38 +853,6 @@ public sealed class ExecutionOrderSnapshot
                 : ExecutionOrderDataSource.None;
 
     private static bool IsSupportedExecutionOrderSource(
-        PlannerDecision decision) =>
-        decision.Source?.Storage is
-            StorageType.Retainer or
-            StorageType.CharacterInventory;
-
-    private static bool IsSameExecutionGroup(
-        PlannerDecision first,
-        PlannerDecision candidate)
-    {
-        if (first.Source is null ||
-            first.Destination is null ||
-            candidate.Source is null ||
-            candidate.Destination is null)
-        {
-            return false;
-        }
-
-        return first.Source.Storage ==
-                   candidate.Source.Storage &&
-               first.Source.OwnerId ==
-                   candidate.Source.OwnerId &&
-               first.Source.ParentCharacterId ==
-                   candidate.Source.ParentCharacterId &&
-               first.Destination.Storage ==
-                   candidate.Destination.Storage &&
-               first.Destination.OwnerId ==
-                   candidate.Destination.OwnerId &&
-               first.Destination.ParentCharacterId ==
-                   candidate.Destination.ParentCharacterId;
-    }
-
-    private static bool IsSupportedExecutionOrderSource(
         PlannerAction action) =>
         action.Source?.Storage is
             StorageType.Retainer or
@@ -1150,23 +887,6 @@ public sealed class ExecutionOrderSnapshot
                first.Destination.ParentCharacterId ==
                    candidate.Destination.ParentCharacterId;
     }
-
-    private readonly record struct DecisionOrder(
-        bool HasVisibleOrder,
-        int DisplayIndex,
-        ExecutionOrderDataSource DataSource)
-    {
-        public static DecisionOrder Unavailable { get; } =
-            new(
-                false,
-                int.MaxValue,
-                ExecutionOrderDataSource.None);
-    }
-
-    private readonly record struct OrderedDecision(
-        PlannerDecision Decision,
-        int OriginalIndex,
-        DecisionOrder Order);
 
     private readonly record struct ActionConsumptionKey(
         StorageType Storage,
